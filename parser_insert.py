@@ -10,6 +10,7 @@ class DeclaracaoInsert:
     linhas: List[List[str]]              # registros
     tinha_colunas: bool                  # se o SQL original tinha "(col1, col2...)"
     quantidade_inserts_origem: int = 1   # quantos INSERTs foram colados na origem
+    tipo_comando: str = "INSERT"         # "INSERT" ou "REPLACE"
 
     def remover_colunas_por_indices(self, indices: List[int]):
         """Remove colunas (campo + valor) em todas as linhas."""
@@ -32,30 +33,25 @@ class DeclaracaoInsert:
         if 0 <= indice_linha < len(self.linhas):
             self.linhas.pop(indice_linha)
 
-    def para_sql(self) -> str:
-        """Gera um INSERT único (multi-row)."""
-        parte_colunas = ""
+    def _parte_colunas(self) -> str:
         if self.tinha_colunas and self.colunas is not None:
-            parte_colunas = f" ({', '.join(self.colunas)})"
+            return f" ({', '.join(self.colunas)})"
+        return ""
 
-        grupos_valores = []
-        for linha in self.linhas:
-            grupos_valores.append(f"({', '.join(linha)})")
-
+    def para_sql(self) -> str:
+        """Gera um INSERT/REPLACE único (multi-row)."""
+        parte_colunas = self._parte_colunas()
+        grupos_valores = [f"({', '.join(linha)})" for linha in self.linhas]
         parte_valores = ", ".join(grupos_valores) if grupos_valores else "()"
-        return f"INSERT INTO {self.tabela}{parte_colunas} VALUES {parte_valores};"
+        return f"{self.tipo_comando} INTO {self.tabela}{parte_colunas} VALUES {parte_valores};"
 
     def para_sql_multiplos(self) -> str:
-        """Gera um INSERT por linha."""
-        parte_colunas = ""
-        if self.tinha_colunas and self.colunas is not None:
-            parte_colunas = f" ({', '.join(self.colunas)})"
-
-        partes = []
-        for linha in self.linhas:
-            partes.append(
-                f"INSERT INTO {self.tabela}{parte_colunas} VALUES ({', '.join(linha)});"
-            )
+        """Gera um INSERT/REPLACE por linha."""
+        parte_colunas = self._parte_colunas()
+        partes = [
+            f"{self.tipo_comando} INTO {self.tabela}{parte_colunas} VALUES ({', '.join(linha)});"
+            for linha in self.linhas
+        ]
         return "\n".join(partes)
 
 
@@ -219,16 +215,17 @@ def parsear_insert_unico(sql: str) -> DeclaracaoInsert:
     sql = sql.rstrip(";").strip()
 
     m = re.search(
-        r"insert\s+into\s+([^\s(]+)\s*(\((.*?)\))?\s*values\s*(.+)$",
+        r"(insert|replace)\s+into\s+([^\s(]+)\s*(\((.*?)\))?\s*values\s*(.+)$",
         sql,
         flags=re.IGNORECASE | re.DOTALL,
     )
     if not m:
-        raise ValueError("Nao consegui reconhecer um INSERT valido.")
+        raise ValueError("Não consegui reconhecer um INSERT ou REPLACE válido.")
 
-    tabela = m.group(1).strip()
-    grupo_colunas = m.group(3)
-    resto_valores = m.group(4).strip()
+    tipo_comando = m.group(1).upper()
+    tabela = m.group(2).strip()
+    grupo_colunas = m.group(4)
+    resto_valores = m.group(5).strip()
 
     tinha_colunas = grupo_colunas is not None
 
@@ -241,7 +238,7 @@ def parsear_insert_unico(sql: str) -> DeclaracaoInsert:
 
     grupos = _extrair_grupos_parenteses(resto_valores)
     if not grupos:
-        raise ValueError("Nao encontrei grupos de VALUES no INSERT.")
+        raise ValueError("Não encontrei grupos de VALUES no INSERT/REPLACE.")
 
     linhas = []
     for g in grupos:
@@ -262,7 +259,8 @@ def parsear_insert_unico(sql: str) -> DeclaracaoInsert:
         colunas=colunas,
         linhas=linhas,
         tinha_colunas=tinha_colunas,
-        quantidade_inserts_origem=1
+        quantidade_inserts_origem=1,
+        tipo_comando=tipo_comando,
     )
 
 
@@ -276,13 +274,14 @@ def parsear_insert(sql: str) -> DeclaracaoInsert:
     statements = _dividir_statements_topo(sql_limpo)
 
     if not statements:
-        raise ValueError("Nao encontrei nenhum INSERT.")
+        raise ValueError("Não encontrei nenhum INSERT ou REPLACE.")
 
     declaracoes = [parsear_insert_unico(st) for st in statements]
 
     tabela_base = declaracoes[0].tabela
     colunas_base = declaracoes[0].colunas
     tinha_colunas_base = declaracoes[0].tinha_colunas
+    tipo_comando_base = declaracoes[0].tipo_comando
 
     def colunas_iguais(c1, c2):
         if c1 is None and c2 is None:
@@ -310,5 +309,6 @@ def parsear_insert(sql: str) -> DeclaracaoInsert:
         colunas=colunas_base,
         linhas=linhas,
         tinha_colunas=tinha_colunas_base,
-        quantidade_inserts_origem=len(statements)
+        quantidade_inserts_origem=len(statements),
+        tipo_comando=tipo_comando_base,
     )
