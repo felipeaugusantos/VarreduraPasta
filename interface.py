@@ -5,7 +5,7 @@ import threading
 
 from parser_insert import parsear_insert, DeclaracaoInsert
 
-_MAX_LINHAS_EXIBICAO = 50   # máx. de colunas "Linha N" na Treeview
+_MAX_LINHAS_EXIBICAO = 200  # máx. de linhas SQL exibidas na Treeview
 
 _MANUAL = (
     "MANUAL — AJUSTE DE INSERT\n\n"
@@ -17,15 +17,19 @@ _MANUAL = (
     "   • O programa detecta automaticamente quantos statements existem\n"
     "     no texto e mostra o total logo abaixo.\n\n"
     "3) Visualizar Campos e Valores\n"
-    "   • A lista mostra os campos e TODOS os valores do INSERT.\n"
-    "   • Cada linha do INSERT aparece como uma coluna 'Linha N'.\n\n"
+    "   • A lista exibe cada linha do INSERT como uma linha da tabela.\n"
+    "   • Cada coluna corresponde a um campo (DDA_AGECOB, DDA_BCOCOM…).\n"
+    "   • Use a barra de rolagem horizontal para navegar pelos campos\n"
+    "     e a vertical para navegar entre as linhas.\n"
+    "   • São exibidas no máximo 200 linhas; o INSERT gerado usa todas.\n\n"
     "4) Pesquisar na lista\n"
     "   • Digite no campo 'Pesquisar (campo ou valor)'.\n"
-    "   • A lista filtra automaticamente conforme você digita,\n"
-    "     buscando em campo e em todos os valores das linhas.\n"
+    "   • A lista filtra as linhas que contenham o texto buscado\n"
+    "     em qualquer campo ou no nome da linha ('Ln N').\n"
     "   • Para voltar ao normal, clique em 'Limpar Pesquisa'.\n\n"
     "5) Editar valores\n"
-    "   • Dê duplo clique em um valor em qualquer coluna 'Linha N'.\n"
+    "   • Dê duplo clique em qualquer linha para abrir o diálogo\n"
+    "     'Alterar Valor' pré-selecionando aquela linha.\n"
     "   • Regras ao salvar:\n"
     "       - Se deixar vazio → vira NULL.\n"
     "       - Se não for número e não estiver entre aspas → vira texto com aspas.\n"
@@ -33,8 +37,8 @@ _MANUAL = (
     "       - Aspas internas são escapadas automaticamente.\n"
     "         Ex.: O'Reilly → 'O''Reilly'\n\n"
     "6) Excluir colunas\n"
-    "   • Selecione uma ou mais linhas (campos) na lista.\n"
-    "   • Clique em 'Excluir Coluna(s)'.\n"
+    "   • Clique em 'Excluir Coluna(s)' para abrir o diálogo de seleção.\n"
+    "   • Escolha um ou mais campos na lista e confirme.\n"
     "   • O campo e os valores correspondentes são removidos de TODAS as linhas.\n\n"
     "7) Excluir uma linha\n"
     "   • Ajuste o seletor 'Linha:' para o número desejado (0 = primeira).\n"
@@ -299,7 +303,7 @@ class InterfaceInsert(ttk.Frame):
 
         ttk.Label(
             quadro_pesquisa,
-            text="ℹ  Duplo clique em 'Linha N' para editar",
+            text="ℹ  Duplo clique em uma linha para editar",
             foreground="#999999",
             font=("", 8),
         ).pack(side="right", padx=(0, 4))
@@ -364,25 +368,16 @@ class InterfaceInsert(ttk.Frame):
     # =========================
     # Colunas dinâmicas da árvore
     # =========================
-    def _configurar_colunas_arvore(self, num_linhas: int):
-        if num_linhas <= 1:
-            cols = ("campo", "valor")
-            self.arvore.configure(columns=cols)
-            self.arvore.heading("campo", text="Campo")
-            self.arvore.heading("valor", text="Valor")
-            self.arvore.column("campo", width=220, anchor="w")
-            self.arvore.column("valor", width=560, anchor="w")
-        else:
-            exibir = min(num_linhas, _MAX_LINHAS_EXIBICAO)
-            lin_cols = tuple(f"linha_{i}" for i in range(exibir))
-            cols = ("campo",) + lin_cols
-            self.arvore.configure(columns=cols)
-            self.arvore.heading("campo", text="Campo")
-            self.arvore.column("campo", width=220, anchor="w")
-            val_w = max(150, 560 // exibir)
-            for i, col in enumerate(lin_cols):
-                self.arvore.heading(col, text=f"Linha {i}")
-                self.arvore.column(col, width=val_w, anchor="w")
+    def _configurar_colunas_arvore(self, campos: list):
+        """Cria uma coluna na Treeview para cada campo SQL."""
+        col_ids = ("_ln",) + tuple(f"_c{i}" for i in range(len(campos)))
+        self.arvore.configure(columns=col_ids)
+        self.arvore.heading("_ln", text="#")
+        self.arvore.column("_ln", width=55, anchor="center", stretch=False)
+        for i, nome in enumerate(campos):
+            cid = f"_c{i}"
+            self.arvore.heading(cid, text=nome)
+            self.arvore.column(cid, width=120, anchor="w")
 
     def _atualizar_spinbox(self, num_linhas: int):
         if num_linhas == 0:
@@ -571,12 +566,11 @@ class InterfaceInsert(ttk.Frame):
         self.arvore.delete(*self.arvore.get_children())
 
         if not self.declaracao or not self.declaracao.linhas:
-            self._configurar_colunas_arvore(0)
+            self._configurar_colunas_arvore([])
             self._atualizar_spinbox(0)
             return
 
         num_linhas = len(self.declaracao.linhas)
-        self._configurar_colunas_arvore(num_linhas)
         self._atualizar_spinbox(num_linhas)
 
         if self.declaracao.colunas is not None:
@@ -585,26 +579,26 @@ class InterfaceInsert(ttk.Frame):
             max_len = max((len(ln) for ln in self.declaracao.linhas), default=0)
             campos = [f"col_{i+1}" for i in range(max_len)]
 
-        exibir = min(num_linhas, _MAX_LINHAS_EXIBICAO)
-        linhas_exibidas = self.declaracao.linhas[:exibir]
+        self._configurar_colunas_arvore(campos)
+        num_campos = len(campos)
 
         contador = 0
-        for i, campo in enumerate(campos):
-            valores = [ln[i] if i < len(ln) else "" for ln in linhas_exibidas]
+        for i, linha in enumerate(self.declaracao.linhas):
+            if i >= _MAX_LINHAS_EXIBICAO:
+                break
 
             if self.filtro_texto:
-                alvo_completo = [ln[i] if i < len(ln) else "" for ln in self.declaracao.linhas]
-                alvo = f"{campo} {' '.join(alvo_completo)}".lower()
+                alvo = f"ln {i} {' '.join(linha)}".lower()
                 if self.filtro_texto not in alvo:
                     continue
 
+            valores = tuple(linha[j] if j < len(linha) else "" for j in range(num_campos))
             tag_cor = "par" if contador % 2 == 0 else "impar"
             tags = [tag_cor]
-            all_vals_for_null = [ln[i] if i < len(ln) else "" for ln in self.declaracao.linhas]
-            if all(v.strip().upper() == "NULL" or v.strip() == "" for v in all_vals_for_null):
+            if all(v.strip().upper() == "NULL" or v.strip() == "" for v in valores):
                 tags.append("tudo_nulo")
 
-            self.arvore.insert("", "end", iid=str(i), values=(campo, *valores), tags=tags)
+            self.arvore.insert("", "end", iid=str(i), values=(f"Ln {i}",) + valores, tags=tags)
             contador += 1
 
     # =========================
@@ -613,35 +607,76 @@ class InterfaceInsert(ttk.Frame):
     def excluir_colunas_selecionadas(self):
         if not self.declaracao:
             return
-
         self._fechar_editor(salvar=True)
+        if self.declaracao.colunas is not None:
+            campos = self.declaracao.colunas
+        else:
+            max_len = max((len(ln) for ln in self.declaracao.linhas), default=0)
+            campos = [f"col_{i+1}" for i in range(max_len)]
+        self._abrir_dialogo_excluir_colunas(campos)
 
-        selecionados = self.arvore.selection()
-        if not selecionados:
-            messagebox.showinfo("Info", "Selecione uma ou mais colunas na lista.")
-            return
+    def _abrir_dialogo_excluir_colunas(self, campos):
+        janela = tk.Toplevel(self.mestre)
+        janela.title("Excluir Coluna(s)")
+        janela.transient(self.mestre)
+        janela.grab_set()
+        janela.resizable(False, True)
 
-        if self.declaracao.colunas is None:
-            ok = messagebox.askyesno(
-                "Atenção",
-                "Esse INSERT não tinha lista de colunas explícita.\n"
-                "Excluir colunas pode mudar o significado dos valores no banco.\n\n"
-                "Deseja continuar?",
-            )
-            if not ok:
+        frame = ttk.Frame(janela, padding=16)
+        frame.pack(fill="both", expand=True)
+
+        ttk.Label(frame, text="Selecione a(s) coluna(s) a excluir:").pack(anchor="w", pady=(0, 6))
+
+        frame_lista = ttk.Frame(frame)
+        frame_lista.pack(fill="both", expand=True)
+
+        scroll_lb = ttk.Scrollbar(frame_lista, orient="vertical")
+        scroll_lb.pack(side="right", fill="y")
+        lb = tk.Listbox(
+            frame_lista, selectmode="extended",
+            yscrollcommand=scroll_lb.set, height=15, activestyle="none",
+        )
+        lb.pack(side="left", fill="both", expand=True)
+        scroll_lb.configure(command=lb.yview)
+
+        for nome in campos:
+            lb.insert("end", nome)
+
+        ttk.Separator(frame, orient="horizontal").pack(fill="x", pady=10)
+
+        frame_btns = ttk.Frame(frame)
+        frame_btns.pack(fill="x")
+
+        def _aplicar():
+            indices = list(lb.curselection())
+            if not indices:
+                messagebox.showinfo("Info", "Selecione ao menos uma coluna.", parent=janela)
                 return
+            if self.declaracao.colunas is None:
+                ok = messagebox.askyesno(
+                    "Atenção",
+                    "Esse INSERT não tinha lista de colunas explícita.\n"
+                    "Excluir colunas pode mudar o significado dos valores no banco.\n\n"
+                    "Deseja continuar?",
+                    parent=janela,
+                )
+                if not ok:
+                    return
+            self.declaracao.remover_colunas_por_indices(indices)
+            self.atualizar_arvore()
+            self._atualizar_status(f"{len(indices)} coluna(s) excluída(s)")
+            janela.destroy()
 
-        try:
-            indices = sorted({int(iid) for iid in selecionados})
-        except ValueError:
-            return
+        ttk.Button(frame_btns, text="Cancelar", command=janela.destroy).pack(side="left", padx=(0, 8))
+        ttk.Button(frame_btns, text="Excluir", command=_aplicar, style="Perigo.TButton").pack(side="left")
 
-        if not indices:
-            return
-
-        self.declaracao.remover_colunas_por_indices(indices)
-        self.atualizar_arvore()
-        self._atualizar_status(f"{len(indices)} coluna(s) excluída(s)")
+        janela.update_idletasks()
+        w, h = 380, 460
+        x = self.mestre.winfo_x() + (self.mestre.winfo_width() - w) // 2
+        y = self.mestre.winfo_y() + (self.mestre.winfo_height() - h) // 2
+        janela.geometry(f"{w}x{h}+{x}+{y}")
+        janela.lift()
+        janela.focus_force()
 
     def excluir_linha_atual(self):
         if not self.declaracao or not self.declaracao.linhas:
@@ -711,16 +746,7 @@ class InterfaceInsert(ttk.Frame):
         )
         cmb_campo.grid(row=0, column=1, columnspan=2, sticky="ew", padx=(10, 0), pady=(0, 6))
 
-        # Pré-seleciona o campo se houver uma linha selecionada na Treeview
-        selecionados = self.arvore.selection()
-        if selecionados:
-            try:
-                idx_pre = int(selecionados[0])
-                if 0 <= idx_pre < len(campos):
-                    cmb_campo.set(campos[idx_pre])
-            except (ValueError, IndexError):
-                pass
-        if not var_campo.get() and campos:
+        if campos:
             cmb_campo.current(0)
 
         # Novo valor
@@ -762,6 +788,16 @@ class InterfaceInsert(ttk.Frame):
             foreground="#888888",
             font=("", 8),
         ).pack(side="left", padx=(4, 0))
+
+        # Pré-seleciona a linha específica se houver seleção na Treeview
+        selecionados = self.arvore.selection()
+        if selecionados:
+            try:
+                idx_linha_pre = int(selecionados[0])
+                var_escopo.set("linha")
+                var_linha_dlg.set(idx_linha_pre)
+            except (ValueError, IndexError):
+                pass
 
         # Separador
         ttk.Separator(frame, orient="horizontal").grid(
