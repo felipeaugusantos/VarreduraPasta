@@ -481,7 +481,8 @@ class InterfaceInsert(ttk.Frame):
 
         coluna = self.arvore.identify_column(evento.x)
         col_num = int(coluna[1:])
-        if col_num < 2:
+        if col_num < 2:             # coluna "Campo" → abre diálogo de alteração
+            self._abrir_dialogo_alterar()
             return
 
         sql_row_idx = col_num - 2
