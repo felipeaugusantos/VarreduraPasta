@@ -48,6 +48,68 @@ _MANUAL = (
     "     correto — a regra de texto coloca aspas se não detectar número."
 )
 
+# Paleta de cores
+_COR_PRIMARIA       = "#0063b1"
+_COR_PRIMARIA_HOVER = "#004f8c"
+_COR_PRIMARIA_PRESS = "#003b69"
+_COR_PERIGO         = "#c42b1c"
+_COR_PERIGO_HOVER   = "#a31a0d"
+_COR_PERIGO_PRESS   = "#821008"
+_COR_LINHA_PAR      = "#f0f4f8"
+_COR_LINHA_IMPAR    = "#ffffff"
+_COR_NULO           = "#aaaaaa"
+_COR_STATUS         = "#555555"
+
+
+def _configurar_estilos(estilo: ttk.Style) -> None:
+    """Registra os estilos customizados de botão."""
+    # Botão primário — ação principal
+    estilo.configure(
+        "Primario.TButton",
+        background=_COR_PRIMARIA,
+        foreground="white",
+        borderwidth=1,
+        bordercolor=_COR_PRIMARIA,
+        lightcolor=_COR_PRIMARIA,
+        darkcolor=_COR_PRIMARIA_HOVER,
+        relief="raised",
+        padding=(10, 5),
+        font=("", 0, "bold"),
+    )
+    estilo.map(
+        "Primario.TButton",
+        background=[
+            ("active", _COR_PRIMARIA_HOVER),
+            ("pressed", _COR_PRIMARIA_PRESS),
+            ("disabled", "#cccccc"),
+        ],
+        foreground=[("disabled", "#888888")],
+        relief=[("pressed", "sunken")],
+    )
+
+    # Botão de perigo — ações destrutivas
+    estilo.configure(
+        "Perigo.TButton",
+        background=_COR_PERIGO,
+        foreground="white",
+        borderwidth=1,
+        bordercolor=_COR_PERIGO,
+        lightcolor=_COR_PERIGO,
+        darkcolor=_COR_PERIGO_HOVER,
+        relief="raised",
+        padding=(8, 4),
+    )
+    estilo.map(
+        "Perigo.TButton",
+        background=[
+            ("active", _COR_PERIGO_HOVER),
+            ("pressed", _COR_PERIGO_PRESS),
+            ("disabled", "#cccccc"),
+        ],
+        foreground=[("disabled", "#888888")],
+        relief=[("pressed", "sunken")],
+    )
+
 
 class InterfaceInsert(ttk.Frame):
     def __init__(self, mestre):
@@ -56,20 +118,20 @@ class InterfaceInsert(ttk.Frame):
         self.declaracao: DeclaracaoInsert | None = None
 
         self.var_total_inserts = tk.StringVar(value="Total de INSERTs/REPLACEs detectados: 0")
-
         self.var_pesquisa = tk.StringVar(value="")
         self.filtro_texto: str = ""
-
         self.var_linha_excluir = tk.IntVar(value=0)
+        self.var_status = tk.StringVar(value="Pronto")
 
         self._editor_entry: tk.Entry | None = None
         self._editor_iid: str | None = None
         self._editor_field_idx: int | None = None
         self._editor_sql_row_idx: int | None = None
 
+        self.btn_copiar: ttk.Button | None = None
+
         self._montar_interface()
         self._criar_menu()
-
         self.var_pesquisa.trace_add("write", lambda *_: self.aplicar_filtro())
 
     # =========================
@@ -118,6 +180,16 @@ class InterfaceInsert(ttk.Frame):
         self.mestre.title("Ajuste de Insert")
         self.pack(fill="both", expand=True, padx=10, pady=10)
 
+        # Barra de status — reservada primeiro para garantir espaço no fundo
+        ttk.Separator(self, orient="horizontal").pack(side="bottom", fill="x", pady=(4, 0))
+        ttk.Label(
+            self,
+            textvariable=self.var_status,
+            anchor="w",
+            foreground=_COR_STATUS,
+            font=("", 8),
+        ).pack(side="bottom", fill="x", padx=4)
+
         # --- Entrada ---
         quadro_entrada = ttk.LabelFrame(self, text="Entrada de INSERT / REPLACE")
         quadro_entrada.pack(fill="both", expand=False)
@@ -143,7 +215,10 @@ class InterfaceInsert(ttk.Frame):
         ).pack(side="left")
 
         ttk.Button(
-            quadro_botoes_entrada, text="Processar INSERT", command=self.processar_insert
+            quadro_botoes_entrada,
+            text="Processar INSERT",
+            command=self.processar_insert,
+            style="Primario.TButton",
         ).pack(side="right")
 
         ttk.Label(quadro_entrada, textvariable=self.var_total_inserts).pack(
@@ -155,7 +230,10 @@ class InterfaceInsert(ttk.Frame):
         quadro_meio.pack(fill="x", pady=8)
 
         ttk.Button(
-            quadro_meio, text="Excluir Coluna(s)", command=self.excluir_colunas_selecionadas
+            quadro_meio,
+            text="Excluir Coluna(s)",
+            command=self.excluir_colunas_selecionadas,
+            style="Perigo.TButton",
         ).pack(side="left", padx=(0, 6))
 
         quadro_excl_linha = ttk.Frame(quadro_meio)
@@ -172,11 +250,17 @@ class InterfaceInsert(ttk.Frame):
         self.spn_linha_excluir.pack(side="left", padx=(2, 4))
 
         ttk.Button(
-            quadro_excl_linha, text="Excluir Linha", command=self.excluir_linha_atual
+            quadro_excl_linha,
+            text="Excluir Linha",
+            command=self.excluir_linha_atual,
+            style="Perigo.TButton",
         ).pack(side="left")
 
         ttk.Button(
-            quadro_meio, text="Gerar Novo INSERT", command=self.gerar_insert
+            quadro_meio,
+            text="Gerar Novo INSERT",
+            command=self.gerar_insert,
+            style="Primario.TButton",
         ).pack(side="right", padx=(0, 8))
 
         # --- Pesquisa ---
@@ -184,19 +268,33 @@ class InterfaceInsert(ttk.Frame):
         quadro_pesquisa.pack(fill="x", pady=(0, 4))
 
         ttk.Label(quadro_pesquisa, text="Pesquisar (campo ou valor):").pack(side="left")
-        ttk.Entry(quadro_pesquisa, textvariable=self.var_pesquisa, width=45).pack(
+        ttk.Entry(quadro_pesquisa, textvariable=self.var_pesquisa, width=40).pack(
             side="left", padx=6
         )
         ttk.Button(
             quadro_pesquisa, text="Limpar Pesquisa", command=self.limpar_pesquisa
         ).pack(side="left")
 
-        # --- Árvore ---
-        quadro_lista = ttk.LabelFrame(self, text="Campos e valores do INSERT")
-        quadro_lista.pack(fill="both", expand=True)
+        ttk.Label(
+            quadro_pesquisa,
+            text="ℹ  Duplo clique em 'Linha N' para editar",
+            foreground="#999999",
+            font=("", 8),
+        ).pack(side="right", padx=(0, 4))
+
+        # --- PanedWindow: Treeview | Saída (redimensionável) ---
+        painel = ttk.PanedWindow(self, orient="vertical")
+        painel.pack(fill="both", expand=True)
+
+        # Treeview
+        quadro_lista = ttk.LabelFrame(painel, text="Campos e valores do INSERT")
+        painel.add(quadro_lista, weight=3)
+
+        frame_arvore = ttk.Frame(quadro_lista)
+        frame_arvore.pack(fill="both", expand=True, padx=8, pady=(6, 0))
 
         self.arvore = ttk.Treeview(
-            quadro_lista,
+            frame_arvore,
             columns=("campo", "valor"),
             show="headings",
             selectmode="extended",
@@ -206,34 +304,36 @@ class InterfaceInsert(ttk.Frame):
         self.arvore.column("campo", width=220, anchor="w")
         self.arvore.column("valor", width=560, anchor="w")
 
+        self.arvore.tag_configure("par", background=_COR_LINHA_PAR)
+        self.arvore.tag_configure("impar", background=_COR_LINHA_IMPAR)
+        self.arvore.tag_configure("tudo_nulo", foreground=_COR_NULO)
+
         self.arvore.bind("<Double-1>", self._ao_duplo_clique)
 
-        barra_y = ttk.Scrollbar(quadro_lista, orient="vertical", command=self.arvore.yview)
-        barra_x = ttk.Scrollbar(quadro_lista, orient="horizontal", command=self.arvore.xview)
+        barra_y = ttk.Scrollbar(frame_arvore, orient="vertical", command=self.arvore.yview)
+        barra_x = ttk.Scrollbar(frame_arvore, orient="horizontal", command=self.arvore.xview)
         self.arvore.configure(yscrollcommand=barra_y.set, xscrollcommand=barra_x.set)
 
-        barra_x.pack(side="bottom", fill="x", padx=8, pady=(0, 6))
-        barra_y.pack(side="right", fill="y", padx=(0, 8), pady=6)
-        self.arvore.pack(side="left", fill="both", expand=True, padx=(8, 0), pady=6)
+        barra_x.pack(side="bottom", fill="x")
+        barra_y.pack(side="right", fill="y")
+        self.arvore.pack(side="left", fill="both", expand=True)
 
-        # --- Saída ---
-        quadro_saida = ttk.LabelFrame(self, text="INSERT gerado")
-        quadro_saida.pack(fill="both", expand=False, pady=(8, 0))
+        # Saída
+        quadro_saida = ttk.LabelFrame(painel, text="INSERT gerado")
+        painel.add(quadro_saida, weight=1)
 
         quadro_saida_btns = ttk.Frame(quadro_saida)
         quadro_saida_btns.pack(fill="x", padx=8, pady=(6, 2))
 
-        ttk.Button(
+        self.btn_copiar = ttk.Button(
             quadro_saida_btns, text="Copiar para Clipboard", command=self.copiar_saida
-        ).pack(side="left")
+        )
+        self.btn_copiar.pack(side="left")
 
         frame_saida = ttk.Frame(quadro_saida)
         frame_saida.pack(fill="both", expand=True, padx=8, pady=(0, 6))
 
-        self.txt_saida = tk.Text(
-            frame_saida, height=8, wrap="word",
-            state="disabled",
-        )
+        self.txt_saida = tk.Text(frame_saida, height=8, wrap="word", state="disabled")
         scroll_saida = ttk.Scrollbar(frame_saida, orient="vertical", command=self.txt_saida.yview)
         self.txt_saida.configure(yscrollcommand=scroll_saida.set)
         scroll_saida.pack(side="right", fill="y")
@@ -273,6 +373,9 @@ class InterfaceInsert(ttk.Frame):
     # =========================
     # Funções utilitárias
     # =========================
+    def _atualizar_status(self, mensagem: str) -> None:
+        self.var_status.set(mensagem)
+
     def limpar_saida(self):
         self.txt_saida.configure(state="normal")
         self.txt_saida.delete("1.0", "end")
@@ -285,6 +388,12 @@ class InterfaceInsert(ttk.Frame):
             return
         self.mestre.clipboard_clear()
         self.mestre.clipboard_append(conteudo)
+        self._atualizar_status("SQL copiado para o clipboard")
+        if self.btn_copiar:
+            self.btn_copiar.configure(text="✓ Copiado!")
+            self.mestre.after(
+                1500, lambda: self.btn_copiar.configure(text="Copiar para Clipboard")
+            )
 
     def atualizar_total_inserts(self):
         total = self.declaracao.quantidade_inserts_origem if self.declaracao else 0
@@ -336,7 +445,7 @@ class InterfaceInsert(ttk.Frame):
                 pass
 
             vals = list(self.arvore.item(self._editor_iid, "values"))
-            val_display_idx = self._editor_sql_row_idx + 1  # vals[0]=campo, vals[1+]=linhas
+            val_display_idx = self._editor_sql_row_idx + 1
             if val_display_idx < len(vals):
                 vals[val_display_idx] = novo_valor
                 self.arvore.item(self._editor_iid, values=vals)
@@ -352,11 +461,11 @@ class InterfaceInsert(ttk.Frame):
             return
 
         coluna = self.arvore.identify_column(evento.x)
-        col_num = int(coluna[1:])   # "#1"→1, "#2"→2, ...
-        if col_num < 2:             # "#1" = campo, não editável
+        col_num = int(coluna[1:])
+        if col_num < 2:
             return
 
-        sql_row_idx = col_num - 2   # "#2"→linha 0, "#3"→linha 1, ...
+        sql_row_idx = col_num - 2
         if sql_row_idx >= len(self.declaracao.linhas):
             return
 
@@ -437,11 +546,16 @@ class InterfaceInsert(ttk.Frame):
         except Exception as e:
             self.declaracao = None
             self.atualizar_total_inserts()
+            self._atualizar_status(f"Erro: {e}")
             messagebox.showerror("Erro ao processar", str(e))
             return
         self.atualizar_total_inserts()
         self.atualizar_arvore()
         self.limpar_saida()
+        n = self.declaracao.quantidade_inserts_origem
+        self._atualizar_status(
+            f"{n} statement(s) carregado(s) — tabela {self.declaracao.tabela}"
+        )
 
     # =========================
     # Atualização da árvore
@@ -465,6 +579,7 @@ class InterfaceInsert(ttk.Frame):
             max_len = max((len(ln) for ln in self.declaracao.linhas), default=0)
             campos = [f"col_{i+1}" for i in range(max_len)]
 
+        contador = 0
         for i, campo in enumerate(campos):
             valores = [ln[i] if i < len(ln) else "" for ln in self.declaracao.linhas]
 
@@ -473,7 +588,13 @@ class InterfaceInsert(ttk.Frame):
                 if self.filtro_texto not in alvo:
                     continue
 
-            self.arvore.insert("", "end", iid=str(i), values=(campo, *valores))
+            tag_cor = "par" if contador % 2 == 0 else "impar"
+            tags = [tag_cor]
+            if all(v.strip().upper() == "NULL" or v.strip() == "" for v in valores):
+                tags.append("tudo_nulo")
+
+            self.arvore.insert("", "end", iid=str(i), values=(campo, *valores), tags=tags)
+            contador += 1
 
     # =========================
     # Exclusão
@@ -509,6 +630,7 @@ class InterfaceInsert(ttk.Frame):
 
         self.declaracao.remover_colunas_por_indices(indices)
         self.atualizar_arvore()
+        self._atualizar_status(f"{len(indices)} coluna(s) excluída(s)")
 
     def excluir_linha_atual(self):
         if not self.declaracao or not self.declaracao.linhas:
@@ -538,9 +660,11 @@ class InterfaceInsert(ttk.Frame):
         if not self.declaracao.linhas:
             self.atualizar_arvore()
             self.limpar_saida()
+            self._atualizar_status("Todas as linhas foram removidas")
             return
 
         self.atualizar_arvore()
+        self._atualizar_status(f"Linha {idx} excluída")
 
     # =========================
     # Geração de saída
@@ -575,6 +699,10 @@ class InterfaceInsert(ttk.Frame):
         self.txt_saida.configure(state="normal")
         self.txt_saida.insert("1.0", saida)
         self.txt_saida.configure(state="disabled")
+        self._atualizar_status(
+            f"INSERT gerado — {len(self.declaracao.linhas)} linha(s), "
+            f"{len(self.declaracao.colunas or [])} coluna(s)"
+        )
 
 
 def iniciar_interface():
@@ -584,6 +712,7 @@ def iniciar_interface():
         estilo.theme_use("clam")
     except Exception:
         pass
+    _configurar_estilos(estilo)
     InterfaceInsert(raiz)
     raiz.minsize(980, 680)
     raiz.mainloop()
