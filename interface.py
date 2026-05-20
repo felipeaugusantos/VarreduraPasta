@@ -884,4 +884,7 @@ def iniciar_interface():
     _configurar_estilos(estilo)
     InterfaceInsert(raiz)
     raiz.minsize(980, 680)
-    raiz.mainloop()
+    try:
+        raiz.mainloop()
+    except KeyboardInterrupt:
+        raiz.destroy()
