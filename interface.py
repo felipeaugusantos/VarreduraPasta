@@ -155,23 +155,33 @@ class InterfaceInsert(ttk.Frame):
     def mostrar_manual(self):
         janela = tk.Toplevel(self.mestre)
         janela.title("Manual - Ajuste de Insert")
-        janela.geometry("760x540")
         janela.transient(self.mestre)
+        janela.resizable(True, True)
 
         frame = ttk.Frame(janela, padding=10)
         frame.pack(fill="both", expand=True)
 
-        txt = tk.Text(frame, wrap="word")
-        txt.pack(side="left", fill="both", expand=True)
-
-        scroll = ttk.Scrollbar(frame, orient="vertical", command=txt.yview)
+        # scrollbar antes do Text para reservar espaço corretamente
+        scroll = ttk.Scrollbar(frame, orient="vertical")
         scroll.pack(side="right", fill="y")
-        txt.configure(yscrollcommand=scroll.set)
+
+        txt = tk.Text(frame, wrap="word", yscrollcommand=scroll.set)
+        txt.pack(side="left", fill="both", expand=True)
+        scroll.configure(command=txt.yview)
 
         txt.insert("1.0", _MANUAL)
         txt.configure(state="disabled")
 
         ttk.Button(janela, text="Fechar", command=janela.destroy).pack(pady=(0, 10))
+
+        # Centraliza e garante que a janela apareça na frente
+        janela.update_idletasks()
+        w, h = 760, 540
+        x = self.mestre.winfo_x() + (self.mestre.winfo_width() - w) // 2
+        y = self.mestre.winfo_y() + (self.mestre.winfo_height() - h) // 2
+        janela.geometry(f"{w}x{h}+{x}+{y}")
+        janela.lift()
+        janela.focus_force()
 
     # =========================
     # Montagem da interface
