@@ -478,51 +478,9 @@ class InterfaceInsert(ttk.Frame):
     def _ao_duplo_clique(self, evento):
         if not self.declaracao or not self.declaracao.linhas:
             return
-
-        coluna = self.arvore.identify_column(evento.x)
-        col_num = int(coluna[1:])
-        if col_num < 2:             # coluna "Campo" → abre diálogo de alteração
-            self._abrir_dialogo_alterar()
+        if not self.arvore.identify_row(evento.y):
             return
-
-        sql_row_idx = col_num - 2
-        if sql_row_idx >= len(self.declaracao.linhas):
-            return
-
-        iid = self.arvore.identify_row(evento.y)
-        if not iid:
-            return
-
-        self._fechar_editor(salvar=True)
-
-        try:
-            field_idx = int(iid)
-        except ValueError:
-            return
-
-        if field_idx >= len(self.declaracao.linhas[sql_row_idx]):
-            return
-
-        x, y, w, h = self.arvore.bbox(iid, column=coluna)
-        if w <= 0 or h <= 0:
-            return
-
-        valor_atual = self.arvore.item(iid, "values")[col_num - 1]
-
-        entry = tk.Entry(self.arvore)
-        entry.place(x=x, y=y, width=w, height=h)
-        entry.insert(0, valor_atual)
-        entry.focus_set()
-        entry.select_range(0, tk.END)
-
-        entry.bind("<Return>", lambda e: self._fechar_editor(salvar=True))
-        entry.bind("<Escape>", lambda e: self._fechar_editor(salvar=False))
-        entry.bind("<FocusOut>", lambda e: self._fechar_editor(salvar=True))
-
-        self._editor_entry = entry
-        self._editor_iid = iid
-        self._editor_field_idx = field_idx
-        self._editor_sql_row_idx = sql_row_idx
+        self._abrir_dialogo_alterar()
 
     # =========================
     # Entrada de dados
