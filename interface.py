@@ -1,8 +1,11 @@
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import re
+import threading
 
 from parser_insert import parsear_insert, DeclaracaoInsert
+
+_MAX_LINHAS_EXIBICAO = 50   # máx. de colunas "Linha N" na Treeview
 
 _MANUAL = (
     "MANUAL — AJUSTE DE INSERT\n\n"
@@ -370,12 +373,13 @@ class InterfaceInsert(ttk.Frame):
             self.arvore.column("campo", width=220, anchor="w")
             self.arvore.column("valor", width=560, anchor="w")
         else:
-            lin_cols = tuple(f"linha_{i}" for i in range(num_linhas))
+            exibir = min(num_linhas, _MAX_LINHAS_EXIBICAO)
+            lin_cols = tuple(f"linha_{i}" for i in range(exibir))
             cols = ("campo",) + lin_cols
             self.arvore.configure(columns=cols)
             self.arvore.heading("campo", text="Campo")
             self.arvore.column("campo", width=220, anchor="w")
-            val_w = max(150, 560 // num_linhas)
+            val_w = max(150, 560 // exibir)
             for i, col in enumerate(lin_cols):
                 self.arvore.heading(col, text=f"Linha {i}")
                 self.arvore.column(col, width=val_w, anchor="w")
@@ -519,21 +523,45 @@ class InterfaceInsert(ttk.Frame):
         if not sql:
             messagebox.showwarning("Atenção", "Cole ou abra um INSERT/REPLACE primeiro.")
             return
-        try:
-            self.declaracao = parsear_insert(sql)
-        except Exception as e:
+
+        self._atualizar_status("Processando…")
+        self.mestre.config(cursor="watch")
+        self.mestre.update_idletasks()
+
+        def _tarefa():
+            try:
+                resultado = parsear_insert(sql)
+                erro = None
+            except Exception as e:
+                resultado = None
+                erro = e
+            self.mestre.after(0, lambda: self._finalizar_processamento(resultado, erro))
+
+        threading.Thread(target=_tarefa, daemon=True).start()
+
+    def _finalizar_processamento(self, resultado, erro):
+        self.mestre.config(cursor="")
+        if erro is not None:
             self.declaracao = None
             self.atualizar_total_inserts()
-            self._atualizar_status(f"Erro: {e}")
-            messagebox.showerror("Erro ao processar", str(e))
+            self._atualizar_status(f"Erro: {erro}")
+            messagebox.showerror("Erro ao processar", str(erro))
             return
+        self.declaracao = resultado
         self.atualizar_total_inserts()
         self.atualizar_arvore()
         self.limpar_saida()
         n = self.declaracao.quantidade_inserts_origem
-        self._atualizar_status(
-            f"{n} statement(s) carregado(s) — tabela {self.declaracao.tabela}"
-        )
+        num_linhas = len(self.declaracao.linhas)
+        if num_linhas > _MAX_LINHAS_EXIBICAO:
+            self._atualizar_status(
+                f"{n} statement(s) carregado(s) — tabela {self.declaracao.tabela} — "
+                f"exibindo {_MAX_LINHAS_EXIBICAO} de {num_linhas} linha(s) na visualização"
+            )
+        else:
+            self._atualizar_status(
+                f"{n} statement(s) carregado(s) — tabela {self.declaracao.tabela}"
+            )
 
     # =========================
     # Atualização da árvore
@@ -557,18 +585,23 @@ class InterfaceInsert(ttk.Frame):
             max_len = max((len(ln) for ln in self.declaracao.linhas), default=0)
             campos = [f"col_{i+1}" for i in range(max_len)]
 
+        exibir = min(num_linhas, _MAX_LINHAS_EXIBICAO)
+        linhas_exibidas = self.declaracao.linhas[:exibir]
+
         contador = 0
         for i, campo in enumerate(campos):
-            valores = [ln[i] if i < len(ln) else "" for ln in self.declaracao.linhas]
+            valores = [ln[i] if i < len(ln) else "" for ln in linhas_exibidas]
 
             if self.filtro_texto:
-                alvo = f"{campo} {' '.join(valores)}".lower()
+                alvo_completo = [ln[i] if i < len(ln) else "" for ln in self.declaracao.linhas]
+                alvo = f"{campo} {' '.join(alvo_completo)}".lower()
                 if self.filtro_texto not in alvo:
                     continue
 
             tag_cor = "par" if contador % 2 == 0 else "impar"
             tags = [tag_cor]
-            if all(v.strip().upper() == "NULL" or v.strip() == "" for v in valores):
+            all_vals_for_null = [ln[i] if i < len(ln) else "" for ln in self.declaracao.linhas]
+            if all(v.strip().upper() == "NULL" or v.strip() == "" for v in all_vals_for_null):
                 tags.append("tudo_nulo")
 
             self.arvore.insert("", "end", iid=str(i), values=(campo, *valores), tags=tags)
