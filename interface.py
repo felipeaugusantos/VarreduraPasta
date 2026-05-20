@@ -232,7 +232,7 @@ class InterfaceInsert(ttk.Frame):
 
         self.txt_saida = tk.Text(
             frame_saida, height=8, wrap="word",
-            state="disabled", disabledforeground="black",
+            state="disabled",
         )
         scroll_saida = ttk.Scrollbar(frame_saida, orient="vertical", command=self.txt_saida.yview)
         self.txt_saida.configure(yscrollcommand=scroll_saida.set)
