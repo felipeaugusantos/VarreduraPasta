@@ -256,6 +256,15 @@ class InterfaceInsert(ttk.Frame):
             style="Perigo.TButton",
         ).pack(side="left")
 
+        ttk.Separator(quadro_meio, orient="vertical").pack(
+            side="left", fill="y", padx=(10, 6), pady=2
+        )
+        ttk.Button(
+            quadro_meio,
+            text="Alterar Valor",
+            command=self._abrir_dialogo_alterar,
+        ).pack(side="left")
+
         ttk.Button(
             quadro_meio,
             text="Gerar Novo INSERT",
@@ -665,6 +674,155 @@ class InterfaceInsert(ttk.Frame):
 
         self.atualizar_arvore()
         self._atualizar_status(f"Linha {idx} excluída")
+
+    # =========================
+    # Alteração em lote
+    # =========================
+    def _abrir_dialogo_alterar(self):
+        if not self.declaracao or not self.declaracao.linhas:
+            messagebox.showwarning("Atenção", "Nenhum INSERT carregado.")
+            return
+
+        if self.declaracao.colunas is not None:
+            campos = self.declaracao.colunas
+        else:
+            max_len = max(len(ln) for ln in self.declaracao.linhas)
+            campos = [f"col_{i+1}" for i in range(max_len)]
+
+        num_linhas = len(self.declaracao.linhas)
+
+        janela = tk.Toplevel(self.mestre)
+        janela.title("Alterar Valor")
+        janela.transient(self.mestre)
+        janela.grab_set()
+        janela.resizable(False, False)
+
+        frame = ttk.Frame(janela, padding=16)
+        frame.pack(fill="both", expand=True)
+        frame.columnconfigure(1, weight=1)
+
+        # Campo
+        ttk.Label(frame, text="Campo:").grid(row=0, column=0, sticky="w", pady=(0, 6))
+        var_campo = tk.StringVar()
+        cmb_campo = ttk.Combobox(
+            frame, textvariable=var_campo, values=campos, width=36, state="readonly"
+        )
+        cmb_campo.grid(row=0, column=1, columnspan=2, sticky="ew", padx=(10, 0), pady=(0, 6))
+
+        # Pré-seleciona o campo se houver uma linha selecionada na Treeview
+        selecionados = self.arvore.selection()
+        if selecionados:
+            try:
+                idx_pre = int(selecionados[0])
+                if 0 <= idx_pre < len(campos):
+                    cmb_campo.set(campos[idx_pre])
+            except (ValueError, IndexError):
+                pass
+        if not var_campo.get() and campos:
+            cmb_campo.current(0)
+
+        # Novo valor
+        ttk.Label(frame, text="Novo valor:").grid(row=1, column=0, sticky="w", pady=(0, 10))
+        var_valor = tk.StringVar()
+        ent_valor = ttk.Entry(frame, textvariable=var_valor, width=36)
+        ent_valor.grid(row=1, column=1, columnspan=2, sticky="ew", padx=(10, 0), pady=(0, 10))
+
+        # Separador
+        ttk.Separator(frame, orient="horizontal").grid(
+            row=2, column=0, columnspan=3, sticky="ew", pady=(0, 10)
+        )
+
+        # Escopo
+        ttk.Label(frame, text="Aplicar em:").grid(row=3, column=0, sticky="nw", pady=(0, 4))
+
+        var_escopo = tk.StringVar(value="todas")
+
+        ttk.Radiobutton(
+            frame, text="Todas as linhas", variable=var_escopo, value="todas"
+        ).grid(row=3, column=1, columnspan=2, sticky="w", padx=(10, 0))
+
+        frame_linha_esp = ttk.Frame(frame)
+        frame_linha_esp.grid(row=4, column=1, columnspan=2, sticky="w", padx=(10, 0), pady=(4, 14))
+
+        ttk.Radiobutton(
+            frame_linha_esp, text="Linha específica:", variable=var_escopo, value="linha"
+        ).pack(side="left")
+
+        var_linha_dlg = tk.IntVar(value=0)
+        ttk.Spinbox(
+            frame_linha_esp, from_=0, to=max(0, num_linhas - 1),
+            textvariable=var_linha_dlg, width=4,
+        ).pack(side="left", padx=(6, 0))
+
+        ttk.Label(
+            frame_linha_esp,
+            text=f"(0 a {num_linhas - 1})",
+            foreground="#888888",
+            font=("", 8),
+        ).pack(side="left", padx=(4, 0))
+
+        # Separador
+        ttk.Separator(frame, orient="horizontal").grid(
+            row=5, column=0, columnspan=3, sticky="ew", pady=(0, 10)
+        )
+
+        # Botões
+        frame_btns = ttk.Frame(frame)
+        frame_btns.grid(row=6, column=0, columnspan=3, sticky="e")
+
+        def _aplicar():
+            campo_sel = var_campo.get()
+            if not campo_sel:
+                messagebox.showwarning("Atenção", "Selecione um campo.", parent=janela)
+                return
+
+            try:
+                field_idx = campos.index(campo_sel)
+            except ValueError:
+                messagebox.showerror("Erro", "Campo não encontrado.", parent=janela)
+                return
+
+            novo_valor = self._normalizar_valor_editado(var_valor.get())
+            escopo = var_escopo.get()
+
+            if escopo == "todas":
+                for ln in self.declaracao.linhas:
+                    if field_idx < len(ln):
+                        ln[field_idx] = novo_valor
+                self._atualizar_status(
+                    f"'{campo_sel}' atualizado em {num_linhas} linha(s) → {novo_valor}"
+                )
+            else:
+                idx_linha = var_linha_dlg.get()
+                if 0 <= idx_linha < num_linhas:
+                    ln = self.declaracao.linhas[idx_linha]
+                    if field_idx < len(ln):
+                        ln[field_idx] = novo_valor
+                self._atualizar_status(
+                    f"'{campo_sel}' atualizado na linha {idx_linha} → {novo_valor}"
+                )
+
+            self.atualizar_arvore()
+            janela.destroy()
+
+        ttk.Button(frame_btns, text="Cancelar", command=janela.destroy).pack(
+            side="left", padx=(0, 8)
+        )
+        ttk.Button(
+            frame_btns, text="Aplicar", command=_aplicar, style="Primario.TButton"
+        ).pack(side="left")
+
+        # Atalhos e posicionamento
+        ent_valor.focus_set()
+        janela.bind("<Return>", lambda e: _aplicar())
+        janela.bind("<Escape>", lambda e: janela.destroy())
+
+        janela.update_idletasks()
+        w = janela.winfo_width()
+        h = janela.winfo_height()
+        x = self.mestre.winfo_x() + (self.mestre.winfo_width() - w) // 2
+        y = self.mestre.winfo_y() + (self.mestre.winfo_height() - h) // 2
+        janela.geometry(f"+{x}+{y}")
 
     # =========================
     # Geração de saída
