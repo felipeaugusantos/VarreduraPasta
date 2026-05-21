@@ -377,7 +377,7 @@ class InterfaceInsert(ttk.Frame):
         for i, nome in enumerate(campos):
             cid = f"_c{i}"
             self.arvore.heading(cid, text=nome)
-            self.arvore.column(cid, width=120, anchor="w")
+            self.arvore.column(cid, width=140, anchor="w")
 
     def _atualizar_spinbox(self, num_linhas: int):
         if num_linhas == 0:
