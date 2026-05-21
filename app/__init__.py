@@ -1,0 +1,1 @@
+"""Aplicacao Ajuste de Insert."""

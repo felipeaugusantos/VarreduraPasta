@@ -1,0 +1,5 @@
+﻿# Ajuste de Insert
+# Versao: 1.2.0
+# Data da release: 2026-05-21
+# Algoritmo: SHA256
+4262ad6476204894f1a8fc5234860676d8bc84df603adb68901c73cd83774448  AjusteInsert.exe

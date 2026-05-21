@@ -1,0 +1,5 @@
+APP_NAME = "Ajuste de Insert"
+APP_VERSION = "1.2.1"
+APP_BUILD = "stable"
+APP_AUTHOR = "Felipe Augusto dos Santos"
+APP_RELEASE_DATE = "2026-05-21"
