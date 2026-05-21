@@ -373,11 +373,11 @@ class InterfaceInsert(ttk.Frame):
         col_ids = ("_ln",) + tuple(f"_c{i}" for i in range(len(campos)))
         self.arvore.configure(columns=col_ids)
         self.arvore.heading("_ln", text="#")
-        self.arvore.column("_ln", width=55, anchor="center", stretch=False)
+        self.arvore.column("_ln", width=55, minwidth=10, anchor="center", stretch=False)
         for i, nome in enumerate(campos):
             cid = f"_c{i}"
             self.arvore.heading(cid, text=nome)
-            self.arvore.column(cid, width=140, anchor="w")
+            self.arvore.column(cid, width=140, minwidth=10, anchor="w", stretch=False)
 
     def _atualizar_spinbox(self, num_linhas: int):
         if num_linhas == 0:
@@ -911,6 +911,8 @@ def iniciar_interface():
     _configurar_estilos(estilo)
     InterfaceInsert(raiz)
     raiz.minsize(980, 680)
+    # Limita ao tamanho do monitor para nunca estourar a tela
+    raiz.maxsize(raiz.winfo_screenwidth(), raiz.winfo_screenheight())
     try:
         raiz.mainloop()
     except KeyboardInterrupt:
