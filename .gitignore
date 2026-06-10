@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.idea/
+settings.json
+logs/
+project_pattern.json
+build/
+dist/

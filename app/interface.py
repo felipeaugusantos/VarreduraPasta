@@ -1,0 +1,1036 @@
+import os
+import queue
+import threading
+import tkinter as tk
+from datetime import datetime
+from pathlib import Path
+from tkinter import filedialog, messagebox, ttk
+
+from app import __version__, actions
+from app.audit import list_log_files, read_log_file
+from app.config import SCAN_INTERVAL_MS
+from app.pattern import generate_pattern_from_projects, save_pattern
+from app.runtime import resource_path
+from app.scanner import enrich_project_file_versions, scan_projects
+from app.settings import (
+    load_base_directory,
+    load_copy_target_directory,
+    load_ignored_project_folders,
+    save_base_directory,
+    save_copy_target_directory,
+    save_ignored_project_folders,
+)
+
+
+class VersionScannerApp(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.title(f"Sistema de Acompanhamento de Copia v{__version__}")
+        self.geometry("1280x720")
+        self.minsize(980, 560)
+        self._set_window_icon()
+
+        self.projects = []
+        self.displayed_projects = []
+        self.refresh_job = None
+        self.scan_queue = queue.Queue()
+        self.is_scanning = False
+        self.scan_generation = 0
+        self.base_directory_var = tk.StringVar(value=str(load_base_directory()))
+        self.filter_var = tk.StringVar(value="Todos")
+        self.search_var = tk.StringVar()
+        self.sort_column = "folder"
+        self.sort_reverse = False
+        self.config_window = None
+        self._build_menu()
+        self._build_layout()
+        self.after(100, self.refresh)
+
+    def _set_window_icon(self):
+        icon_path = resource_path(Path("assets") / "app-icon.ico")
+        if icon_path.exists():
+            try:
+                self.iconbitmap(default=str(icon_path))
+            except tk.TclError:
+                pass
+
+    def _build_menu(self):
+        menu_bar = tk.Menu(self)
+        settings_menu = tk.Menu(menu_bar, tearoff=False)
+        settings_menu.add_command(
+            label="Diretório-base",
+            command=self.open_settings_window,
+        )
+        settings_menu.add_command(
+            label="Padrão de Arquivos",
+            command=self.open_pattern_window,
+        )
+        settings_menu.add_command(
+            label="Pastas Ignoradas",
+            command=self.open_ignored_folders_window,
+        )
+        menu_bar.add_cascade(label="Configurações", menu=settings_menu)
+
+        audit_menu = tk.Menu(menu_bar, tearoff=False)
+        audit_menu.add_command(label="Logs", command=self.open_audit_window)
+        menu_bar.add_cascade(label="Auditoria", menu=audit_menu)
+        self.config(menu=menu_bar)
+
+    def _build_layout(self):
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(2, weight=1)
+
+        header = ttk.Frame(self, padding=(12, 10))
+        header.grid(row=0, column=0, sticky="ew")
+        header.columnconfigure(1, weight=1)
+
+        ttk.Label(header, text="Diretório-base:").grid(row=0, column=0, sticky="w")
+        ttk.Label(header, textvariable=self.base_directory_var).grid(
+            row=0,
+            column=1,
+            sticky="w",
+            padx=(8, 8),
+        )
+        self.refresh_button = ttk.Button(header, text="Atualizar", command=self.refresh)
+        self.refresh_button.grid(row=0, column=2, sticky="e")
+
+        filter_bar = ttk.Frame(self, padding=(12, 0, 12, 8))
+        filter_bar.grid(row=1, column=0, sticky="ew")
+        filter_bar.columnconfigure(3, weight=1)
+
+        ttk.Label(filter_bar, text="Filtro:").grid(row=0, column=0, sticky="w")
+        filter_combo = ttk.Combobox(
+            filter_bar,
+            textvariable=self.filter_var,
+            state="readonly",
+            width=16,
+            values=("Todos", "Somente OK", "Com erro", "Local", "Cloud"),
+        )
+        filter_combo.grid(row=0, column=1, sticky="w", padx=(8, 18))
+        filter_combo.bind("<<ComboboxSelected>>", lambda _event: self._render_projects())
+
+        ttk.Label(filter_bar, text="Buscar:").grid(row=0, column=2, sticky="w")
+        search_entry = ttk.Entry(filter_bar, textvariable=self.search_var)
+        search_entry.grid(row=0, column=3, sticky="ew", padx=(8, 8))
+        ttk.Button(
+            filter_bar,
+            text="Limpar",
+            command=self._clear_search,
+            width=10,
+        ).grid(row=0, column=4, sticky="e")
+        self.search_var.trace_add("write", lambda *_args: self._render_projects())
+
+        columns = (
+            "folder",
+            "type",
+            "file_version",
+            "product_version",
+            "expected_file",
+            "expected_product",
+            "autcom_size",
+            "zip",
+            "status",
+        )
+        self.tree = ttk.Treeview(self, columns=columns, show="headings", height=16)
+        headings = {
+            "folder": "Projeto",
+            "type": "Tipo",
+            "file_version": "FileVersion",
+            "product_version": "ProductVersion",
+            "expected_file": "File esperado",
+            "expected_product": "Product esperado",
+            "autcom_size": "Autcom MB",
+            "zip": "Origem",
+            "status": "Status",
+        }
+        widths = {
+            "folder": 180,
+            "type": 70,
+            "file_version": 110,
+            "product_version": 120,
+            "expected_file": 110,
+            "expected_product": 120,
+            "autcom_size": 90,
+            "zip": 80,
+            "status": 150,
+        }
+        for column in columns:
+            self.tree.heading(
+                column,
+                text=headings[column],
+                anchor="center",
+                command=lambda current_column=column: self._sort_by_column(current_column),
+            )
+            self.tree.column(column, width=widths[column], anchor="center")
+
+        self.tree.tag_configure("ok", background="#e9f7ef")
+        self.tree.tag_configure("warning", background="#fff8d9")
+        self.tree.tag_configure("error", background="#fdecec")
+
+        self.tree.grid(row=2, column=0, sticky="nsew", padx=12)
+        self.tree.bind("<<TreeviewSelect>>", lambda _event: self._sync_buttons())
+        self.tree.bind("<Double-1>", lambda _event: self.open_selected_project_folder())
+
+        footer = ttk.Frame(self, padding=12)
+        footer.grid(row=3, column=0, sticky="ew")
+        footer.columnconfigure(0, weight=1)
+
+        self.status_label = ttk.Label(footer, text="")
+        self.status_label.grid(row=0, column=0, sticky="w")
+
+        self.selection_hint_label = ttk.Label(
+            footer,
+            text="",
+            wraplength=940,
+            justify="left",
+        )
+        self.selection_hint_label.grid(
+            row=1,
+            column=0,
+            columnspan=2,
+            sticky="ew",
+            pady=(6, 0),
+        )
+
+        button_bar = ttk.Frame(footer)
+        button_bar.grid(row=0, column=1, sticky="e")
+
+        self.local_close_button = ttk.Button(
+            button_bar,
+            text="Fechamento Local",
+            command=lambda: self._run_action(actions.fechamento_local),
+        )
+        self.local_close_button.grid(row=0, column=0, padx=4)
+
+        self.cloud_close_button = ttk.Button(
+            button_bar,
+            text="Fechamento Cloud",
+            command=lambda: self._run_action(actions.fechamento_cloud),
+        )
+        self.cloud_close_button.grid(row=0, column=1, padx=4)
+
+        self.local_copy_button = ttk.Button(
+            button_bar,
+            text="Copiar Local",
+            command=lambda: self._run_action(actions.copiar_local),
+        )
+        self.local_copy_button.grid(row=0, column=2, padx=4)
+
+        self.cloud_copy_button = ttk.Button(
+            button_bar,
+            text="Copiar Cloud",
+            command=lambda: self._run_action(actions.copiar_cloud),
+        )
+        self.cloud_copy_button.grid(row=0, column=3, padx=4)
+
+        self.details_button = ttk.Button(
+            button_bar,
+            text="Detalhes",
+            command=self.open_project_details,
+        )
+        self.details_button.grid(row=0, column=4, padx=(12, 4))
+
+        self.open_folder_button = ttk.Button(
+            button_bar,
+            text="Abrir Pasta",
+            command=self.open_selected_project_folder,
+        )
+        self.open_folder_button.grid(row=0, column=5, padx=4)
+
+        self.buttons = (
+            self.local_close_button,
+            self.cloud_close_button,
+            self.local_copy_button,
+            self.cloud_copy_button,
+            self.details_button,
+            self.open_folder_button,
+        )
+        self._sync_buttons()
+
+    def refresh(self):
+        if self.refresh_job is not None:
+            self.after_cancel(self.refresh_job)
+            self.refresh_job = None
+
+        if self.is_scanning:
+            return
+
+        for item_id in self.tree.get_children():
+            self.tree.delete(item_id)
+
+        base_directory = Path(self.base_directory_var.get().strip())
+        save_base_directory(base_directory)
+
+        self.is_scanning = True
+        self.scan_generation += 1
+        generation = self.scan_generation
+        self.projects = []
+        self.status_label.config(text=f"Analisando {base_directory}...")
+        self.refresh_button.config(state="disabled")
+        self._sync_buttons()
+
+        thread = threading.Thread(
+            target=self._scan_in_background,
+            args=(generation, base_directory),
+            daemon=True,
+        )
+        thread.start()
+        self.after(100, self._poll_scan_queue)
+
+    def _scan_in_background(self, generation, base_directory):
+        try:
+            projects = scan_projects(base_directory)
+            error = None
+        except Exception as scan_error:
+            projects = []
+            error = scan_error
+
+        self.scan_queue.put((generation, projects, error))
+
+    def _poll_scan_queue(self):
+        try:
+            generation, projects, error = self.scan_queue.get_nowait()
+        except queue.Empty:
+            if self.is_scanning:
+                self.after(100, self._poll_scan_queue)
+            return
+
+        self._finish_refresh(generation, projects, error)
+
+    def _finish_refresh(self, generation, projects, error):
+        if generation != self.scan_generation:
+            return
+
+        self.is_scanning = False
+        self.refresh_button.config(state="normal")
+
+        if error:
+            self.projects = []
+            self.displayed_projects = []
+            self.status_label.config(text=str(error))
+            self.selection_hint_label.config(text="")
+            self._sync_buttons()
+            self.refresh_job = self.after(SCAN_INTERVAL_MS, self.refresh)
+            return
+
+        self.projects = projects
+        self._render_projects()
+        self.refresh_job = self.after(SCAN_INTERVAL_MS, self.refresh)
+
+    def _render_projects(self):
+        for item_id in self.tree.get_children():
+            self.tree.delete(item_id)
+
+        filtered_projects = [
+            project
+            for project in self.projects
+            if self._matches_search(project) and self._matches_filter(project)
+        ]
+        filtered_projects.sort(
+            key=lambda project: self._sort_value(project, self.sort_column),
+            reverse=self.sort_reverse,
+        )
+        self.displayed_projects = filtered_projects
+
+        for index, project in enumerate(filtered_projects):
+            size = (
+                ""
+                if project.display_autcom_size_mb is None
+                else f"{project.display_autcom_size_mb:.2f}"
+            )
+            self.tree.insert(
+                "",
+                "end",
+                iid=str(index),
+                values=(
+                    project.folder_name,
+                    self._project_type(project),
+                    project.display_file_version or "",
+                    project.display_product_version or "",
+                    project.expected_file_version,
+                    project.expected_product_version,
+                    size,
+                    self._short_zip_status(project),
+                    self._short_status(project),
+                ),
+                tags=(self._status_tag(project),),
+            )
+
+        self.status_label.config(text=self._summary_text(filtered_projects))
+        self._sync_buttons()
+
+    def _clear_search(self):
+        self.search_var.set("")
+
+    def _matches_search(self, project):
+        term = self.search_var.get().strip().lower()
+        if not term:
+            return True
+        searchable = " ".join(
+            (
+                project.folder_name,
+                project.display_file_version or "",
+                project.display_product_version or "",
+                project.expected_file_version or "",
+                project.expected_product_version or "",
+                self._short_zip_status(project),
+                self._short_status(project),
+                project.status,
+            )
+        ).lower()
+        return term in searchable
+
+    def _matches_filter(self, project):
+        selected_filter = self.filter_var.get()
+        if selected_filter == "Somente OK":
+            return project.status == "OK"
+        if selected_filter == "Com erro":
+            return project.status != "OK"
+        if selected_filter == "Local":
+            return not self._is_cloud_project(project)
+        if selected_filter == "Cloud":
+            return self._is_cloud_project(project)
+        return True
+
+    def _short_status(self, project):
+        if project.status == "OK":
+            return "OK"
+        normalized = project.status.lower()
+        if "ausente" in normalized:
+            return "Arquivo ausente"
+        if "fileversion" in normalized or "productversion" in normalized:
+            return "Versão incorreta"
+        if "zip" in normalized:
+            return "Pendência ZIP"
+        return "Pendência"
+
+    def _status_category(self, project):
+        short_status = self._short_status(project)
+        if short_status == "OK":
+            return "ok"
+        if short_status == "Arquivo ausente":
+            return "missing"
+        if short_status == "Versão incorreta":
+            return "version"
+        if short_status == "Pendência ZIP":
+            return "zip"
+        return "other"
+
+    def _status_tag(self, project):
+        category = self._status_category(project)
+        if category == "ok":
+            return "ok"
+        if category in {"missing", "version"}:
+            return "error"
+        return "warning"
+
+    def _short_zip_status(self, project):
+        if project.zip_status == "Autcom zip OK":
+            return "ZIP OK"
+        if project.zip_status == "Sem autcom.zip":
+            return "Somente EXE"
+        if project.zip_status == "Autcom ausente":
+            return "Sem Autcom"
+        return "Pendência"
+
+    def _project_type(self, project):
+        return "Cloud" if self._is_cloud_project(project) else "Local"
+
+    def _summary_text(self, projects):
+        total = len(projects)
+        ok_count = sum(1 for project in projects if self._status_category(project) == "ok")
+        version_count = sum(
+            1 for project in projects if self._status_category(project) == "version"
+        )
+        missing_count = sum(
+            1 for project in projects if self._status_category(project) == "missing"
+        )
+        zip_count = sum(1 for project in projects if self._status_category(project) == "zip")
+        other_count = sum(
+            1 for project in projects if self._status_category(project) == "other"
+        )
+        analyzed_total = len(self.projects)
+        now = datetime.now().strftime("%H:%M:%S")
+        pending_parts = [
+            f"{version_count} versão incorreta",
+            f"{missing_count} arquivo ausente",
+            f"{zip_count} pendência ZIP",
+        ]
+        if other_count:
+            pending_parts.append(f"{other_count} outras pendências")
+        return (
+            f"{total} exibido(s) de {analyzed_total} analisado(s) | "
+            f"{ok_count} OK | {' | '.join(pending_parts)} | Atualizado às {now}"
+        )
+
+    def _sort_value(self, project, column):
+        values = {
+            "folder": project.folder_name.lower(),
+            "type": self._project_type(project),
+            "file_version": project.display_file_version or "",
+            "product_version": project.display_product_version or "",
+            "expected_file": project.expected_file_version or "",
+            "expected_product": project.expected_product_version or "",
+            "autcom_size": project.display_autcom_size_mb or 0,
+            "zip": self._short_zip_status(project),
+            "status": self._short_status(project),
+        }
+        return values.get(column, "")
+
+    def _sort_by_column(self, column):
+        if self.sort_column == column:
+            self.sort_reverse = not self.sort_reverse
+        else:
+            self.sort_column = column
+            self.sort_reverse = False
+        self._render_projects()
+
+    def open_settings_window(self):
+        if self.config_window and self.config_window.winfo_exists():
+            self.config_window.focus()
+            return
+
+        self.config_window = tk.Toplevel(self)
+        self.config_window.title("Configurações")
+        self.config_window.geometry("640x170")
+        self.config_window.resizable(False, False)
+        self.config_window.transient(self)
+
+        frame = ttk.Frame(self.config_window, padding=12)
+        frame.pack(fill="both", expand=True)
+        frame.columnconfigure(1, weight=1)
+
+        settings_base_var = tk.StringVar(value=self.base_directory_var.get())
+        settings_copy_var = tk.StringVar(value=str(load_copy_target_directory()))
+
+        ttk.Label(frame, text="Diretório-base:").grid(row=0, column=0, sticky="w")
+        ttk.Entry(frame, textvariable=settings_base_var).grid(
+            row=0,
+            column=1,
+            sticky="ew",
+            padx=(8, 8),
+        )
+
+        ttk.Button(
+            frame,
+            text="Procurar",
+            command=lambda: self.choose_base_directory(settings_base_var),
+        ).grid(row=0, column=2, sticky="e")
+
+        ttk.Label(frame, text="Destino de cópia:").grid(
+            row=1,
+            column=0,
+            sticky="w",
+            pady=(8, 0),
+        )
+        ttk.Entry(frame, textvariable=settings_copy_var).grid(
+            row=1,
+            column=1,
+            sticky="ew",
+            padx=(8, 8),
+            pady=(8, 0),
+        )
+
+        ttk.Button(
+            frame,
+            text="Procurar",
+            command=lambda: self.choose_base_directory(settings_copy_var),
+        ).grid(row=1, column=2, sticky="e", pady=(8, 0))
+
+        button_bar = ttk.Frame(frame)
+        button_bar.grid(row=2, column=0, columnspan=3, sticky="e", pady=(16, 0))
+        ttk.Button(
+            button_bar,
+            text="Salvar",
+            command=lambda: self.save_settings(
+                settings_base_var.get(),
+                settings_copy_var.get(),
+            ),
+        ).grid(row=0, column=0, padx=(0, 8))
+        ttk.Button(
+            button_bar,
+            text="Cancelar",
+            command=self.config_window.destroy,
+        ).grid(row=0, column=1)
+
+    def open_pattern_window(self):
+        pattern_window = tk.Toplevel(self)
+        pattern_window.title("Padrão de Arquivos")
+        pattern_window.geometry("760x170")
+        pattern_window.resizable(False, False)
+        pattern_window.transient(self)
+
+        frame = ttk.Frame(pattern_window, padding=12)
+        frame.pack(fill="both", expand=True)
+        frame.columnconfigure(1, weight=1)
+
+        local_var = tk.StringVar()
+        cloud_var = tk.StringVar()
+
+        ttk.Label(frame, text="Pasta modelo Local:").grid(row=0, column=0, sticky="w")
+        ttk.Entry(frame, textvariable=local_var).grid(row=0, column=1, sticky="ew", padx=8)
+        ttk.Button(
+            frame,
+            text="Procurar",
+            command=lambda: self.choose_base_directory(local_var),
+        ).grid(row=0, column=2, sticky="e")
+
+        ttk.Label(frame, text="Pasta modelo Cloud:").grid(row=1, column=0, sticky="w", pady=(8, 0))
+        ttk.Entry(frame, textvariable=cloud_var).grid(
+            row=1,
+            column=1,
+            sticky="ew",
+            padx=8,
+            pady=(8, 0),
+        )
+        ttk.Button(
+            frame,
+            text="Procurar",
+            command=lambda: self.choose_base_directory(cloud_var),
+        ).grid(row=1, column=2, sticky="e", pady=(8, 0))
+
+        button_bar = ttk.Frame(frame)
+        button_bar.grid(row=2, column=0, columnspan=3, sticky="e", pady=(18, 0))
+        ttk.Button(
+            button_bar,
+            text="Salvar Padrão",
+            command=lambda: self.save_file_pattern(
+                pattern_window,
+                local_var.get(),
+                cloud_var.get(),
+            ),
+        ).grid(row=0, column=0, padx=(0, 8))
+        ttk.Button(button_bar, text="Cancelar", command=pattern_window.destroy).grid(
+            row=0,
+            column=1,
+        )
+
+    def save_file_pattern(self, pattern_window, local_project_path, cloud_project_path):
+        if not local_project_path and not cloud_project_path:
+            messagebox.showerror(
+                "Padrão de Arquivos",
+                "Informe ao menos uma pasta modelo Local ou Cloud.",
+            )
+            return
+
+        try:
+            pattern = generate_pattern_from_projects(
+                local_project_path.strip() or None,
+                cloud_project_path.strip() or None,
+            )
+            save_pattern(pattern)
+        except Exception as error:
+            messagebox.showerror("Padrão de Arquivos", f"Erro ao gerar padrão:\n{error}")
+            return
+
+        pattern_window.destroy()
+        messagebox.showinfo(
+            "Padrão de Arquivos",
+            "Padrão salvo em project_pattern.json\n\n"
+            f"Projetos modelo: {len(pattern['source_projects'])}\n"
+            f"Grupos essenciais: {len(pattern['required_groups'])}",
+        )
+        self.refresh()
+
+    def open_ignored_folders_window(self):
+        ignored_window = tk.Toplevel(self)
+        ignored_window.title("Pastas Ignoradas")
+        ignored_window.geometry("560x420")
+        ignored_window.transient(self)
+
+        frame = ttk.Frame(ignored_window, padding=12)
+        frame.pack(fill="both", expand=True)
+        frame.rowconfigure(1, weight=1)
+        frame.columnconfigure(0, weight=1)
+
+        ttk.Label(frame, text="Pastas ignoradas na varredura:").grid(
+            row=0,
+            column=0,
+            columnspan=3,
+            sticky="w",
+        )
+
+        list_frame = ttk.Frame(frame)
+        list_frame.grid(row=1, column=0, columnspan=3, sticky="nsew", pady=(8, 8))
+        list_frame.rowconfigure(0, weight=1)
+        list_frame.columnconfigure(0, weight=1)
+
+        folder_list = tk.Listbox(list_frame, height=12)
+        y_scroll = ttk.Scrollbar(list_frame, orient="vertical", command=folder_list.yview)
+        folder_list.configure(yscrollcommand=y_scroll.set)
+        folder_list.grid(row=0, column=0, sticky="nsew")
+        y_scroll.grid(row=0, column=1, sticky="ns")
+
+        def refresh_list(folders):
+            folder_list.delete(0, "end")
+            for folder in sorted(folders):
+                folder_list.insert("end", folder)
+
+        folders = set(load_ignored_project_folders())
+        refresh_list(folders)
+
+        new_folder_var = tk.StringVar()
+        ttk.Entry(frame, textvariable=new_folder_var).grid(
+            row=2,
+            column=0,
+            sticky="ew",
+            pady=(0, 8),
+        )
+
+        def add_folder():
+            folder_name = new_folder_var.get().strip().lower()
+            if not folder_name:
+                return
+            folders.add(folder_name)
+            new_folder_var.set("")
+            refresh_list(folders)
+
+        def remove_selected():
+            selection = folder_list.curselection()
+            if not selection:
+                return
+            for index in reversed(selection):
+                folders.discard(folder_list.get(index))
+            refresh_list(folders)
+
+        ttk.Button(frame, text="Adicionar", command=add_folder).grid(
+            row=2,
+            column=1,
+            sticky="ew",
+            padx=(8, 0),
+            pady=(0, 8),
+        )
+        ttk.Button(frame, text="Remover", command=remove_selected).grid(
+            row=2,
+            column=2,
+            sticky="ew",
+            padx=(8, 0),
+            pady=(0, 8),
+        )
+
+        button_bar = ttk.Frame(frame)
+        button_bar.grid(row=3, column=0, columnspan=3, sticky="e")
+
+        def save_ignored_folders():
+            save_ignored_project_folders(folders)
+            ignored_window.destroy()
+            self.refresh()
+
+        ttk.Button(button_bar, text="Salvar", command=save_ignored_folders).grid(
+            row=0,
+            column=0,
+            padx=(0, 8),
+        )
+        ttk.Button(button_bar, text="Cancelar", command=ignored_window.destroy).grid(
+            row=0,
+            column=1,
+        )
+
+    def open_audit_window(self):
+        audit_window = tk.Toplevel(self)
+        audit_window.title("Auditoria")
+        audit_window.geometry("900x520")
+        audit_window.transient(self)
+
+        frame = ttk.Frame(audit_window, padding=12)
+        frame.pack(fill="both", expand=True)
+        frame.rowconfigure(1, weight=1)
+        frame.columnconfigure(0, weight=1)
+
+        toolbar = ttk.Frame(frame)
+        toolbar.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        toolbar.columnconfigure(1, weight=1)
+
+        ttk.Label(toolbar, text="Log:").grid(row=0, column=0, sticky="w")
+        log_var = tk.StringVar()
+        log_combo = ttk.Combobox(toolbar, textvariable=log_var, state="readonly")
+        log_combo.grid(row=0, column=1, sticky="ew", padx=(8, 8))
+
+        text_frame = ttk.Frame(frame)
+        text_frame.grid(row=1, column=0, sticky="nsew")
+        text_frame.rowconfigure(0, weight=1)
+        text_frame.columnconfigure(0, weight=1)
+
+        log_text = tk.Text(text_frame, wrap="none")
+        y_scroll = ttk.Scrollbar(text_frame, orient="vertical", command=log_text.yview)
+        x_scroll = ttk.Scrollbar(text_frame, orient="horizontal", command=log_text.xview)
+        log_text.configure(yscrollcommand=y_scroll.set, xscrollcommand=x_scroll.set)
+        log_text.grid(row=0, column=0, sticky="nsew")
+        y_scroll.grid(row=0, column=1, sticky="ns")
+        x_scroll.grid(row=1, column=0, sticky="ew")
+
+        def refresh_logs():
+            log_files = list_log_files()
+            log_combo["values"] = [str(path.name) for path in log_files]
+            if log_files and not log_var.get():
+                log_var.set(log_files[0].name)
+            load_selected_log()
+
+        def load_selected_log(_event=None):
+            log_text.config(state="normal")
+            log_text.delete("1.0", "end")
+            selected_name = log_var.get()
+            selected_file = next(
+                (path for path in list_log_files() if path.name == selected_name),
+                None,
+            )
+            if selected_file:
+                log_text.insert("1.0", read_log_file(selected_file))
+            else:
+                log_text.insert("1.0", "Nenhum log registrado.")
+            log_text.config(state="disabled")
+
+        ttk.Button(toolbar, text="Atualizar", command=refresh_logs).grid(
+            row=0,
+            column=2,
+            sticky="e",
+        )
+        ttk.Button(toolbar, text="Fechar", command=audit_window.destroy).grid(
+            row=0,
+            column=3,
+            sticky="e",
+            padx=(8, 0),
+        )
+        log_combo.bind("<<ComboboxSelected>>", load_selected_log)
+        refresh_logs()
+
+    def choose_base_directory(self, target_var):
+        selected_directory = filedialog.askdirectory(
+            title="Selecionar Diretório-base",
+            initialdir=target_var.get() or "C:\\",
+        )
+        if selected_directory:
+            target_var.set(selected_directory)
+
+    def save_settings(self, base_directory, copy_target_directory):
+        self.base_directory_var.set(base_directory.strip())
+        save_base_directory(self.base_directory_var.get())
+        save_copy_target_directory(copy_target_directory)
+        if self.config_window and self.config_window.winfo_exists():
+            self.config_window.destroy()
+        self.refresh()
+
+    def _selected_project(self):
+        selection = self.tree.selection()
+        if not selection:
+            return None
+        return self.displayed_projects[int(selection[0])]
+
+    def _sync_buttons(self):
+        selected = self._selected_project()
+        state = "normal" if selected else "disabled"
+        for button in self.buttons:
+            button.config(state=state)
+
+        if selected:
+            is_cloud = self._is_cloud_project(selected)
+            self.local_close_button.config(state="disabled" if is_cloud else "normal")
+            self.cloud_close_button.config(state="normal" if is_cloud else "disabled")
+            self.local_copy_button.config(
+                state="normal" if selected.local_copy_allowed else "disabled"
+            )
+            self.cloud_copy_button.config(
+                state="normal" if selected.cloud_copy_allowed else "disabled"
+            )
+            self.selection_hint_label.config(text=self._selection_hint(selected))
+        else:
+            self.selection_hint_label.config(text="")
+
+    def _selection_hint(self, project):
+        hints = [f"Projeto {self._project_type(project)} selecionado: {project.folder_name}."]
+        if self._is_cloud_project(project):
+            hints.append("Fechamento Local indisponível porque o projeto é Cloud.")
+        else:
+            hints.append("Fechamento Cloud indisponível porque o projeto é Local.")
+        if not project.local_copy_allowed:
+            hints.append("Copiar Local indisponível: Autcom precisa estar abaixo de 100 MB.")
+        if not project.cloud_copy_allowed:
+            hints.append("Copiar Cloud indisponível: Autcom precisa estar acima de 200 MB.")
+        if project.status != "OK":
+            hints.append(f"Detalhe: {self._summarize_project_detail(project.status)}")
+        return "\n".join(hints)
+
+    def _summarize_project_detail(self, status):
+        parts = [part.strip() for part in status.split(";") if part.strip()]
+        if len(parts) <= 4:
+            return " | ".join(parts)
+        visible_parts = " | ".join(parts[:4])
+        remaining = len(parts) - 4
+        return f"{visible_parts} | +{remaining} pendência(s). Abra Detalhes para ver tudo."
+
+    def _run_action(self, action):
+        selected = self._selected_project()
+        if selected:
+            action(selected)
+
+    def _is_cloud_project(self, project):
+        return project.folder_name.upper().endswith("_CLOUD")
+
+    def open_selected_project_folder(self):
+        selected = self._selected_project()
+        if not selected:
+            return
+
+        if not selected.path.exists():
+            messagebox.showerror("Abrir Pasta", f"Pasta nao encontrada:\n{selected.path}")
+            return
+
+        os.startfile(selected.path)
+
+    def open_project_details(self):
+        selected = self._selected_project()
+        if not selected:
+            return
+
+        details_window = tk.Toplevel(self)
+        details_window.title(f"Detalhes - {selected.folder_name}")
+        details_window.geometry("980x360")
+        details_window.transient(self)
+
+        header = ttk.Frame(details_window, padding=(12, 10))
+        header.pack(fill="x")
+        ttk.Label(header, text=f"Projeto: {selected.folder_name}").pack(anchor="w")
+        ttk.Label(header, text=f"Pasta: {selected.path}").pack(anchor="w")
+        ttk.Label(header, text=f"Status: {selected.status}").pack(anchor="w")
+        loading_label = ttk.Label(header, text="Carregando versões dos arquivos...")
+        loading_label.pack(anchor="w", pady=(6, 0))
+
+        details_frame = ttk.Frame(details_window)
+        details_frame.pack(fill="both", expand=True, padx=12, pady=(0, 12))
+
+        columns = (
+            "group",
+            "found",
+            "source",
+            "zip",
+            "file_version",
+            "product_version",
+            "size",
+            "status",
+        )
+        headings = {
+            "group": "Grupo",
+            "found": "Arquivo",
+            "source": "Origem",
+            "zip": "Zip",
+            "file_version": "FileVersion",
+            "product_version": "ProductVersion",
+            "size": "MB",
+            "status": "Status",
+        }
+        widths = {
+            "group": 110,
+            "found": 150,
+            "source": 80,
+            "zip": 170,
+            "file_version": 110,
+            "product_version": 120,
+            "size": 70,
+            "status": 220,
+        }
+        details_tree = self._build_details_tree(details_frame, columns, headings, widths)
+
+        def worker():
+            error = None
+            try:
+                enrich_project_file_versions(selected)
+            except Exception as details_error:
+                error = details_error
+            try:
+                self.after(
+                    0,
+                    lambda: self._finish_project_details(
+                        details_window,
+                        loading_label,
+                        details_tree,
+                        selected,
+                        error,
+                    ),
+                )
+            except (RuntimeError, tk.TclError):
+                pass
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _finish_project_details(self, details_window, loading_label, details_tree, selected, error):
+        try:
+            if not details_window.winfo_exists():
+                return
+        except tk.TclError:
+            return
+
+        if error:
+            loading_label.config(text=f"Erro ao carregar versões: {error}")
+            return
+
+        loading_label.config(text="Versões carregadas.")
+        for item_id in details_tree.get_children():
+            details_tree.delete(item_id)
+        for check in self._details_checks(selected, selected.file_checks):
+            self._insert_file_check(details_tree, selected, check)
+
+    def _build_details_tree(self, parent, columns, headings, widths):
+        container = ttk.Frame(parent)
+        container.pack(fill="both", expand=True)
+        container.rowconfigure(0, weight=1)
+        container.columnconfigure(0, weight=1)
+
+        tree = ttk.Treeview(container, columns=columns, show="headings", height=8)
+        tree.tag_configure("ok", background="#e9f7ef")
+        tree.tag_configure("error", background="#fdecec")
+        x_scroll = ttk.Scrollbar(container, orient="horizontal", command=tree.xview)
+        y_scroll = ttk.Scrollbar(container, orient="vertical", command=tree.yview)
+        tree.configure(xscrollcommand=x_scroll.set, yscrollcommand=y_scroll.set)
+
+        for column in columns:
+            tree.heading(column, text=headings[column], anchor="center")
+            tree.column(column, width=widths[column], anchor="center", stretch=False)
+
+        tree.grid(row=0, column=0, sticky="nsew")
+        y_scroll.grid(row=0, column=1, sticky="ns")
+        x_scroll.grid(row=1, column=0, sticky="ew")
+        return tree
+
+    def _details_checks(self, project, checks):
+        return sorted(
+            checks,
+            key=lambda check: (
+                self._check_display_status(project, check) == "OK",
+                check.group_name.lower(),
+                (check.found_name or "").lower(),
+            ),
+        )
+
+    def _check_display_status(self, project, check):
+        if check.status != "OK":
+            return check.status
+        if not check.validate_version:
+            return "OK"
+
+        errors = []
+        if project.expected_file_version and check.file_version != project.expected_file_version:
+            errors.append("FileVersion incorreto")
+        if (
+            project.expected_product_version
+            and check.product_version != project.expected_product_version
+        ):
+            errors.append("ProductVersion incorreto")
+        return "; ".join(errors) if errors else "OK"
+
+    def _insert_file_check(self, tree, project, check):
+        display_status = self._check_display_status(project, check)
+        tree.insert(
+            "",
+            "end",
+            values=(
+                check.group_name,
+                check.found_name or "Nao encontrado",
+                check.source,
+                check.zip_path.name if check.zip_path else "",
+                check.file_version or "",
+                check.product_version or "",
+                "" if check.size_mb is None else f"{check.size_mb:.2f}",
+                display_status,
+            ),
+            tags=("ok" if display_status == "OK" else "error",),
+        )
