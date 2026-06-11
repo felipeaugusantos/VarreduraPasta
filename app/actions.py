@@ -14,7 +14,13 @@ from app.scanner import validate_zip_names
 from app.settings import load_copy_target_directory
 
 POLL_INTERVAL_MS = 100
-CRITICAL_COPY_FILES = {"autcom.exe", "autcom.zip"}
+CRITICAL_COPY_FILES = {"autcom.zip"}
+
+
+class CleanupError(OSError):
+    def __init__(self, message, cleaned_items=0):
+        super().__init__(message)
+        self.cleaned_items = cleaned_items
 
 
 def _is_cloud_project(project):
@@ -231,7 +237,13 @@ def _finish_closing_start(
         "processo_aberto",
         project,
         bat_path=bat_path,
-        reason=f"pid={process.pid}",
+        reason=f"versao antes do fechamento; pid={process.pid}",
+    )
+    messagebox.showinfo(
+        title,
+        "Fechamento iniciado.\n\n"
+        "As versoes registradas na Auditoria sao as versoes antes do BAT.\n"
+        "Apos o BAT concluir, clique em Atualizar para validar se o projeto ficou OK.",
     )
 
 
@@ -601,7 +613,10 @@ def _show_copy_confirmation(project, destination, target_root, title):
     )
     ttk.Label(
         frame,
-        text="A copia ira substituir arquivos com o mesmo nome no destino.",
+        text=(
+            "A copia ira enviar somente arquivos .zip para o destino. "
+            "Apos a validacao, a origem sera limpa mantendo apenas comandosCMD."
+        ),
     ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(14, 0))
 
     checks_frame = ttk.LabelFrame(frame, text="Validacao de seguranca")
@@ -681,16 +696,27 @@ def _start_copy(window, project, destination, title):
     def worker():
         copied_files = 0
         hash_summary = {}
+        cleaned_items = 0
+        cleanup_error = None
         try:
-            copied_files, hash_summary = _copy_project_files(project.path, destination)
+            copied_files, hash_summary, cleaned_items, cleanup_error = _copy_project_files(
+                project.path,
+                destination,
+            )
             error = None
         except OSError as copy_error:
             error = copy_error
-        result_queue.put((error, copied_files, hash_summary))
+        result_queue.put((error, copied_files, hash_summary, cleaned_items, cleanup_error))
 
     def poll():
         try:
-            error, copied_files, hash_summary = result_queue.get_nowait()
+            (
+                error,
+                copied_files,
+                hash_summary,
+                cleaned_items,
+                cleanup_error,
+            ) = result_queue.get_nowait()
         except queue.Empty:
             if progress.winfo_exists():
                 progress.after(POLL_INTERVAL_MS, poll)
@@ -704,6 +730,8 @@ def _start_copy(window, project, destination, title):
             error,
             copied_files,
             hash_summary,
+            cleaned_items,
+            cleanup_error,
         )
 
     threading.Thread(target=worker, daemon=True).start()
@@ -712,17 +740,22 @@ def _start_copy(window, project, destination, title):
 
 def _copy_project_files(source, destination):
     copied_files = 0
-    for item in source.iterdir():
+    copied_paths = []
+    for item in _iter_copyable_zip_files(source):
         target = destination / item.name
-        if item.is_dir():
-            shutil.copytree(item, target, dirs_exist_ok=True)
-            copied_files += sum(1 for path in item.rglob("*") if path.is_file())
-        else:
-            shutil.copy2(item, target)
-            copied_files += 1
+        shutil.copy2(item, target)
+        copied_paths.append(item.relative_to(source))
+        copied_files += 1
 
-    mismatches = _collect_copy_mismatches(source, destination)
-    hash_summary, hash_mismatches = _verify_critical_file_hashes(source, destination)
+    if copied_files == 0:
+        raise OSError("Nenhum arquivo .zip encontrado para copiar.")
+
+    mismatches = _collect_copy_mismatches(source, destination, copied_paths)
+    hash_summary, hash_mismatches = _verify_critical_file_hashes(
+        source,
+        destination,
+        copied_paths,
+    )
     mismatches.extend(hash_mismatches)
     if mismatches:
         preview = ", ".join(mismatches[:5])
@@ -732,24 +765,66 @@ def _copy_project_files(source, destination):
             f"Verificacao pos-copia encontrou {len(mismatches)} "
             f"arquivo(s) divergente(s) no destino: {preview}"
         )
-    return copied_files, hash_summary
+    cleanup_error = None
+    try:
+        cleaned_items = _cleanup_source_after_copy(source)
+    except CleanupError as error:
+        cleaned_items = error.cleaned_items
+        cleanup_error = error
+    except OSError as error:
+        cleaned_items = 0
+        cleanup_error = CleanupError(str(error), cleaned_items)
+    return copied_files, hash_summary, cleaned_items, cleanup_error
 
 
-def _collect_copy_mismatches(source, destination):
+def _iter_copyable_zip_files(source):
+    source = Path(source)
+    return sorted(
+        item
+        for item in source.iterdir()
+        if item.is_file() and item.suffix.lower() == ".zip"
+    )
+
+
+def _cleanup_source_after_copy(source):
+    source = Path(source)
+    cleaned_items = 0
+    for item in source.iterdir():
+        if item.name.lower() == "comandoscmd":
+            continue
+        try:
+            if item.is_dir() and not item.is_symlink():
+                shutil.rmtree(item)
+            else:
+                item.unlink()
+        except OSError as error:
+            raise CleanupError(
+                f"Erro ao limpar origem {item}: {error}",
+                cleaned_items,
+            ) from error
+        cleaned_items += 1
+    return cleaned_items
+
+
+def _collect_copy_mismatches(source, destination, relative_paths=None):
     mismatches = []
-    for current_path, _dir_names, file_names in os.walk(source):
-        relative = Path(current_path).relative_to(source)
-        for file_name in file_names:
-            source_file = Path(current_path) / file_name
-            target_file = destination / relative / file_name
-            try:
-                if (
-                    not target_file.exists()
-                    or source_file.stat().st_size != target_file.stat().st_size
-                ):
-                    mismatches.append(str(relative / file_name))
-            except OSError:
-                mismatches.append(str(relative / file_name))
+    if relative_paths is None:
+        relative_paths = [
+            path.relative_to(source)
+            for path in _iter_copyable_zip_files(source)
+        ]
+
+    for relative_path in relative_paths:
+        source_file = Path(source) / relative_path
+        target_file = Path(destination) / relative_path
+        try:
+            if (
+                not target_file.exists()
+                or source_file.stat().st_size != target_file.stat().st_size
+            ):
+                mismatches.append(str(relative_path))
+        except OSError:
+            mismatches.append(str(relative_path))
     return mismatches
 
 
@@ -764,31 +839,35 @@ def _sha256_file(path):
     return digest.hexdigest()
 
 
-def _verify_critical_file_hashes(source, destination):
+def _verify_critical_file_hashes(source, destination, relative_paths=None):
     hashes = {}
     mismatches = []
-    for current_path, _dir_names, file_names in os.walk(source):
-        relative = Path(current_path).relative_to(source)
-        for file_name in file_names:
-            if file_name.lower() not in CRITICAL_COPY_FILES:
-                continue
+    if relative_paths is None:
+        relative_paths = [
+            path.relative_to(source)
+            for path in _iter_copyable_zip_files(source)
+        ]
 
-            source_file = Path(current_path) / file_name
-            target_file = destination / relative / file_name
-            relative_name = str(relative / file_name)
-            try:
-                if not target_file.exists():
-                    mismatches.append(relative_name)
-                    continue
-                source_hash = _sha256_file(source_file)
-                target_hash = _sha256_file(target_file)
-            except OSError:
+    for relative_path in relative_paths:
+        if Path(relative_path).name.lower() not in CRITICAL_COPY_FILES:
+            continue
+
+        source_file = Path(source) / relative_path
+        target_file = Path(destination) / relative_path
+        relative_name = str(relative_path)
+        try:
+            if not target_file.exists():
                 mismatches.append(relative_name)
                 continue
+            source_hash = _sha256_file(source_file)
+            target_hash = _sha256_file(target_file)
+        except OSError:
+            mismatches.append(relative_name)
+            continue
 
-            hashes[relative_name] = source_hash
-            if source_hash != target_hash:
-                mismatches.append(relative_name)
+        hashes[relative_name] = source_hash
+        if source_hash != target_hash:
+            mismatches.append(relative_name)
     return hashes, mismatches
 
 
@@ -800,7 +879,17 @@ def _format_hash_summary(hash_summary):
     return "; ".join(parts)
 
 
-def _finish_copy(progress, project, destination, title, error, copied_files, hash_summary):
+def _finish_copy(
+    progress,
+    project,
+    destination,
+    title,
+    error,
+    copied_files,
+    hash_summary,
+    cleaned_items,
+    cleanup_error,
+):
     _safe_destroy(progress)
     if error:
         _write_action_audit(
@@ -813,10 +902,30 @@ def _finish_copy(progress, project, destination, title, error, copied_files, has
         messagebox.showerror(title, f"Erro ao copiar arquivos:\n{error}")
         return
 
-    reason = f"{copied_files} arquivo(s) copiado(s) e verificado(s)"
+    reason = (
+        f"{copied_files} arquivo(s) copiado(s) e verificado(s); "
+        f"origem_limpa={cleaned_items} item(ns); preservado=comandosCMD"
+    )
     hash_text = _format_hash_summary(hash_summary)
     if hash_text:
         reason = f"{reason}; {hash_text}"
+
+    if cleanup_error:
+        _write_action_audit(
+            title,
+            "erro_limpeza",
+            project,
+            destination,
+            reason=f"{reason}; limpeza_falhou={cleanup_error}",
+        )
+        messagebox.showwarning(
+            title,
+            "Copia concluida e verificada no destino.\n\n"
+            "A limpeza da pasta de origem falhou e deve ser feita manualmente, "
+            "preservando comandosCMD.\n\n"
+            f"{cleanup_error}",
+        )
+        return
 
     _write_action_audit(
         title,
@@ -825,4 +934,9 @@ def _finish_copy(progress, project, destination, title, error, copied_files, has
         destination,
         reason=reason,
     )
-    messagebox.showinfo(title, f"Copia concluida:\n{destination}")
+    messagebox.showinfo(
+        title,
+        "Copia concluida:\n"
+        f"{destination}\n\n"
+        "A pasta de origem foi limpa, mantendo apenas comandosCMD.",
+    )

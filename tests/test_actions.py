@@ -5,8 +5,12 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from app.actions import (
+    CleanupError,
     _current_log_file,
+    _cleanup_source_after_copy,
     _copy_project_files,
+    _finish_copy,
+    _finish_closing_start,
     _write_action_audit,
     _build_copy_safety_checks,
     _copy_block_reasons,
@@ -172,6 +176,41 @@ class ActionAuditTests(unittest.TestCase):
         self.assertIn(" | tipo=Cloud | ", content)
         self.assertIn("projeto CLOUD nao pode usar fechamento local", content)
 
+    def test_closing_start_logs_pre_closing_version_context(self):
+        import app.logging_utils as logging_utils
+        from tempfile import TemporaryDirectory
+
+        class FakeProgress:
+            def winfo_exists(self):
+                return False
+
+        with TemporaryDirectory() as temp_directory:
+            original_log_file = logging_utils.LOG_FILE
+            logging_utils.LOG_FILE = Path(temp_directory) / "fechamentos.log"
+            try:
+                project = make_project(
+                    display_file_version="999.999.999.999",
+                    display_product_version="999.999.999.999",
+                )
+                process = SimpleNamespace(pid=23088)
+                with patch("app.actions.messagebox.showinfo") as showinfo:
+                    _finish_closing_start(
+                        FakeProgress(),
+                        project,
+                        "Fechamento Cloud",
+                        process,
+                        None,
+                        None,
+                        project.path / "comandosCMD" / "_FechamentoArquivos.bat",
+                    )
+                content = logging_utils.LOG_FILE.read_text(encoding="utf-8")
+            finally:
+                logging_utils.LOG_FILE = original_log_file
+
+        self.assertIn("motivo=versao antes do fechamento; pid=23088", content)
+        showinfo.assert_called_once()
+        self.assertIn("clique em Atualizar", showinfo.call_args.args[1])
+
 
 class CopyHashVerificationTests(unittest.TestCase):
     def test_critical_file_hash_match_passes(self):
@@ -183,13 +222,13 @@ class CopyHashVerificationTests(unittest.TestCase):
             destination = root / "destino"
             source.mkdir()
             destination.mkdir()
-            (source / "Autcom.exe").write_bytes(b"abc123")
-            (destination / "Autcom.exe").write_bytes(b"abc123")
+            (source / "autcom.zip").write_bytes(b"abc123")
+            (destination / "autcom.zip").write_bytes(b"abc123")
 
             hashes, mismatches = _verify_critical_file_hashes(source, destination)
 
         self.assertEqual(mismatches, [])
-        self.assertIn("Autcom.exe", hashes)
+        self.assertIn("autcom.zip", hashes)
 
     def test_critical_file_same_size_different_bytes_fails(self):
         from tempfile import TemporaryDirectory
@@ -200,14 +239,14 @@ class CopyHashVerificationTests(unittest.TestCase):
             destination = root / "destino"
             source.mkdir()
             destination.mkdir()
-            (source / "Autcom.exe").write_bytes(b"abc123")
-            (destination / "Autcom.exe").write_bytes(b"xyz789")
+            (source / "autcom.zip").write_bytes(b"abc123")
+            (destination / "autcom.zip").write_bytes(b"xyz789")
 
             _hashes, mismatches = _verify_critical_file_hashes(source, destination)
 
-        self.assertEqual(mismatches, ["Autcom.exe"])
+        self.assertEqual(mismatches, ["autcom.zip"])
 
-    def test_copy_project_files_reports_critical_hash(self):
+    def test_copy_project_files_copies_only_zip_and_reports_critical_hash(self):
         from tempfile import TemporaryDirectory
 
         with TemporaryDirectory() as temp_directory:
@@ -217,11 +256,130 @@ class CopyHashVerificationTests(unittest.TestCase):
             source.mkdir()
             destination.mkdir()
             (source / "Autcom.exe").write_bytes(b"abc123")
+            (source / "autcom.zip").write_bytes(b"zip123")
+            (source / "comandosCMD").mkdir()
+            (source / "comandosCMD" / "_FechamentoArquivos.bat").write_text(
+                "echo ok",
+                encoding="utf-8",
+            )
 
-            copied_files, hashes = _copy_project_files(source, destination)
+            copied_files, hashes, cleaned_items, cleanup_error = _copy_project_files(
+                source,
+                destination,
+            )
+            destination_files = sorted(item.name for item in destination.iterdir())
+            remaining_source = sorted(item.name for item in source.iterdir())
 
         self.assertEqual(copied_files, 1)
-        self.assertIn("Autcom.exe", hashes)
+        self.assertIn("autcom.zip", hashes)
+        self.assertEqual(destination_files, ["autcom.zip"])
+        self.assertEqual(remaining_source, ["comandosCMD"])
+        self.assertEqual(cleaned_items, 2)
+        self.assertIsNone(cleanup_error)
+
+    def test_copy_project_files_fails_without_zip_and_keeps_source(self):
+        from tempfile import TemporaryDirectory
+
+        with TemporaryDirectory() as temp_directory:
+            root = Path(temp_directory)
+            source = root / "origem"
+            destination = root / "destino"
+            source.mkdir()
+            destination.mkdir()
+            (source / "Autcom.exe").write_bytes(b"abc123")
+            (source / "comandosCMD").mkdir()
+
+            with self.assertRaisesRegex(OSError, "Nenhum arquivo .zip"):
+                _copy_project_files(source, destination)
+            remaining_source = sorted(item.name for item in source.iterdir())
+
+        self.assertEqual(remaining_source, ["Autcom.exe", "comandosCMD"])
+
+    def test_copy_project_files_reports_cleanup_error_separately(self):
+        from tempfile import TemporaryDirectory
+
+        with TemporaryDirectory() as temp_directory:
+            root = Path(temp_directory)
+            source = root / "origem"
+            destination = root / "destino"
+            source.mkdir()
+            destination.mkdir()
+            (source / "autcom.zip").write_bytes(b"zip123")
+            (source / "comandosCMD").mkdir()
+
+            with patch(
+                "app.actions._cleanup_source_after_copy",
+                side_effect=OSError("arquivo travado"),
+            ):
+                copied_files, hashes, cleaned_items, cleanup_error = _copy_project_files(
+                    source,
+                    destination,
+                )
+            destination_files = sorted(item.name for item in destination.iterdir())
+            remaining_source = sorted(item.name for item in source.iterdir())
+
+        self.assertEqual(copied_files, 1)
+        self.assertIn("autcom.zip", hashes)
+        self.assertEqual(cleaned_items, 0)
+        self.assertIsNotNone(cleanup_error)
+        self.assertIn("arquivo travado", str(cleanup_error))
+        self.assertEqual(destination_files, ["autcom.zip"])
+        self.assertEqual(remaining_source, ["autcom.zip", "comandosCMD"])
+
+    def test_finish_copy_audits_cleanup_error_separately(self):
+        import app.logging_utils as logging_utils
+        from tempfile import TemporaryDirectory
+
+        class FakeProgress:
+            def winfo_exists(self):
+                return False
+
+        with TemporaryDirectory() as temp_directory:
+            original_log_file = logging_utils.LOG_FILE
+            logging_utils.LOG_FILE = Path(temp_directory) / "fechamentos.log"
+            try:
+                project = make_project()
+                with patch("app.actions.messagebox.showwarning") as showwarning:
+                    _finish_copy(
+                        FakeProgress(),
+                        project,
+                        Path("C:/destino/projeto"),
+                        "Copiar Local",
+                        None,
+                        1,
+                        {"autcom.zip": "abc123"},
+                        0,
+                        CleanupError("arquivo travado", 0),
+                    )
+                content = logging_utils.LOG_FILE.read_text(encoding="utf-8")
+            finally:
+                logging_utils.LOG_FILE = original_log_file
+
+        self.assertIn("Copiar Local erro_limpeza | usuario=", content)
+        self.assertIn("1 arquivo(s) copiado(s) e verificado(s)", content)
+        self.assertIn("limpeza_falhou=arquivo travado", content)
+        showwarning.assert_called_once()
+        self.assertIn("Copia concluida e verificada", showwarning.call_args.args[1])
+
+    def test_cleanup_source_keeps_only_comandoscmd(self):
+        from tempfile import TemporaryDirectory
+
+        with TemporaryDirectory() as temp_directory:
+            source = Path(temp_directory)
+            commands = source / "comandosCMD"
+            nested = source / "pasta"
+            commands.mkdir()
+            nested.mkdir()
+            (commands / "_FechamentoArquivos.bat").write_text("echo ok", encoding="utf-8")
+            (nested / "arquivo.txt").write_text("remover", encoding="utf-8")
+            (source / "Autcom.exe").write_bytes(b"abc123")
+            (source / "autcom.zip").write_bytes(b"zip")
+
+            cleaned_items = _cleanup_source_after_copy(source)
+            remaining = sorted(item.name for item in source.iterdir())
+
+        self.assertEqual(cleaned_items, 3)
+        self.assertEqual(remaining, ["comandosCMD"])
 
 
 if __name__ == "__main__":

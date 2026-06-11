@@ -762,6 +762,7 @@ class VersionScannerApp(tk.Tk):
                 "cancelado",
                 "concluido",
                 "erro",
+                "erro_limpeza",
                 "erro_padrao",
                 "iniciado",
                 "padrao_gravado",

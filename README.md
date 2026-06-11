@@ -88,8 +88,10 @@ Tudo fica em `settings.json`, ao lado do executavel (criado automaticamente):
 - `Copiar Local`: permitido quando `Autcom.exe` esta abaixo de 100 MB.
 - `Copiar Cloud`: permitido quando `Autcom.exe` esta acima de 200 MB.
 - A copia procura no destino de rede uma pasta com o mesmo nome do projeto,
-  pede confirmacao mostrando origem e destino, sobrescreve arquivos de mesmo
-  nome e confere os tamanhos no destino ao final.
+  pede confirmacao mostrando origem e destino e envia somente os arquivos
+  `.zip` da pasta do projeto.
+- Depois da copia concluida e verificada, a pasta de origem no Diretorio-base e
+  limpa automaticamente, preservando apenas `comandosCMD`.
 - A copia e bloqueada quando existe mais de uma pasta de destino com o mesmo
   nome do projeto, evitando envio para local incorreto.
 - Fechamentos e copias sao bloqueados quando existem ZIPs com nome diferente do

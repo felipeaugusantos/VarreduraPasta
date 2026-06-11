@@ -5,6 +5,20 @@ Todas as alteracoes relevantes deste projeto sao documentadas neste arquivo.
 O formato e baseado em Keep a Changelog e o projeto segue Versionamento
 Semantico (`MAIOR.MENOR.CORRECAO`).
 
+## [1.2.2] - 2026-06-11
+
+### Alterado
+- A copia envia somente arquivos `.zip` da pasta do projeto para o destino,
+  sem copiar `comandosCMD` ou executaveis soltos.
+- Apos copia concluida e verificada com sucesso, a pasta de origem no
+  Diretorio-base e limpa automaticamente, preservando apenas `comandosCMD`.
+- Tela de confirmacao da copia passou a informar que somente `.zip` sera enviado
+  e que a origem sera limpa apos a validacao.
+- Auditoria da copia concluida registra quantos itens foram removidos da origem
+  e que `comandosCMD` foi preservada.
+- Falha na limpeza da origem agora e auditada como `erro_limpeza`, deixando
+  claro que a copia ja foi concluida e verificada no destino.
+
 ## [1.2.1] - 2026-06-11
 
 ### Corrigido

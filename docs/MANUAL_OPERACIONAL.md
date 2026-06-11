@@ -234,6 +234,10 @@ Validacoes realizadas:
 
 Se houver qualquer bloqueio, revise o motivo apresentado na tela e na Auditoria.
 
+Quando a copia for concluida e verificada com sucesso, o sistema limpa a pasta
+de origem no Diretorio-base e preserva apenas `comandosCMD`. A pasta
+`comandosCMD` nao e copiada para o destino; somente arquivos `.zip` sao enviados.
+
 ## 10. Auditoria
 
 A Auditoria fica em:
