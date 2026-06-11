@@ -1,8 +1,6 @@
 from pathlib import Path
 
-from app.runtime import application_directory
-
-LOGS_DIRECTORY = application_directory() / "logs"
+from app.logging_utils import LOGS_DIRECTORY
 
 
 def list_log_files():

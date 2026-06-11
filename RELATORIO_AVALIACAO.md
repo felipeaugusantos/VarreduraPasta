@@ -1,7 +1,48 @@
 # Relatório de Avaliação — Sistema de Acompanhamento de Cópia
 
-**Última atualização:** 10/06/2026 (rodada de profissionalização)
+**Última atualização:** 10/06/2026 — Revalidação dos ajustes de proteção contra ZIPs renomeados
 **Escopo:** análise completa do código-fonte (`main.py` e módulos `app/`).
+
+---
+
+## Revalidação 10/06 (tarde) — Ajustes do usuário: proteção contra ZIPs com nome incorreto
+
+**Contexto:** incidente real no projeto `379.48.2.30.74.111.172` — 156 zips de componentes
+ficaram nomeados `autcom (N).zip` após o Fechamento Local das 15:19. Os ajustes analisados
+nesta revalidação adicionam detecção e bloqueio para esse cenário.
+
+### O que foi adicionado (validado, funcionando)
+
+| Ajuste | Onde | Avaliação |
+|---|---|---|
+| `validate_zip_names()`: detecta zip com um único arquivo interno cujo nome não bate com o nome do zip (normalizando o sufixo ` (N)`), informando o nome correto esperado | `scanner.py` | ✅ Correto. Teste real: **156 erros detectados na pasta do incidente, 0 no projeto saudável 111.173** |
+| Status do projeto passa a incluir `Nome de ZIP incorreto: ...` (com limite de 3 no resumo) e novo campo `ProjectResult.zip_name_errors` | `scanner.py` | ✅ Correto, propagado para a UI |
+| `_block_on_zip_name_errors()`: **bloqueia** Fechamento Local/Cloud e Copiar Local/Cloud quando há zips com nome errado, com diálogo explicativo e registro no log | `actions.py` | ✅ Correto — impede que o problema se propague para a rede |
+| `_merge_required_core_groups()`: os 4 grupos essenciais (Autcom, AutcomTinta, Autban, Auttin) passam a ser **sempre** exigidos, mesmo quando o padrão aprendido não os contém | `scanner.py` | ✅ Correção importante — antes um padrão aprendido podia omitir o Autcom e o projeto aparecia OK |
+| `_short_status` reordenado: pendência de ZIP agora classifica antes de versão incorreta | `interface.py` | ✅ OK (mudança de comportamento intencional: projeto com ambos os problemas aparece como "Pendência ZIP") |
+| 5 testes novos (merge de grupos essenciais, status com erro de nome, 3 cenários de `validate_zip_names`) | `tests/test_scanner.py` | ✅ Suíte completa: **46 testes, todos passando** |
+
+### Observações (não aplicadas — para decisão)
+
+1. **Organização dos testes:** 4 testes de `_version_errors` (`test_wrong_file_version_is_reported`,
+   `test_wrong_product_version_is_reported`, `test_checks_without_version_validation_are_skipped`,
+   `test_non_ok_checks_are_skipped`) ficaram dentro da classe `RequiredCoreGroupsTests` em vez de
+   `VersionErrorsTests`. Continuam rodando — é só organização.
+2. **Zip numerado com conteúdo "certo" passa na validação, mas é invisível para o scanner:**
+   `autcom (1).zip` contendo `autcom.exe` é considerado OK pela `validate_zip_names` (há teste
+   afirmando isso), porém o índice de zips (`_build_zip_index`/`_find_zip_file`) procura pelo stem
+   exato `autcom` — esse zip não seria encontrado na checagem de versão. Vale decidir: ou acusar
+   todo zip numerado, ou normalizar o stem também no índice do scanner.
+3. **Custo por varredura:** `validate_zip_names` abre todos os zips de todos os projetos a cada
+   varredura (atualização automática de 5 min), sem cache. A leitura é só do diretório central do
+   zip (rápida), mas em pastas grandes/rede adiciona I/O. Um cache por (mtime, tamanho), como o de
+   versões, eliminaria o custo.
+4. **Bloqueio roda na thread da UI:** `_block_on_zip_name_errors` valida sincronamente no clique
+   do botão. Em pasta com centenas de zips em rede pode haver um congelamento breve.
+5. **Severidade visual:** erro de nome de ZIP aparece como "Pendência ZIP" (amarelo/warning),
+   mas a ação correspondente é bloqueada — talvez mereça vermelho/error para chamar atenção.
+6. **Versionamento:** os ajustes ainda não estão commitados nem registrados no CHANGELOG
+   (sugestão: versão 1.2.0 — "Detecção e bloqueio de ZIPs com nome incorreto").
 
 ---
 

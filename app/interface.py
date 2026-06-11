@@ -398,10 +398,10 @@ class VersionScannerApp(tk.Tk):
         normalized = project.status.lower()
         if "ausente" in normalized:
             return "Arquivo ausente"
-        if "fileversion" in normalized or "productversion" in normalized:
-            return "Versão incorreta"
         if "zip" in normalized:
             return "Pendência ZIP"
+        if "fileversion" in normalized or "productversion" in normalized:
+            return "Versão incorreta"
         return "Pendência"
 
     def _status_category(self, project):
@@ -420,7 +420,7 @@ class VersionScannerApp(tk.Tk):
         category = self._status_category(project)
         if category == "ok":
             return "ok"
-        if category in {"missing", "version"}:
+        if category in {"missing", "version", "zip"}:
             return "error"
         return "warning"
 
@@ -740,11 +740,36 @@ class VersionScannerApp(tk.Tk):
         toolbar = ttk.Frame(frame)
         toolbar.grid(row=0, column=0, sticky="ew", pady=(0, 8))
         toolbar.columnconfigure(1, weight=1)
+        toolbar.columnconfigure(3, weight=1)
 
         ttk.Label(toolbar, text="Log:").grid(row=0, column=0, sticky="w")
         log_var = tk.StringVar()
         log_combo = ttk.Combobox(toolbar, textvariable=log_var, state="readonly")
         log_combo.grid(row=0, column=1, sticky="ew", padx=(8, 8))
+        ttk.Label(toolbar, text="Buscar:").grid(row=0, column=2, sticky="w")
+        filter_var = tk.StringVar()
+        filter_entry = ttk.Entry(toolbar, textvariable=filter_var)
+        filter_entry.grid(row=0, column=3, sticky="ew", padx=(8, 8))
+        result_var = tk.StringVar(value="Todos")
+        result_combo = ttk.Combobox(
+            toolbar,
+            textvariable=result_var,
+            state="readonly",
+            width=12,
+            values=(
+                "Todos",
+                "bloqueado",
+                "cancelado",
+                "concluido",
+                "erro",
+                "erro_padrao",
+                "iniciado",
+                "padrao_gravado",
+                "padrao_nao_gravado",
+                "processo_aberto",
+            ),
+        )
+        result_combo.grid(row=0, column=4, sticky="e", padx=(0, 8))
 
         text_frame = ttk.Frame(frame)
         text_frame.grid(row=1, column=0, sticky="nsew")
@@ -759,40 +784,80 @@ class VersionScannerApp(tk.Tk):
         y_scroll.grid(row=0, column=1, sticky="ns")
         x_scroll.grid(row=1, column=0, sticky="ew")
 
-        def refresh_logs():
+        current_log_content = {"text": ""}
+        current_log_state = {"selected": "", "stamp": None}
+
+        def refresh_logs(force=True):
             log_files = list_log_files()
             log_combo["values"] = [str(path.name) for path in log_files]
             if log_files and not log_var.get():
-                log_var.set(log_files[0].name)
-            load_selected_log()
+                log_var.set(log_files[-1].name)
+            load_selected_log(force=force)
 
-        def load_selected_log(_event=None):
+        def apply_log_filter(_event=None):
             log_text.config(state="normal")
             log_text.delete("1.0", "end")
+            content = current_log_content["text"]
+            search_text = filter_var.get().strip().lower()
+            result_filter = result_var.get()
+            lines = []
+            for line in reversed(content.splitlines()):
+                lower_line = line.lower()
+                if search_text and search_text not in lower_line:
+                    continue
+                if result_filter != "Todos" and f" {result_filter} |" not in lower_line:
+                    continue
+                lines.append(line)
+            log_text.insert("1.0", "\n".join(lines) if lines else "Nenhum log encontrado.")
+            log_text.config(state="disabled")
+
+        def load_selected_log(_event=None, force=True):
             selected_name = log_var.get()
             selected_file = next(
                 (path for path in list_log_files() if path.name == selected_name),
                 None,
             )
             if selected_file:
-                log_text.insert("1.0", read_log_file(selected_file))
+                try:
+                    stat = selected_file.stat()
+                    stamp = (str(selected_file), stat.st_mtime_ns, stat.st_size)
+                except OSError:
+                    stamp = (str(selected_file), None, None)
+                if not force and current_log_state["stamp"] == stamp:
+                    return
+                current_log_state["selected"] = selected_name
+                current_log_state["stamp"] = stamp
+                current_log_content["text"] = read_log_file(selected_file)
             else:
-                log_text.insert("1.0", "Nenhum log registrado.")
-            log_text.config(state="disabled")
+                if not force and current_log_state["selected"] == "":
+                    return
+                current_log_state["selected"] = ""
+                current_log_state["stamp"] = None
+                current_log_content["text"] = "Nenhum log registrado."
+            apply_log_filter()
 
-        ttk.Button(toolbar, text="Atualizar", command=refresh_logs).grid(
+        def auto_refresh_logs():
+            if not audit_window.winfo_exists():
+                return
+            refresh_logs(force=False)
+            audit_window.after(2000, auto_refresh_logs)
+
+        ttk.Button(toolbar, text="Atualizar", command=lambda: refresh_logs(force=True)).grid(
             row=0,
-            column=2,
+            column=5,
             sticky="e",
         )
         ttk.Button(toolbar, text="Fechar", command=audit_window.destroy).grid(
             row=0,
-            column=3,
+            column=6,
             sticky="e",
             padx=(8, 0),
         )
         log_combo.bind("<<ComboboxSelected>>", load_selected_log)
+        filter_entry.bind("<KeyRelease>", apply_log_filter)
+        result_combo.bind("<<ComboboxSelected>>", apply_log_filter)
         refresh_logs()
+        audit_window.after(2000, auto_refresh_logs)
 
     def choose_base_directory(self, target_var):
         selected_directory = filedialog.askdirectory(

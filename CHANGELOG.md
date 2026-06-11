@@ -1,66 +1,122 @@
 # Changelog
 
-Todas as alterações relevantes deste projeto são documentadas neste arquivo.
+Todas as alteracoes relevantes deste projeto sao documentadas neste arquivo.
 
-O formato é baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/)
-e o projeto segue [Versionamento Semântico](https://semver.org/lang/pt-BR/)
-(`MAIOR.MENOR.CORREÇÃO`).
+O formato e baseado em Keep a Changelog e o projeto segue Versionamento
+Semantico (`MAIOR.MENOR.CORRECAO`).
+
+## [1.2.1] - 2026-06-11
+
+### Corrigido
+- Fluxos de fechamento e copia deixaram de chamar `after()` do Tkinter a partir
+  de threads secundarias; agora usam `queue.Queue` com polling pela thread da
+  interface.
+- Verificacao pos-copia passou a calcular SHA-256 dos arquivos criticos
+  `Autcom.exe` e `autcom.zip`, detectando divergencia mesmo quando o tamanho do
+  arquivo e igual.
+- Auditoria da copia concluida passou a registrar os hashes SHA-256 calculados
+  para arquivos criticos.
+- Logging foi movido para `app/logging_utils.py`, mantendo rotacao mensal sem
+  acoplar a tela de Auditoria ao modulo de acoes.
+- Documentacao de implantacao reforca que `settings.json` do ambiente de
+  desenvolvimento nao deve ser distribuido sem revisao.
+
+### Alterado
+- Versao do aplicativo atualizada para `1.2.1`.
+- Suite de testes ampliada para cobrir verificacao de hash de arquivos criticos.
+
+## [1.2.0] - 2026-06-10
+
+### Adicionado
+- Deteccao de ZIPs com nome diferente do arquivo interno, incluindo arquivos
+  numerados pelo Windows como `autcom (1).zip`.
+- Bloqueio de Fechamento Local/Cloud e Copiar Local/Cloud quando houver ZIPs
+  com nome incorreto, com mensagem explicativa e registro em log.
+- Auditoria padronizada para fechamento e copia, registrando usuario, projeto,
+  tipo, origem, destino, BAT, versoes, tamanho do Autcom, resultado e motivo.
+- Auditoria dos bloqueios por tipo no fechamento (Local em projeto Cloud e
+  Cloud em projeto Local).
+- Tela de validacao de seguranca antes da copia, com botao `Continuar`
+  bloqueado quando houver divergencia.
+- Bloqueio de copia quando a busca na rede encontra mais de uma pasta de
+  destino com o mesmo nome do projeto.
+- Contagem de arquivos copiados e verificados no registro de conclusao da
+  auditoria.
+- Logs rotacionados por mes no formato `logs/fechamentos-AAAA-MM.log`.
+- Documentacao operacional em `docs/MANUAL_OPERACIONAL.md` e roteiro de
+  apresentacao em `docs/APRESENTACAO.md`.
+- Cache da validacao de nomes de ZIP por pasta, invalidado por nome, tamanho e
+  data de modificacao dos arquivos.
+- Os grupos essenciais (`Autcom`, `AutcomTinta`, `Autban`, `Auttin`) agora sao
+  sempre exigidos, mesmo quando o padrao aprendido por projeto estiver
+  incompleto.
+
+### Alterado
+- Pendencia de nome de ZIP passou a ser tratada visualmente como erro critico
+  na tela principal.
+- Tela de Auditoria passou a atualizar automaticamente, manter filtros e abrir
+  por padrao o log mensal mais recente.
+- `LOGS_DIRECTORY` foi centralizado em `runtime.py`, evitando dependencia da
+  tela de Auditoria no modulo de acoes.
+- README atualizado com checklist de seguranca, bloqueio de destino duplicado,
+  rotacao mensal de logs e orientacao de instalacao em pasta com permissao de
+  escrita.
+- Suite de testes ampliada para 58 testes, incluindo regressao de caixa preta.
 
 ## [1.1.0] - 2026-06-10
 
 ### Corrigido
-- Tela Detalhes passou a mostrar **todos** os grupos essenciais com status
-  individual (antes escondia os arquivos com versão divergente, aparecendo
+- Tela Detalhes passou a mostrar todos os grupos essenciais com status
+  individual (antes escondia os arquivos com versao divergente, aparecendo
   vazia justamente quando havia problema).
-- Tela Detalhes não trava mais a interface: a leitura das versões (incluindo
-  extração de zips grandes) roda em segundo plano com indicador de
-  carregamento.
-- Lista de Pastas Ignoradas vazia passou a ser respeitada (antes, salvar a
-  lista vazia fazia os padrões voltarem na próxima leitura).
-- Chamadas ao Tkinter a partir de threads secundárias protegidas em todos os
-  fluxos (fechamento, busca de destino e cópia), eliminando risco de crash
+- Tela Detalhes nao trava mais a interface: a leitura das versoes, incluindo
+  extracao de zips grandes, roda em segundo plano com indicador de carregamento.
+- Lista de Pastas Ignoradas vazia passou a ser respeitada (antes, salvar a lista
+  vazia fazia os padroes voltarem na proxima leitura).
+- Chamadas ao Tkinter a partir de threads secundarias protegidas em todos os
+  fluxos (fechamento, busca de destino e copia), eliminando risco de crash
   intermitente.
 
 ### Adicionado
-- Suíte de testes automatizados (`tests/`, 41 testes via `unittest`):
+- Suite de testes automatizados (`tests/`, 41 testes via `unittest`):
   `python -m unittest discover -s tests -t .`
-- Verificação pós-cópia: os tamanhos dos arquivos no destino são conferidos ao
-  final; divergências geram erro detalhado listando os arquivos.
-- Destino de cópia configurável pela tela `Configurações` (persistido em
-  `settings.json`; antes era fixo no código).
-- Janela de busca na rede mostra a pasta que está sendo varrida; erros de
-  acesso durante a busca são registrados no log.
-- Destaque por cor na tela Detalhes (verde OK, vermelho com pendência).
-- Número de versão do aplicativo exibido no título da janela.
+- Verificacao pos-copia: os tamanhos dos arquivos no destino sao conferidos ao
+  final; divergencias geram erro detalhado listando os arquivos.
+- Destino de copia configuravel pela tela `Configuracoes` (persistido em
+  `settings.json`; antes era fixo no codigo).
+- Janela de busca na rede mostra a pasta que esta sendo varrida; erros de
+  acesso durante a busca sao registrados no log.
+- Destaque por cor na tela Detalhes (verde OK, vermelho com pendencia).
+- Numero de versao do aplicativo exibido no titulo da janela.
 
 ### Alterado
-- `settings.json` e `project_pattern.json` gravados de forma atômica
-  (arquivo temporário + substituição), evitando corrupção se o app fechar
-  durante a gravação.
-- Cache de versões de ZIP reestruturado para uma entrada por arquivo
-  (substituída quando o zip muda), eliminando crescimento de memória sem
-  limite em uso contínuo.
-- Aprendizado de padrão no fechamento ficou mais completo (inclui arquivos sem
-  validação de versão) e mais rápido (não extrai zips desnecessariamente).
+- `settings.json` e `project_pattern.json` gravados de forma atomica (arquivo
+  temporario + substituicao), evitando corrupcao se o app fechar durante a
+  gravacao.
+- Cache de versoes de ZIP reestruturado para uma entrada por arquivo
+  (substituida quando o zip muda), eliminando crescimento de memoria sem limite
+  em uso continuo.
+- Aprendizado de padrao no fechamento ficou mais completo (inclui arquivos sem
+  validacao de versao) e mais rapido (nao extrai zips desnecessariamente).
 - Janelas de progresso protegidas contra fechamento acidental durante
-  operações.
-- README reescrito refletindo o comportamento atual (configuração, regras,
-  ações, testes e build).
+  operacoes.
+- README reescrito refletindo o comportamento atual (configuracao, regras,
+  acoes, testes e build).
 
 ## [1.0.0] - 2026-06-08
 
 ### Adicionado
-- Varredura do diretório-base com validação de `FileVersion` e
-  `ProductVersion` dos executáveis contra o padrão do nome da pasta.
-- Leitura de versão de executáveis soltos e dentro de `.zip`
-  (via WinAPI/ctypes, sem dependências externas).
-- Interface Tkinter com filtros, busca, ordenação por coluna e atualização
-  automática a cada 5 minutos.
-- Ações de Fechamento Local/Cloud (execução de BAT) e Copiar Local/Cloud
-  (cópia para servidor de rede) com regras de habilitação por tipo de projeto
-  e tamanho do `Autcom.exe`.
-- Padrão de arquivos essenciais aprendido a partir de pastas modelo
+- Varredura do diretorio-base com validacao de `FileVersion` e
+  `ProductVersion` dos executaveis contra o padrao do nome da pasta.
+- Leitura de versao de executaveis soltos e dentro de `.zip` (via WinAPI/ctypes,
+  sem dependencias externas).
+- Interface Tkinter com filtros, busca, ordenacao por coluna e atualizacao
+  automatica a cada 5 minutos.
+- Acoes de Fechamento Local/Cloud (execucao de BAT) e Copiar Local/Cloud
+  (copia para servidor de rede) com regras de habilitacao por tipo de projeto e
+  tamanho do `Autcom.exe`.
+- Padrao de arquivos essenciais aprendido a partir de pastas modelo
   (`project_pattern.json`).
-- Pastas ignoradas configuráveis e log de auditoria (`logs/fechamentos.log`)
-  com tela de consulta.
-- Build de executável via PyInstaller (`VarreduraSistema.spec`).
+- Pastas ignoradas configuraveis e log de auditoria mensal
+  (`logs/fechamentos-AAAA-MM.log`) com tela de consulta.
+- Build de executavel via PyInstaller (`VarreduraSistema.spec`).

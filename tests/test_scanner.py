@@ -1,10 +1,15 @@
 import unittest
+from tempfile import TemporaryDirectory
+from pathlib import Path
+from zipfile import ZipFile
 
 from app.scanner import (
     FileCheck,
     _build_status,
+    _merge_required_core_groups,
     _version_errors,
     expected_versions_from_folder,
+    validate_zip_names,
 )
 
 
@@ -93,6 +98,24 @@ class VersionErrorsTests(unittest.TestCase):
         )
 
 
+class RequiredCoreGroupsTests(unittest.TestCase):
+    def test_autcom_is_kept_when_pattern_does_not_include_it(self):
+        groups = _merge_required_core_groups(
+            (
+                {
+                    "name": "ConsultaPagamentosPixMonitor",
+                    "accepted_files": ("ConsultaPagamentosPixMonitor.exe",),
+                    "validate_version": False,
+                },
+            )
+        )
+        group_names = {group["name"] for group in groups}
+        self.assertIn("Autcom", group_names)
+        self.assertIn("AutcomTinta", group_names)
+        self.assertIn("Autban", group_names)
+        self.assertIn("Auttin", group_names)
+
+
 class BuildStatusTests(unittest.TestCase):
     def test_all_ok(self):
         status = _build_status("48.02.30.74", "02.30.74.150", [make_check()])
@@ -128,6 +151,50 @@ class BuildStatusTests(unittest.TestCase):
         wrong = make_check(file_version="99.99.99.99")
         status = _build_status("48.02.30.74", "02.30.74.150", [wrong])
         self.assertIn("Autcom FileVersion incorreto", status)
+
+    def test_zip_name_errors_are_reported(self):
+        status = _build_status(
+            "48.02.30.74",
+            "02.30.74.150",
+            [make_check()],
+            ["autcom (1).zip contem AutBan.exe; esperado AutBan.zip"],
+        )
+        self.assertIn("Nome de ZIP incorreto", status)
+
+
+class ValidateZipNamesTests(unittest.TestCase):
+    def test_matching_zip_name_is_ok(self):
+        with TemporaryDirectory() as temp_directory:
+            folder = Path(temp_directory)
+            zip_path = folder / "AutBan.zip"
+            with ZipFile(zip_path, "w") as archive:
+                archive.writestr("AutBan.exe", b"conteudo")
+
+            self.assertEqual(validate_zip_names(folder), [])
+
+    def test_autcom_numbered_zip_with_other_file_is_reported(self):
+        with TemporaryDirectory() as temp_directory:
+            folder = Path(temp_directory)
+            zip_path = folder / "autcom (1).zip"
+            with ZipFile(zip_path, "w") as archive:
+                archive.writestr("AutBan.exe", b"conteudo")
+
+            errors = validate_zip_names(folder)
+            self.assertEqual(len(errors), 1)
+            self.assertIn("autcom (1).zip contem AutBan.exe", errors[0])
+            self.assertIn("esperado AutBan.zip", errors[0])
+
+    def test_numbered_zip_with_same_inner_file_is_reported(self):
+        with TemporaryDirectory() as temp_directory:
+            folder = Path(temp_directory)
+            zip_path = folder / "autcom (1).zip"
+            with ZipFile(zip_path, "w") as archive:
+                archive.writestr("autcom.exe", b"conteudo")
+
+            errors = validate_zip_names(folder)
+            self.assertEqual(len(errors), 1)
+            self.assertIn("autcom (1).zip contem autcom.exe", errors[0])
+            self.assertIn("esperado autcom.zip", errors[0])
 
 
 if __name__ == "__main__":

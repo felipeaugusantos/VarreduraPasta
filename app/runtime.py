@@ -8,6 +8,10 @@ def application_directory():
     return Path(__file__).resolve().parent.parent
 
 
+def logs_directory():
+    return application_directory() / "logs"
+
+
 def resource_path(relative_path):
     if getattr(sys, "frozen", False):
         base_path = Path(getattr(sys, "_MEIPASS"))

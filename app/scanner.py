@@ -16,6 +16,7 @@ from app.version_reader import read_exe_versions
 
 
 _ZIP_VERSION_CACHE = {}
+_ZIP_NAME_CACHE = {}
 
 
 @dataclass
@@ -49,6 +50,7 @@ class ProjectResult:
     missing_files: list[str]
     zip_status: str
     status: str
+    zip_name_errors: list[str]
     local_copy_allowed: bool
     cloud_copy_allowed: bool
     file_checks: list[FileCheck]
@@ -72,6 +74,55 @@ def _build_zip_index(project_path):
         zip_path.stem.lower(): zip_path
         for zip_path in sorted(project_path.glob("*.zip"))
     }
+
+
+def _zip_name_cache_stamp(project_path):
+    stamp = []
+    for zip_path in sorted(Path(project_path).glob("*.zip")):
+        try:
+            stat = zip_path.stat()
+        except OSError:
+            continue
+        stamp.append((zip_path.name.lower(), stat.st_mtime_ns, stat.st_size))
+    return tuple(stamp)
+
+
+def validate_zip_names(project_path):
+    project_path = Path(project_path)
+    cache_key = str(project_path).lower()
+    cache_stamp = _zip_name_cache_stamp(project_path)
+    cached = _ZIP_NAME_CACHE.get(cache_key)
+    if cached is not None and cached[0] == cache_stamp:
+        return list(cached[1])
+
+    errors = []
+    for zip_path in sorted(project_path.glob("*.zip")):
+        try:
+            with ZipFile(zip_path) as archive:
+                supported_members = [
+                    Path(info.filename).name
+                    for info in archive.infolist()
+                    if not info.is_dir()
+                    and Path(info.filename).suffix.lower() in {".exe", ".dll", ".bpl"}
+                    and not Path(info.filename).name.lower().startswith("err_")
+                ]
+        except BadZipFile:
+            continue
+        except OSError as error:
+            errors.append(f"{zip_path.name}: erro ao ler ZIP ({error})")
+            continue
+
+        if len(supported_members) != 1:
+            continue
+
+        inner_name = supported_members[0]
+        expected_zip_name = f"{Path(inner_name).stem}.zip"
+        if zip_path.name.lower() != expected_zip_name.lower():
+            errors.append(
+                f"{zip_path.name} contem {inner_name}; esperado {expected_zip_name}"
+            )
+    _ZIP_NAME_CACHE[cache_key] = (cache_stamp, tuple(errors))
+    return errors
 
 
 def _discover_project_files(project_path, zip_index):
@@ -146,6 +197,27 @@ def _project_has_candidate_files(project_path):
         if item.is_file() and item.suffix.lower() in {".exe", ".dll", ".zip"}:
             return True
     return False
+
+
+def _group_stems(group):
+    return {
+        Path(file_name).stem.lower().removeprefix("lib")
+        for file_name in group.get("accepted_files", ())
+    }
+
+
+def _merge_required_core_groups(required_file_groups):
+    merged_groups = list(required_file_groups)
+    existing_stems = set()
+    for group in merged_groups:
+        existing_stems.update(_group_stems(group))
+
+    for core_group in REQUIRED_FILE_GROUPS:
+        if _group_stems(core_group).isdisjoint(existing_stems):
+            merged_groups.append(core_group)
+            existing_stems.update(_group_stems(core_group))
+
+    return tuple(merged_groups)
 
 
 def _find_zip_file(project_path, file_name, zip_index=None):
@@ -317,7 +389,7 @@ def _autcom_zip_status(autcom_check):
     return "Autcom ausente"
 
 
-def _build_status(expected_file, expected_product, file_checks):
+def _build_status(expected_file, expected_product, file_checks, zip_name_errors=None):
     errors = []
     if expected_file is None or expected_product is None:
         errors.append("Nome da pasta fora do padrao")
@@ -336,6 +408,11 @@ def _build_status(expected_file, expected_product, file_checks):
         if check.source == "Zip" and check.status != "OK"
     ]
     errors.extend(zip_errors)
+    if zip_name_errors:
+        preview = "; ".join(zip_name_errors[:3])
+        if len(zip_name_errors) > 3:
+            preview += f"; +{len(zip_name_errors) - 3} ZIP(s)"
+        errors.append(f"Nome de ZIP incorreto: {preview}")
     errors.extend(_version_errors(file_checks, expected_file, expected_product))
     return "OK" if not errors else "; ".join(errors)
 
@@ -355,11 +432,12 @@ def scan_projects(base_directory=BASE_DIRECTORY):
         if not _project_has_candidate_files(project_path):
             continue
 
-        required_file_groups = (
+        required_file_groups = _merge_required_core_groups(
             load_required_file_groups(project_path.name) or REQUIRED_FILE_GROUPS
         )
         expected_file, expected_product = expected_versions_from_folder(project_path.name)
         zip_index = _build_zip_index(project_path)
+        zip_name_errors = validate_zip_names(project_path)
         discovered_files = _discover_project_files(project_path, zip_index)
         file_checks = [
             _check_file_group(project_path, group, zip_index)
@@ -401,7 +479,13 @@ def scan_projects(base_directory=BASE_DIRECTORY):
                 zip_product_version=autcom_check.product_version if autcom_check.source == "Zip" else None,
                 missing_files=missing_files,
                 zip_status=_autcom_zip_status(autcom_check),
-                status=_build_status(expected_file, expected_product, file_checks),
+                status=_build_status(
+                    expected_file,
+                    expected_product,
+                    file_checks,
+                    zip_name_errors,
+                ),
+                zip_name_errors=zip_name_errors,
                 local_copy_allowed=(
                     autcom_check.size_mb is not None
                     and autcom_check.size_mb < LOCAL_MAX_AUTCOM_MB
