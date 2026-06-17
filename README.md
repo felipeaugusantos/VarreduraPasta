@@ -45,7 +45,9 @@ levar caminhos locais para outra maquina.
 Tudo fica em `settings.json`, ao lado do executavel (criado automaticamente):
 
 - `Configuracoes > Diretorio-base`: pasta analisada (padrao `C:\VERSOES_FECHADAS`)
-  e destino de copia na rede (padrao `\\citel-fileserve\Modem\_VERSOES_INDIVIDUAIS`).
+  e destinos adicionais de copia na rede. Por padrao, a busca de destino considera
+  `\\citel-fileserve\Modem\VERSOES\379_Versoes\379.48.02\379.48.2.30` e
+  `\\citel-fileserve\Modem\_VERSOES_INDIVIDUAIS`.
 - `Configuracoes > Padrao de Arquivos`: seleciona uma pasta modelo Local e uma
   Cloud; os arquivos encontrados nelas viram o padrao essencial aplicado em
   todas as versoes (gravado em `project_pattern.json`).
@@ -85,6 +87,8 @@ Tudo fica em `settings.json`, ao lado do executavel (criado automaticamente):
   `comandosCMD\_FechamentoArquivos.bat` do projeto em um novo console e grava o
   padrao de arquivos aprendido. Habilitado conforme o tipo do projeto
   (Local sem `_CLOUD`; Cloud com `_CLOUD`).
+- `Validar Fechamento`: apos o BAT terminar, clique em `Atualizar` e use este
+  botao para registrar na Auditoria a versao/status final do projeto.
 - `Copiar Local`: permitido quando `Autcom.exe` esta abaixo de 100 MB.
 - `Copiar Cloud`: permitido quando `Autcom.exe` esta acima de 200 MB.
 - A copia procura no destino de rede uma pasta com o mesmo nome do projeto,
@@ -92,8 +96,8 @@ Tudo fica em `settings.json`, ao lado do executavel (criado automaticamente):
   `.zip` da pasta do projeto.
 - Depois da copia concluida e verificada, a pasta de origem no Diretorio-base e
   limpa automaticamente, preservando apenas `comandosCMD`.
-- A copia e bloqueada quando existe mais de uma pasta de destino com o mesmo
-  nome do projeto, evitando envio para local incorreto.
+- Quando existe mais de uma pasta de destino com o mesmo nome do projeto, o
+  sistema mostra uma tela de escolha antes da confirmacao da copia.
 - Fechamentos e copias sao bloqueados quando existem ZIPs com nome diferente do
   arquivo interno.
 - Todas as acoes geram registro mensal em `logs/fechamentos-AAAA-MM.log`.

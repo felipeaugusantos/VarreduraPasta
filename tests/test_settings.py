@@ -5,6 +5,7 @@ from tempfile import TemporaryDirectory
 from app import settings
 from app.config import (
     BASE_DIRECTORY,
+    COPY_TARGET_DIRECTORIES,
     COPY_TARGET_DIRECTORY,
     IGNORED_PROJECT_FOLDERS,
 )
@@ -40,6 +41,10 @@ class CopyTargetDirectoryTests(SettingsTestCase):
             settings.load_copy_target_directory(),
             COPY_TARGET_DIRECTORY,
         )
+        self.assertEqual(
+            settings.load_copy_target_directories(),
+            list(COPY_TARGET_DIRECTORIES),
+        )
 
     def test_roundtrip(self):
         settings.save_copy_target_directory(r"\\servidor\destino")
@@ -47,12 +52,42 @@ class CopyTargetDirectoryTests(SettingsTestCase):
             settings.load_copy_target_directory(),
             Path(r"\\servidor\destino"),
         )
+        self.assertEqual(
+            settings.load_copy_target_directories(),
+            [*COPY_TARGET_DIRECTORIES, Path(r"\\servidor\destino")],
+        )
 
     def test_empty_value_falls_back_to_default(self):
         settings.save_copy_target_directory("   ")
         self.assertEqual(
             settings.load_copy_target_directory(),
             COPY_TARGET_DIRECTORY,
+        )
+        self.assertEqual(
+            settings.load_copy_target_directories(),
+            list(COPY_TARGET_DIRECTORIES),
+        )
+
+    def test_multiple_additional_targets_are_saved_without_duplicates(self):
+        settings.save_copy_target_directories(
+            [
+                r"\\servidor\destino1",
+                r"\\servidor\destino2",
+                r"\\servidor\destino1",
+            ]
+        )
+
+        self.assertEqual(
+            settings.load_additional_copy_target_directories(),
+            [Path(r"\\servidor\destino1"), Path(r"\\servidor\destino2")],
+        )
+        self.assertEqual(
+            settings.load_copy_target_directories(),
+            [
+                *COPY_TARGET_DIRECTORIES,
+                Path(r"\\servidor\destino1"),
+                Path(r"\\servidor\destino2"),
+            ],
         )
 
 

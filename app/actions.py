@@ -4,17 +4,20 @@ import queue
 import shutil
 import subprocess
 import threading
+import time
 from pathlib import Path
-from tkinter import TclError, Toplevel, messagebox, ttk
+from tkinter import Listbox, TclError, Toplevel, messagebox, ttk
 
 from app import logging_utils
 from app.config import CLOUD_MIN_AUTCOM_MB, LOCAL_MAX_AUTCOM_MB
 from app.pattern import save_project_pattern
 from app.scanner import validate_zip_names
-from app.settings import load_copy_target_directory
+from app.settings import load_copy_target_directories
 
 POLL_INTERVAL_MS = 100
 CRITICAL_COPY_FILES = {"autcom.zip"}
+CLEANUP_RETRY_ATTEMPTS = 5
+CLEANUP_RETRY_DELAY_SECONDS = 1
 
 
 class CleanupError(OSError):
@@ -243,7 +246,8 @@ def _finish_closing_start(
         title,
         "Fechamento iniciado.\n\n"
         "As versoes registradas na Auditoria sao as versoes antes do BAT.\n"
-        "Apos o BAT concluir, clique em Atualizar para validar se o projeto ficou OK.",
+        "Apos o BAT concluir, clique em Atualizar e depois em Validar Fechamento "
+        "para registrar a versao final na Auditoria.",
     )
 
 
@@ -279,6 +283,24 @@ def fechamento_cloud(project):
         return
 
     _run_closing_bat(project, "Fechamento Cloud")
+
+
+def validar_pos_fechamento(project):
+    result = "validado_ok" if project.status == "OK" else "validado_pendente"
+    _write_action_audit(
+        "Validar Fechamento",
+        result,
+        project,
+        reason=f"status_atual={project.status}",
+    )
+    messagebox.showinfo(
+        "Validar Fechamento",
+        "Validacao registrada na Auditoria.\n\n"
+        f"Projeto: {project.folder_name}\n"
+        f"FileVersion: {project.display_file_version or ''}\n"
+        f"ProductVersion: {project.display_product_version or ''}\n"
+        f"Status: {project.status}",
+    )
 
 
 def copiar_local(project):
@@ -366,15 +388,21 @@ def _block_on_zip_name_errors(project, title):
 
 
 def _prepare_copy(project, title):
-    target_root = load_copy_target_directory()
-    if not target_root.exists():
+    target_roots = load_copy_target_directories()
+    available_target_roots = [root for root in target_roots if root.exists()]
+    if not available_target_roots:
+        targets_text = "\n".join(str(root) for root in target_roots)
         _write_action_audit(
             title,
             "bloqueado",
             project,
-            reason=f"destino de rede nao encontrado: {target_root}",
+            reason=f"destinos de rede nao encontrados: {targets_text}",
         )
-        messagebox.showerror(title, f"Destino de rede nao encontrado:\n{target_root}")
+        messagebox.showerror(
+            title,
+            "Nenhum destino de rede configurado foi encontrado:\n\n"
+            f"{targets_text}",
+        )
         return
 
     progress = Toplevel()
@@ -400,9 +428,10 @@ def _prepare_copy(project, title):
 
     def worker():
         destinations = _find_destination_folders(
-            target_root,
+            available_target_roots,
             project.folder_name,
-            search_queue,
+            title=title,
+            search_queue=search_queue,
         )
         search_queue.put(("done", destinations))
 
@@ -427,29 +456,72 @@ def _prepare_copy(project, title):
                 message_label.config(text=f"Procurando em:\n{scanned_path}")
             progress.after(POLL_INTERVAL_MS, poll)
             return
-        _finish_copy_search(progress, project, target_root, outcome[0], title)
+        _finish_copy_search(progress, project, available_target_roots, outcome[0], title)
 
     threading.Thread(target=worker, daemon=True).start()
     progress.after(POLL_INTERVAL_MS, poll)
 
 
-def _find_destination_folders(target_root, folder_name, search_queue=None):
-    folder_name_lower = folder_name.lower()
-    destinations = []
-
-    def on_walk_error(error):
-        _write_log(
-            f"Busca de destino: erro ao acessar {getattr(error, 'filename', target_root)} | "
-            f"erro={error}"
+def _expected_destination_names(folder_name, title=None):
+    if title is None:
+        title = (
+            "Copiar Cloud"
+            if folder_name.upper().endswith("_CLOUD")
+            else "Copiar Local"
         )
 
-    for current_path, dir_names, _file_names in os.walk(target_root, onerror=on_walk_error):
-        if search_queue is not None:
-            search_queue.put(("scanning", current_path))
-        for dir_name in dir_names:
-            if dir_name.lower() == folder_name_lower:
-                destinations.append(Path(current_path) / dir_name)
+    names = [folder_name]
+    if _copy_action_mode(title) == "Local":
+        local_name = f"{folder_name}_LOCAL"
+        if local_name.lower() not in {name.lower() for name in names}:
+            names.append(local_name)
+    return names
+
+
+def _find_destination_folders(target_root, folder_name, search_queue=None, title=None):
+    expected_names_lower = {
+        name.lower() for name in _expected_destination_names(folder_name, title)
+    }
+    target_roots = _as_path_list(target_root)
+    destinations = []
+
+    def on_walk_error(root):
+        def write_error(error):
+            _write_log(
+                f"Busca de destino: erro ao acessar {getattr(error, 'filename', root)} | "
+                f"erro={error}"
+            )
+        return write_error
+
+    for root in target_roots:
+        for current_path, dir_names, _file_names in os.walk(root, onerror=on_walk_error(root)):
+            if search_queue is not None:
+                search_queue.put(("scanning", current_path))
+            for dir_name in dir_names:
+                if dir_name.lower() in expected_names_lower:
+                    destinations.append(Path(current_path) / dir_name)
     return destinations
+
+
+def _as_path_list(paths):
+    if isinstance(paths, (str, Path)):
+        return [Path(paths)]
+    return [Path(path) for path in paths]
+
+
+def _format_target_roots(target_roots):
+    return "\n".join(str(root) for root in _as_path_list(target_roots))
+
+
+def _is_relative_to_any(path, parents):
+    return any(_is_relative_to(path, parent) for parent in _as_path_list(parents))
+
+
+def _find_target_root_for_destination(destination, target_roots):
+    for root in _as_path_list(target_roots):
+        if _is_relative_to(destination, root):
+            return root
+    return None
 
 
 def _finish_copy_search(progress, project, target_root, destinations, title):
@@ -469,25 +541,78 @@ def _finish_copy_search(progress, project, target_root, destinations, title):
         return
 
     if len(destinations) > 1:
-        preview = "\n".join(str(path) for path in destinations[:8])
-        if len(destinations) > 8:
-            preview += f"\n... +{len(destinations) - 8} destino(s)"
         _write_action_audit(
             title,
-            "bloqueado",
+            "destinos_encontrados",
             project,
-            reason=f"{len(destinations)} destinos encontrados com o mesmo nome",
+            reason=f"{len(destinations)} destinos encontrados; aguardando escolha",
         )
-        messagebox.showerror(
-            title,
-            "Operacao bloqueada: foi encontrada mais de uma pasta de destino "
-            "com o mesmo nome do projeto.\n\n"
-            "Revise a rede antes de continuar:\n\n"
-            f"{preview}",
-        )
+        _show_destination_choice(project, target_root, destinations, title)
         return
 
     _show_copy_confirmation(project, destinations[0], target_root, title)
+
+
+def _show_destination_choice(project, target_root, destinations, title):
+    window = Toplevel()
+    window.title(f"{title} - escolher destino")
+    window.geometry("920x360")
+    window.resizable(False, False)
+    window.grab_set()
+
+    frame = ttk.Frame(window, padding=12)
+    frame.pack(fill="both", expand=True)
+    frame.columnconfigure(0, weight=1)
+
+    ttk.Label(
+        frame,
+        text=(
+            "Foi encontrada mais de uma pasta de destino para este projeto. "
+            "Selecione o destino correto antes de continuar."
+        ),
+        wraplength=880,
+    ).grid(row=0, column=0, sticky="w")
+
+    listbox = Listbox(frame, height=10)
+    listbox.grid(row=1, column=0, sticky="nsew", pady=(12, 0))
+    for destination in destinations:
+        listbox.insert(tk.END, str(destination))
+    listbox.selection_set(0)
+
+    button_bar = ttk.Frame(frame)
+    button_bar.grid(row=2, column=0, sticky="e", pady=(14, 0))
+
+    def continue_with_selected():
+        selection = listbox.curselection()
+        if not selection:
+            messagebox.showerror(title, "Selecione um destino para continuar.")
+            return
+        destination = destinations[selection[0]]
+        _write_action_audit(
+            title,
+            "destino_escolhido",
+            project,
+            destination,
+            reason=f"{len(destinations)} destinos encontrados",
+        )
+        window.destroy()
+        _show_copy_confirmation(project, destination, target_root, title)
+
+    def cancel():
+        _write_action_audit(
+            title,
+            "cancelado",
+            project,
+            reason="usuario cancelou escolha de destino",
+        )
+        window.destroy()
+
+    ttk.Button(button_bar, text="Continuar", command=continue_with_selected).grid(
+        row=0,
+        column=0,
+        padx=(0, 8),
+    )
+    ttk.Button(button_bar, text="Cancelar", command=cancel).grid(row=0, column=1)
 
 
 def _copy_action_mode(title):
@@ -509,6 +634,10 @@ def _is_relative_to(path, parent):
 def _build_copy_safety_checks(project, destination, target_root, title):
     action_mode = _copy_action_mode(title)
     project_mode = "Cloud" if _is_cloud_project(project) else "Local"
+    expected_destination_names = _expected_destination_names(project.folder_name, title)
+    expected_destination_names_lower = {
+        name.lower() for name in expected_destination_names
+    }
     checks = []
 
     def add(label, ok, detail):
@@ -521,13 +650,13 @@ def _build_copy_safety_checks(project, destination, target_root, title):
     )
     add(
         "Nome do destino",
-        destination.name.lower() == project.folder_name.lower(),
-        f"destino={destination.name}; esperado={project.folder_name}",
+        destination.name.lower() in expected_destination_names_lower,
+        f"destino={destination.name}; esperado={' ou '.join(expected_destination_names)}",
     )
     add(
         "Destino dentro da raiz configurada",
-        _is_relative_to(destination, target_root),
-        str(target_root),
+        _is_relative_to_any(destination, target_root),
+        _format_target_roots(target_root),
     )
     add(
         "FileVersion",
@@ -793,10 +922,7 @@ def _cleanup_source_after_copy(source):
         if item.name.lower() == "comandoscmd":
             continue
         try:
-            if item.is_dir() and not item.is_symlink():
-                shutil.rmtree(item)
-            else:
-                item.unlink()
+            _remove_source_item_with_retry(item)
         except OSError as error:
             raise CleanupError(
                 f"Erro ao limpar origem {item}: {error}",
@@ -804,6 +930,22 @@ def _cleanup_source_after_copy(source):
             ) from error
         cleaned_items += 1
     return cleaned_items
+
+
+def _remove_source_item_with_retry(item):
+    last_error = None
+    for attempt in range(CLEANUP_RETRY_ATTEMPTS):
+        try:
+            if item.is_dir() and not item.is_symlink():
+                shutil.rmtree(item)
+            else:
+                item.unlink()
+            return
+        except OSError as error:
+            last_error = error
+            if attempt < CLEANUP_RETRY_ATTEMPTS - 1:
+                time.sleep(CLEANUP_RETRY_DELAY_SECONDS)
+    raise last_error
 
 
 def _collect_copy_mismatches(source, destination, relative_paths=None):
@@ -879,6 +1021,16 @@ def _format_hash_summary(hash_summary):
     return "; ".join(parts)
 
 
+def _copy_text_to_clipboard(widget, text):
+    try:
+        widget.clipboard_clear()
+        widget.clipboard_append(str(text))
+        widget.update()
+        return True
+    except (AttributeError, TclError):
+        return False
+
+
 def _finish_copy(
     progress,
     project,
@@ -890,6 +1042,10 @@ def _finish_copy(
     cleaned_items,
     cleanup_error,
 ):
+    clipboard_ok = False
+    if error is None:
+        clipboard_ok = _copy_text_to_clipboard(progress, destination)
+
     _safe_destroy(progress)
     if error:
         _write_action_audit(
@@ -921,6 +1077,8 @@ def _finish_copy(
         messagebox.showwarning(
             title,
             "Copia concluida e verificada no destino.\n\n"
+            f"Destino:\n{destination}\n\n"
+            f"{_clipboard_message(clipboard_ok)}\n\n"
             "A limpeza da pasta de origem falhou e deve ser feita manualmente, "
             "preservando comandosCMD.\n\n"
             f"{cleanup_error}",
@@ -936,7 +1094,15 @@ def _finish_copy(
     )
     messagebox.showinfo(
         title,
-        "Copia concluida:\n"
+        "Copia concluida e verificada no destino.\n\n"
+        "Destino:\n"
         f"{destination}\n\n"
+        f"{_clipboard_message(clipboard_ok)}\n\n"
         "A pasta de origem foi limpa, mantendo apenas comandosCMD.",
     )
+
+
+def _clipboard_message(clipboard_ok):
+    if clipboard_ok:
+        return "Caminho copiado para a area de transferencia."
+    return "Nao foi possivel copiar o caminho automaticamente."

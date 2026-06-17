@@ -8,16 +8,16 @@ from tkinter import filedialog, messagebox, ttk
 
 from app import __version__, actions
 from app.audit import list_log_files, read_log_file
-from app.config import SCAN_INTERVAL_MS
+from app.config import COPY_TARGET_DIRECTORIES, SCAN_INTERVAL_MS
 from app.pattern import generate_pattern_from_projects, save_pattern
 from app.runtime import resource_path
 from app.scanner import enrich_project_file_versions, scan_projects
 from app.settings import (
+    load_additional_copy_target_directories,
     load_base_directory,
-    load_copy_target_directory,
     load_ignored_project_folders,
     save_base_directory,
-    save_copy_target_directory,
+    save_copy_target_directories,
     save_ignored_project_folders,
 )
 
@@ -209,37 +209,45 @@ class VersionScannerApp(tk.Tk):
         )
         self.cloud_close_button.grid(row=0, column=1, padx=4)
 
+        self.validate_close_button = ttk.Button(
+            button_bar,
+            text="Validar Fechamento",
+            command=lambda: self._run_action(actions.validar_pos_fechamento),
+        )
+        self.validate_close_button.grid(row=0, column=2, padx=(4, 12))
+
         self.local_copy_button = ttk.Button(
             button_bar,
             text="Copiar Local",
             command=lambda: self._run_action(actions.copiar_local),
         )
-        self.local_copy_button.grid(row=0, column=2, padx=4)
+        self.local_copy_button.grid(row=0, column=3, padx=4)
 
         self.cloud_copy_button = ttk.Button(
             button_bar,
             text="Copiar Cloud",
             command=lambda: self._run_action(actions.copiar_cloud),
         )
-        self.cloud_copy_button.grid(row=0, column=3, padx=4)
+        self.cloud_copy_button.grid(row=0, column=4, padx=4)
 
         self.details_button = ttk.Button(
             button_bar,
             text="Detalhes",
             command=self.open_project_details,
         )
-        self.details_button.grid(row=0, column=4, padx=(12, 4))
+        self.details_button.grid(row=0, column=5, padx=(12, 4))
 
         self.open_folder_button = ttk.Button(
             button_bar,
             text="Abrir Pasta",
             command=self.open_selected_project_folder,
         )
-        self.open_folder_button.grid(row=0, column=5, padx=4)
+        self.open_folder_button.grid(row=0, column=6, padx=4)
 
         self.buttons = (
             self.local_close_button,
             self.cloud_close_button,
+            self.validate_close_button,
             self.local_copy_button,
             self.cloud_copy_button,
             self.details_button,
@@ -492,7 +500,7 @@ class VersionScannerApp(tk.Tk):
 
         self.config_window = tk.Toplevel(self)
         self.config_window.title("Configurações")
-        self.config_window.geometry("640x170")
+        self.config_window.geometry("820x360")
         self.config_window.resizable(False, False)
         self.config_window.transient(self)
 
@@ -501,7 +509,7 @@ class VersionScannerApp(tk.Tk):
         frame.columnconfigure(1, weight=1)
 
         settings_base_var = tk.StringVar(value=self.base_directory_var.get())
-        settings_copy_var = tk.StringVar(value=str(load_copy_target_directory()))
+        settings_copy_var = tk.StringVar()
 
         ttk.Label(frame, text="Diretório-base:").grid(row=0, column=0, sticky="w")
         ttk.Entry(frame, textvariable=settings_base_var).grid(
@@ -517,34 +525,88 @@ class VersionScannerApp(tk.Tk):
             command=lambda: self.choose_base_directory(settings_base_var),
         ).grid(row=0, column=2, sticky="e")
 
-        ttk.Label(frame, text="Destino de cópia:").grid(
+        ttk.Label(frame, text="Destinos padrão:").grid(
             row=1,
             column=0,
+            sticky="nw",
+            pady=(12, 0),
+        )
+        ttk.Label(
+            frame,
+            text="\n".join(str(path) for path in COPY_TARGET_DIRECTORIES),
+            wraplength=620,
+        ).grid(row=1, column=1, columnspan=2, sticky="w", pady=(12, 0))
+
+        ttk.Label(frame, text="Destino adicional:").grid(
+            row=2,
+            column=0,
             sticky="w",
-            pady=(8, 0),
+            pady=(12, 0),
         )
         ttk.Entry(frame, textvariable=settings_copy_var).grid(
-            row=1,
+            row=2,
             column=1,
             sticky="ew",
             padx=(8, 8),
-            pady=(8, 0),
+            pady=(12, 0),
         )
 
         ttk.Button(
             frame,
             text="Procurar",
             command=lambda: self.choose_base_directory(settings_copy_var),
-        ).grid(row=1, column=2, sticky="e", pady=(8, 0))
+        ).grid(row=2, column=2, sticky="e", pady=(12, 0))
+
+        ttk.Label(frame, text="Destinos extras:").grid(
+            row=3,
+            column=0,
+            sticky="nw",
+            pady=(8, 0),
+        )
+        target_list = tk.Listbox(frame, height=5)
+        target_list.grid(row=3, column=1, sticky="ew", padx=(8, 8), pady=(8, 0))
+        for target in load_additional_copy_target_directories():
+            target_list.insert(tk.END, str(target))
+
+        target_buttons = ttk.Frame(frame)
+        target_buttons.grid(row=3, column=2, sticky="n", pady=(8, 0))
+
+        def add_target():
+            value = settings_copy_var.get().strip()
+            if not value:
+                return
+            existing = {
+                target_list.get(index).lower()
+                for index in range(target_list.size())
+            }
+            if value.lower() not in existing:
+                target_list.insert(tk.END, value)
+            settings_copy_var.set("")
+
+        def remove_target():
+            for index in reversed(target_list.curselection()):
+                target_list.delete(index)
+
+        ttk.Button(target_buttons, text="Adicionar", command=add_target).grid(
+            row=0,
+            column=0,
+            sticky="ew",
+        )
+        ttk.Button(target_buttons, text="Remover", command=remove_target).grid(
+            row=1,
+            column=0,
+            sticky="ew",
+            pady=(8, 0),
+        )
 
         button_bar = ttk.Frame(frame)
-        button_bar.grid(row=2, column=0, columnspan=3, sticky="e", pady=(16, 0))
+        button_bar.grid(row=4, column=0, columnspan=3, sticky="e", pady=(16, 0))
         ttk.Button(
             button_bar,
             text="Salvar",
             command=lambda: self.save_settings(
                 settings_base_var.get(),
-                settings_copy_var.get(),
+                [target_list.get(index) for index in range(target_list.size())],
             ),
         ).grid(row=0, column=0, padx=(0, 8))
         ttk.Button(
@@ -868,10 +930,10 @@ class VersionScannerApp(tk.Tk):
         if selected_directory:
             target_var.set(selected_directory)
 
-    def save_settings(self, base_directory, copy_target_directory):
+    def save_settings(self, base_directory, copy_target_directories):
         self.base_directory_var.set(base_directory.strip())
         save_base_directory(self.base_directory_var.get())
-        save_copy_target_directory(copy_target_directory)
+        save_copy_target_directories(copy_target_directories)
         if self.config_window and self.config_window.winfo_exists():
             self.config_window.destroy()
         self.refresh()

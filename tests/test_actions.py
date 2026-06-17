@@ -11,12 +11,14 @@ from app.actions import (
     _copy_project_files,
     _finish_copy,
     _finish_closing_start,
+    _remove_source_item_with_retry,
     _write_action_audit,
     _build_copy_safety_checks,
     _copy_block_reasons,
     _find_destination_folders,
     _verify_critical_file_hashes,
     fechamento_local,
+    validar_pos_fechamento,
 )
 
 
@@ -47,6 +49,34 @@ class CopySafetyChecksTests(unittest.TestCase):
             project,
             destination,
             target_root,
+            "Copiar Local",
+        )
+
+        self.assertEqual(_copy_block_reasons(checks), [])
+
+    def test_valid_local_copy_accepts_local_suffix_destination(self):
+        target_root = Path("C:/destino")
+        project = make_project()
+        destination = target_root / f"{project.folder_name}_LOCAL"
+
+        checks = _build_copy_safety_checks(
+            project,
+            destination,
+            target_root,
+            "Copiar Local",
+        )
+
+        self.assertEqual(_copy_block_reasons(checks), [])
+
+    def test_valid_copy_accepts_destination_inside_any_configured_root(self):
+        target_roots = [Path("C:/destino1"), Path("C:/destino2")]
+        project = make_project()
+        destination = target_roots[1] / project.folder_name
+
+        checks = _build_copy_safety_checks(
+            project,
+            destination,
+            target_roots,
             "Copiar Local",
         )
 
@@ -103,6 +133,56 @@ class FindDestinationFoldersTests(unittest.TestCase):
             destinations = _find_destination_folders(root, "Projeto")
 
             self.assertEqual(len(destinations), 2)
+
+    def test_finds_destinations_across_multiple_roots(self):
+        from tempfile import TemporaryDirectory
+
+        with TemporaryDirectory() as temp_directory:
+            root = Path(temp_directory)
+            first = root / "primeira"
+            second = root / "segunda"
+            (first / "Projeto").mkdir(parents=True)
+            (second / "sub" / "Projeto").mkdir(parents=True)
+
+            destinations = _find_destination_folders([first, second], "Projeto")
+
+            self.assertEqual(
+                destinations,
+                [first / "Projeto", second / "sub" / "Projeto"],
+            )
+
+    def test_local_copy_finds_destination_with_local_suffix(self):
+        from tempfile import TemporaryDirectory
+
+        with TemporaryDirectory() as temp_directory:
+            root = Path(temp_directory)
+            (root / "rede" / "379.48.2.30.74.150.99_LOCAL").mkdir(parents=True)
+
+            destinations = _find_destination_folders(
+                root,
+                "379.48.2.30.74.150.99",
+                title="Copiar Local",
+            )
+
+            self.assertEqual(
+                destinations,
+                [root / "rede" / "379.48.2.30.74.150.99_LOCAL"],
+            )
+
+    def test_cloud_copy_does_not_accept_local_suffix_destination(self):
+        from tempfile import TemporaryDirectory
+
+        with TemporaryDirectory() as temp_directory:
+            root = Path(temp_directory)
+            (root / "rede" / "379.48.2.30.74.150.99_LOCAL").mkdir(parents=True)
+
+            destinations = _find_destination_folders(
+                root,
+                "379.48.2.30.74.150.99",
+                title="Copiar Cloud",
+            )
+
+            self.assertEqual(destinations, [])
 
 
 class ActionAuditTests(unittest.TestCase):
@@ -211,8 +291,68 @@ class ActionAuditTests(unittest.TestCase):
         showinfo.assert_called_once()
         self.assertIn("clique em Atualizar", showinfo.call_args.args[1])
 
+    def test_post_closing_validation_is_audited(self):
+        import app.logging_utils as logging_utils
+        from tempfile import TemporaryDirectory
+
+        with TemporaryDirectory() as temp_directory:
+            original_log_file = logging_utils.LOG_FILE
+            logging_utils.LOG_FILE = Path(temp_directory) / "fechamentos.log"
+            try:
+                project = make_project()
+                with patch("app.actions.messagebox.showinfo") as showinfo:
+                    validar_pos_fechamento(project)
+                content = logging_utils.LOG_FILE.read_text(encoding="utf-8")
+            finally:
+                logging_utils.LOG_FILE = original_log_file
+
+        self.assertIn("Validar Fechamento validado_ok | usuario=", content)
+        self.assertIn("status_atual=OK", content)
+        showinfo.assert_called_once()
+        self.assertIn("Validacao registrada", showinfo.call_args.args[1])
+
 
 class CopyHashVerificationTests(unittest.TestCase):
+    def test_finish_copy_copies_destination_to_clipboard(self):
+        class FakeProgress:
+            def __init__(self):
+                self.clipboard = ""
+                self.updated = False
+
+            def clipboard_clear(self):
+                self.clipboard = ""
+
+            def clipboard_append(self, text):
+                self.clipboard = text
+
+            def update(self):
+                self.updated = True
+
+            def winfo_exists(self):
+                return False
+
+        progress = FakeProgress()
+        destination = Path(r"\\servidor\destino\379.48.2.30.74.150.99_LOCAL")
+
+        with patch("app.actions.messagebox.showinfo") as showinfo:
+            _finish_copy(
+                progress,
+                make_project(),
+                destination,
+                "Copiar Local",
+                None,
+                1,
+                {},
+                1,
+                None,
+            )
+
+        showinfo.assert_called_once()
+        self.assertEqual(progress.clipboard, str(destination))
+        self.assertTrue(progress.updated)
+        self.assertIn(str(destination), showinfo.call_args.args[1])
+        self.assertIn("Caminho copiado", showinfo.call_args.args[1])
+
     def test_critical_file_hash_match_passes(self):
         from tempfile import TemporaryDirectory
 
@@ -360,6 +500,29 @@ class CopyHashVerificationTests(unittest.TestCase):
         self.assertIn("limpeza_falhou=arquivo travado", content)
         showwarning.assert_called_once()
         self.assertIn("Copia concluida e verificada", showwarning.call_args.args[1])
+
+    def test_cleanup_retry_handles_temporary_lock(self):
+        from tempfile import TemporaryDirectory
+
+        with TemporaryDirectory() as temp_directory:
+            file_path = Path(temp_directory) / "autcom.zip"
+            file_path.write_bytes(b"zip")
+            calls = {"count": 0}
+            original_unlink = Path.unlink
+
+            def flaky_unlink(path):
+                if path == file_path and calls["count"] == 0:
+                    calls["count"] += 1
+                    raise OSError("arquivo travado")
+                return original_unlink(path)
+
+            with patch("pathlib.Path.unlink", flaky_unlink), patch("app.actions.time.sleep"):
+                _remove_source_item_with_retry(file_path)
+
+            exists = file_path.exists()
+
+        self.assertFalse(exists)
+        self.assertEqual(calls["count"], 1)
 
     def test_cleanup_source_keeps_only_comandoscmd(self):
         from tempfile import TemporaryDirectory

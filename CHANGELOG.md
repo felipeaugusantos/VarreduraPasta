@@ -5,6 +5,43 @@ Todas as alteracoes relevantes deste projeto sao documentadas neste arquivo.
 O formato e baseado em Keep a Changelog e o projeto segue Versionamento
 Semantico (`MAIOR.MENOR.CORRECAO`).
 
+## [1.2.7] - 2026-06-17
+
+### Adicionado
+- Tela de configuracoes agora exibe os destinos padrao de copia e permite
+  cadastrar multiplos destinos adicionais sem novo build.
+- Quando a busca encontra mais de um destino para o mesmo projeto, o operador
+  pode escolher o caminho correto antes da confirmacao da copia.
+- Novo botao `Validar Fechamento` registra na Auditoria a versao/status atual
+  do projeto apos o operador atualizar a tela.
+
+## [1.2.6] - 2026-06-16
+
+### Alterado
+- Busca de destino para Copiar Local e Copiar Cloud agora considera as raizes
+  `\\citel-fileserve\Modem\VERSOES\379_Versoes\379.48.02\379.48.2.30` e
+  `\\citel-fileserve\Modem\_VERSOES_INDIVIDUAIS`.
+
+## [1.2.5] - 2026-06-16
+
+### Adicionado
+- Apos Copiar Local ou Copiar Cloud concluir com destino verificado, o caminho
+  do destino e copiado automaticamente para a area de transferencia e exibido
+  na mensagem final.
+
+## [1.2.4] - 2026-06-11
+
+### Alterado
+- Copiar Local agora tambem aceita destino de rede com sufixo `_LOCAL`, mantendo
+  a validacao de seguranca antes da copia.
+
+## [1.2.3] - 2026-06-11
+
+### Corrigido
+- Limpeza da origem apos copia verificada agora faz retentativas antes de
+  registrar `erro_limpeza`, reduzindo falhas temporarias por arquivo `.zip`
+  ainda travado por outro processo.
+
 ## [1.2.2] - 2026-06-11
 
 ### Alterado

@@ -4,6 +4,7 @@ from uuid import uuid4
 
 from app.config import (
     BASE_DIRECTORY,
+    COPY_TARGET_DIRECTORIES,
     COPY_TARGET_DIRECTORY,
     IGNORED_PROJECT_FOLDERS,
 )
@@ -57,11 +58,51 @@ def load_copy_target_directory():
     return Path(value) if value else COPY_TARGET_DIRECTORY
 
 
-def save_copy_target_directory(copy_target_directory):
+def _unique_paths(paths):
+    unique = []
+    seen = set()
+    for path in paths:
+        normalized = str(Path(path)).strip()
+        if not normalized:
+            continue
+        key = normalized.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(Path(normalized))
+    return unique
+
+
+def load_additional_copy_target_directories():
     data = _load_settings()
-    value = str(copy_target_directory).strip()
-    data["copy_target_directory"] = str(Path(value)) if value else ""
+    values = data.get("copy_target_directories")
+    if isinstance(values, list):
+        return _unique_paths(values)
+
+    value = data.get("copy_target_directory")
+    return _unique_paths([value]) if value else []
+
+
+def load_copy_target_directories():
+    return _unique_paths(
+        [
+            *COPY_TARGET_DIRECTORIES,
+            *load_additional_copy_target_directories(),
+        ]
+    )
+
+
+def save_copy_target_directories(copy_target_directories):
+    data = _load_settings()
+    directories = _unique_paths(copy_target_directories)
+    data["copy_target_directories"] = [str(path) for path in directories]
+    data["copy_target_directory"] = str(directories[0]) if directories else ""
     _save_settings(data)
+
+
+def save_copy_target_directory(copy_target_directory):
+    value = str(copy_target_directory).strip()
+    save_copy_target_directories([value] if value else [])
 
 
 def load_ignored_project_folders():
