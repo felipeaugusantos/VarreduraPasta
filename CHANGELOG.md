@@ -5,6 +5,12 @@ Todas as alteracoes relevantes deste projeto sao documentadas neste arquivo.
 O formato e baseado em Keep a Changelog e o projeto segue Versionamento
 Semantico (`MAIOR.MENOR.CORRECAO`).
 
+## [1.2.8] - 2026-06-17
+
+### Alterado
+- Tela de Auditoria passou a exibir os logs em tabela com colunas para data,
+  acao, resultado, usuario, projeto, tipo, destino, versoes, tamanho e motivo.
+
 ## [1.2.7] - 2026-06-17
 
 ### Adicionado

@@ -7,7 +7,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from app import __version__, actions
-from app.audit import list_log_files, read_log_file
+from app.audit import filter_log_entries, list_log_files, parse_log_entries, read_log_file
 from app.config import COPY_TARGET_DIRECTORIES, SCAN_INTERVAL_MS
 from app.pattern import generate_pattern_from_projects, save_pattern
 from app.runtime import resource_path
@@ -791,7 +791,7 @@ class VersionScannerApp(tk.Tk):
     def open_audit_window(self):
         audit_window = tk.Toplevel(self)
         audit_window.title("Auditoria")
-        audit_window.geometry("900x520")
+        audit_window.geometry("1180x560")
         audit_window.transient(self)
 
         frame = ttk.Frame(audit_window, padding=12)
@@ -834,20 +834,62 @@ class VersionScannerApp(tk.Tk):
         )
         result_combo.grid(row=0, column=4, sticky="e", padx=(0, 8))
 
-        text_frame = ttk.Frame(frame)
-        text_frame.grid(row=1, column=0, sticky="nsew")
-        text_frame.rowconfigure(0, weight=1)
-        text_frame.columnconfigure(0, weight=1)
+        table_frame = ttk.Frame(frame)
+        table_frame.grid(row=1, column=0, sticky="nsew")
+        table_frame.rowconfigure(0, weight=1)
+        table_frame.columnconfigure(0, weight=1)
 
-        log_text = tk.Text(text_frame, wrap="none")
-        y_scroll = ttk.Scrollbar(text_frame, orient="vertical", command=log_text.yview)
-        x_scroll = ttk.Scrollbar(text_frame, orient="horizontal", command=log_text.xview)
-        log_text.configure(yscrollcommand=y_scroll.set, xscrollcommand=x_scroll.set)
-        log_text.grid(row=0, column=0, sticky="nsew")
+        columns = (
+            "timestamp",
+            "acao",
+            "resultado",
+            "usuario",
+            "projeto",
+            "tipo",
+            "destino",
+            "fileversion",
+            "productversion",
+            "autcom_mb",
+            "motivo",
+        )
+        headings = {
+            "timestamp": "Data/Hora",
+            "acao": "Ação",
+            "resultado": "Resultado",
+            "usuario": "Usuário",
+            "projeto": "Projeto",
+            "tipo": "Tipo",
+            "destino": "Destino",
+            "fileversion": "FileVersion",
+            "productversion": "ProductVersion",
+            "autcom_mb": "Autcom MB",
+            "motivo": "Motivo",
+        }
+        widths = {
+            "timestamp": 140,
+            "acao": 150,
+            "resultado": 120,
+            "usuario": 110,
+            "projeto": 210,
+            "tipo": 70,
+            "destino": 360,
+            "fileversion": 110,
+            "productversion": 120,
+            "autcom_mb": 90,
+            "motivo": 520,
+        }
+        log_tree = ttk.Treeview(table_frame, columns=columns, show="headings")
+        for column in columns:
+            log_tree.heading(column, text=headings[column], anchor="center")
+            log_tree.column(column, width=widths[column], anchor="center")
+        y_scroll = ttk.Scrollbar(table_frame, orient="vertical", command=log_tree.yview)
+        x_scroll = ttk.Scrollbar(table_frame, orient="horizontal", command=log_tree.xview)
+        log_tree.configure(yscrollcommand=y_scroll.set, xscrollcommand=x_scroll.set)
+        log_tree.grid(row=0, column=0, sticky="nsew")
         y_scroll.grid(row=0, column=1, sticky="ns")
         x_scroll.grid(row=1, column=0, sticky="ew")
 
-        current_log_content = {"text": ""}
+        current_log_content = {"entries": []}
         current_log_state = {"selected": "", "stamp": None}
 
         def refresh_logs(force=True):
@@ -858,21 +900,20 @@ class VersionScannerApp(tk.Tk):
             load_selected_log(force=force)
 
         def apply_log_filter(_event=None):
-            log_text.config(state="normal")
-            log_text.delete("1.0", "end")
-            content = current_log_content["text"]
-            search_text = filter_var.get().strip().lower()
-            result_filter = result_var.get()
-            lines = []
-            for line in reversed(content.splitlines()):
-                lower_line = line.lower()
-                if search_text and search_text not in lower_line:
-                    continue
-                if result_filter != "Todos" and f" {result_filter} |" not in lower_line:
-                    continue
-                lines.append(line)
-            log_text.insert("1.0", "\n".join(lines) if lines else "Nenhum log encontrado.")
-            log_text.config(state="disabled")
+            for item_id in log_tree.get_children():
+                log_tree.delete(item_id)
+            entries = filter_log_entries(
+                current_log_content["entries"],
+                filter_var.get(),
+                result_var.get(),
+            )
+            for index, entry in enumerate(entries):
+                log_tree.insert(
+                    "",
+                    "end",
+                    iid=str(index),
+                    values=tuple(entry.get(column, "") for column in columns),
+                )
 
         def load_selected_log(_event=None, force=True):
             selected_name = log_var.get()
@@ -890,13 +931,15 @@ class VersionScannerApp(tk.Tk):
                     return
                 current_log_state["selected"] = selected_name
                 current_log_state["stamp"] = stamp
-                current_log_content["text"] = read_log_file(selected_file)
+                current_log_content["entries"] = parse_log_entries(
+                    read_log_file(selected_file)
+                )
             else:
                 if not force and current_log_state["selected"] == "":
                     return
                 current_log_state["selected"] = ""
                 current_log_state["stamp"] = None
-                current_log_content["text"] = "Nenhum log registrado."
+                current_log_content["entries"] = []
             apply_log_filter()
 
         def auto_refresh_logs():

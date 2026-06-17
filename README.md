@@ -52,7 +52,8 @@ Tudo fica em `settings.json`, ao lado do executavel (criado automaticamente):
   Cloud; os arquivos encontrados nelas viram o padrao essencial aplicado em
   todas as versoes (gravado em `project_pattern.json`).
 - `Configuracoes > Pastas Ignoradas`: pastas excluidas da varredura.
-- `Auditoria > Logs`: consulta os registros mensais em `logs/fechamentos-AAAA-MM.log`.
+- `Auditoria > Logs`: consulta os registros mensais em tabela a partir de
+  `logs/fechamentos-AAAA-MM.log`.
 
 ## Uso
 
