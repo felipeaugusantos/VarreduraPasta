@@ -56,6 +56,8 @@ Tudo fica em `settings.json`, ao lado do executavel (criado automaticamente):
   `logs/fechamentos-AAAA-MM.log`.
 - `Monitoramento > Scripts Banco Modelo`: verifica scripts novos em
   `\\citel-fileserve\Modem\WEBSERVICE_CITEL\Scripts`.
+- `Ajuda > Manual de Utilizacao`: mostra um guia rapido de uso dentro do sistema.
+- `Ajuda > Sobre`: mostra versao, data de geracao do executavel, criador e setor.
 
 ## Uso
 

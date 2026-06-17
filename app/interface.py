@@ -10,7 +10,7 @@ from app import __version__, actions
 from app.audit import filter_log_entries, list_log_files, parse_log_entries, read_log_file
 from app.config import COPY_TARGET_DIRECTORIES, SCAN_INTERVAL_MS
 from app.pattern import generate_pattern_from_projects, save_pattern
-from app.runtime import resource_path
+from app.runtime import executable_generation_text, resource_path
 from app.scanner import enrich_project_file_versions, scan_projects
 from app.script_monitor import check_scripts, should_check_today
 from app.settings import (
@@ -83,6 +83,14 @@ class VersionScannerApp(tk.Tk):
             command=self.open_script_monitor_window,
         )
         menu_bar.add_cascade(label="Monitoramento", menu=monitor_menu)
+
+        help_menu = tk.Menu(menu_bar, tearoff=False)
+        help_menu.add_command(
+            label="Manual de Utilizacao",
+            command=self.open_user_manual_window,
+        )
+        help_menu.add_command(label="Sobre", command=self.open_about_window)
+        menu_bar.add_cascade(label="Ajuda", menu=help_menu)
         self.config(menu=menu_bar)
 
     def _build_layout(self):
@@ -1104,6 +1112,87 @@ class VersionScannerApp(tk.Tk):
         )
 
         verify_now()
+
+    def open_user_manual_window(self):
+        manual_window = tk.Toplevel(self)
+        manual_window.title("Manual de Utilizacao")
+        manual_window.geometry("900x620")
+        manual_window.transient(self)
+
+        frame = ttk.Frame(manual_window, padding=12)
+        frame.pack(fill="both", expand=True)
+        frame.rowconfigure(0, weight=1)
+        frame.columnconfigure(0, weight=1)
+
+        manual_text = tk.Text(frame, wrap="word")
+        y_scroll = ttk.Scrollbar(frame, orient="vertical", command=manual_text.yview)
+        manual_text.configure(yscrollcommand=y_scroll.set)
+        manual_text.grid(row=0, column=0, sticky="nsew")
+        y_scroll.grid(row=0, column=1, sticky="ns")
+
+        manual_text.insert("1.0", self._manual_content())
+        manual_text.config(state="disabled")
+
+        ttk.Button(frame, text="Fechar", command=manual_window.destroy).grid(
+            row=1,
+            column=0,
+            columnspan=2,
+            sticky="e",
+            pady=(12, 0),
+        )
+
+    def _manual_content(self):
+        return (
+            "Manual de Utilizacao - Sistema de Acompanhamento de Copia\n\n"
+            "1. Tela principal\n"
+            "- O sistema analisa o Diretorio-base configurado, por padrao C:\\VERSOES_FECHADAS.\n"
+            "- A lista mostra projetos Local e Cloud, versoes encontradas, versoes esperadas, "
+            "tamanho do Autcom, origem e status.\n"
+            "- Use Atualizar para forcar uma nova varredura.\n"
+            "- Use Filtro e Buscar para localizar projetos rapidamente.\n\n"
+            "2. Abrir projeto e detalhes\n"
+            "- Clique duas vezes em uma linha ou use Abrir Pasta para abrir a pasta do projeto.\n"
+            "- Use Detalhes para ver todos os arquivos essenciais, origem, versoes, tamanho e status.\n\n"
+            "3. Fechamento Local e Cloud\n"
+            "- Fechamento Local fica disponivel apenas para projeto sem _CLOUD.\n"
+            "- Fechamento Cloud fica disponivel apenas para projeto com _CLOUD.\n"
+            "- Ao clicar no fechamento, o sistema grava o padrao de arquivos e executa "
+            "comandosCMD\\_FechamentoArquivos.bat em um novo console.\n"
+            "- Depois que o BAT terminar, clique em Atualizar e em Validar Fechamento para "
+            "registrar a versao/status final na Auditoria.\n\n"
+            "4. Copiar Local e Copiar Cloud\n"
+            "- Copiar Local exige Autcom abaixo de 100 MB.\n"
+            "- Copiar Cloud exige Autcom acima de 200 MB.\n"
+            "- A copia envia somente arquivos .zip para o destino.\n"
+            "- Apos a copia ser verificada, a origem e limpa preservando apenas comandosCMD.\n"
+            "- O caminho do destino e copiado automaticamente para a area de transferencia.\n"
+            "- Se houver mais de um destino na rede, o sistema mostra uma tela para escolher "
+            "o caminho correto antes de continuar.\n\n"
+            "5. Configuracoes\n"
+            "- Diretorio-base: define a pasta analisada.\n"
+            "- Destinos extras: adiciona novas raizes de busca alem dos destinos padrao.\n"
+            "- Padrao de Arquivos: permite aprender o padrao esperado a partir de pastas modelo.\n"
+            "- Pastas Ignoradas: define pastas que nao devem aparecer na varredura.\n\n"
+            "6. Auditoria\n"
+            "- Auditoria > Logs exibe os registros mensais em tabela.\n"
+            "- Use Buscar e Resultado para filtrar acoes, erros, bloqueios e conclusoes.\n"
+            "- Os logs ficam na pasta logs ao lado do executavel.\n\n"
+            "7. Monitoramento de Scripts\n"
+            "- Monitoramento > Scripts Banco Modelo verifica a pasta de scripts do banco modelo.\n"
+            "- A verificacao acontece uma vez ao dia ao abrir o sistema.\n"
+            "- Tambem e possivel clicar em Verificar agora.\n"
+            "- O sistema apenas avisa quando existe script novo; nenhum script e executado automaticamente.\n"
+        )
+
+    def open_about_window(self):
+        messagebox.showinfo(
+            "Sobre",
+            "Sistema de Acompanhamento de Copia\n\n"
+            f"Versao: {__version__}\n"
+            f"Geracao do exe: {executable_generation_text()}\n"
+            "Criador: Felipe Santos\n"
+            "Setor: Atualizacao",
+        )
 
     def choose_base_directory(self, target_var):
         selected_directory = filedialog.askdirectory(

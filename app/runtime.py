@@ -1,4 +1,5 @@
 import sys
+from datetime import datetime
 from pathlib import Path
 
 
@@ -18,3 +19,14 @@ def resource_path(relative_path):
     else:
         base_path = application_directory()
     return base_path / relative_path
+
+
+def executable_generation_text():
+    if not getattr(sys, "frozen", False):
+        return "Ambiente de desenvolvimento"
+
+    try:
+        generated_at = datetime.fromtimestamp(Path(sys.executable).stat().st_mtime)
+    except OSError:
+        return "Nao identificado"
+    return generated_at.strftime("%d/%m/%Y %H:%M")

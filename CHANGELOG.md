@@ -5,6 +5,13 @@ Todas as alteracoes relevantes deste projeto sao documentadas neste arquivo.
 O formato e baseado em Keep a Changelog e o projeto segue Versionamento
 Semantico (`MAIOR.MENOR.CORRECAO`).
 
+## [1.2.10] - 2026-06-17
+
+### Adicionado
+- Novo menu `Ajuda` com `Manual de Utilizacao` e `Sobre`.
+- Tela `Sobre` exibe versao do sistema, data de geracao do executavel,
+  criador e setor responsavel.
+
 ## [1.2.9] - 2026-06-17
 
 ### Adicionado
