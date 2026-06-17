@@ -54,6 +54,8 @@ Tudo fica em `settings.json`, ao lado do executavel (criado automaticamente):
 - `Configuracoes > Pastas Ignoradas`: pastas excluidas da varredura.
 - `Auditoria > Logs`: consulta os registros mensais em tabela a partir de
   `logs/fechamentos-AAAA-MM.log`.
+- `Monitoramento > Scripts Banco Modelo`: verifica scripts novos em
+  `\\citel-fileserve\Modem\WEBSERVICE_CITEL\Scripts`.
 
 ## Uso
 
@@ -67,6 +69,8 @@ Tudo fica em `settings.json`, ao lado do executavel (criado automaticamente):
 - A primeira varredura apos abrir o sistema pode levar mais tempo quando houver
   ZIPs grandes. As varreduras seguintes na mesma execucao tendem a ser mais
   rapidas por uso de cache em memoria.
+- O monitoramento de scripts verifica a pasta uma vez ao dia ao abrir o sistema
+  e tambem permite verificacao manual pelo menu.
 
 ## Regras de validacao
 

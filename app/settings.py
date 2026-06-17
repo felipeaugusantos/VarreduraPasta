@@ -130,3 +130,39 @@ def save_ignored_project_folders(folders):
     )
     data["ignored_project_folders"] = normalized
     _save_settings(data)
+
+
+def load_script_monitor_state():
+    data = _load_settings()
+    state = data.get("script_monitor")
+    if not isinstance(state, dict):
+        return {"last_check_date": "", "known_files": []}
+
+    known_files = state.get("known_files")
+    if not isinstance(known_files, list):
+        known_files = []
+    return {
+        "last_check_date": str(state.get("last_check_date") or ""),
+        "known_files": sorted(
+            {
+                str(file_name).strip()
+                for file_name in known_files
+                if str(file_name).strip()
+            }
+        ),
+    }
+
+
+def save_script_monitor_state(last_check_date, known_files):
+    data = _load_settings()
+    data["script_monitor"] = {
+        "last_check_date": str(last_check_date or ""),
+        "known_files": sorted(
+            {
+                str(file_name).strip()
+                for file_name in known_files
+                if str(file_name).strip()
+            }
+        ),
+    }
+    _save_settings(data)

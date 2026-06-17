@@ -12,6 +12,7 @@ from app.config import COPY_TARGET_DIRECTORIES, SCAN_INTERVAL_MS
 from app.pattern import generate_pattern_from_projects, save_pattern
 from app.runtime import resource_path
 from app.scanner import enrich_project_file_versions, scan_projects
+from app.script_monitor import check_scripts, should_check_today
 from app.settings import (
     load_additional_copy_target_directories,
     load_base_directory,
@@ -45,6 +46,7 @@ class VersionScannerApp(tk.Tk):
         self._build_menu()
         self._build_layout()
         self.after(100, self.refresh)
+        self.after(2000, self.check_scripts_daily)
 
     def _set_window_icon(self):
         icon_path = resource_path(Path("assets") / "app-icon.ico")
@@ -74,6 +76,13 @@ class VersionScannerApp(tk.Tk):
         audit_menu = tk.Menu(menu_bar, tearoff=False)
         audit_menu.add_command(label="Logs", command=self.open_audit_window)
         menu_bar.add_cascade(label="Auditoria", menu=audit_menu)
+
+        monitor_menu = tk.Menu(menu_bar, tearoff=False)
+        monitor_menu.add_command(
+            label="Scripts Banco Modelo",
+            command=self.open_script_monitor_window,
+        )
+        menu_bar.add_cascade(label="Monitoramento", menu=monitor_menu)
         self.config(menu=menu_bar)
 
     def _build_layout(self):
@@ -964,6 +973,137 @@ class VersionScannerApp(tk.Tk):
         result_combo.bind("<<ComboboxSelected>>", apply_log_filter)
         refresh_logs()
         audit_window.after(2000, auto_refresh_logs)
+
+    def check_scripts_daily(self):
+        if should_check_today():
+            self._run_script_monitor_check(show_without_news=False)
+        self.after(24 * 60 * 60 * 1000, self.check_scripts_daily)
+
+    def _run_script_monitor_check(self, show_without_news=True, on_result=None):
+        def worker():
+            result = check_scripts(force=show_without_news)
+            self.after(0, lambda: finish(result))
+
+        def finish(result):
+            if on_result:
+                on_result(result)
+            if result.error:
+                if show_without_news:
+                    messagebox.showerror("Monitoramento de Scripts", result.error)
+                return
+            if result.new_files:
+                preview = "\n".join(result.new_files[:20])
+                if len(result.new_files) > 20:
+                    preview += f"\n... +{len(result.new_files) - 20} script(s)"
+                messagebox.showwarning(
+                    "Monitoramento de Scripts",
+                    "Novos scripts encontrados para rodar no banco modelo:\n\n"
+                    f"{preview}\n\n"
+                    f"Caminho:\n{result.directory}",
+                )
+                return
+            if show_without_news:
+                messagebox.showinfo(
+                    "Monitoramento de Scripts",
+                    "Nenhum script novo encontrado.\n\n"
+                    f"Total monitorado: {result.total_files}\n"
+                    f"Caminho:\n{result.directory}",
+                )
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def open_script_monitor_window(self):
+        monitor_window = tk.Toplevel(self)
+        monitor_window.title("Monitoramento de Scripts")
+        monitor_window.geometry("780x420")
+        monitor_window.transient(self)
+
+        frame = ttk.Frame(monitor_window, padding=12)
+        frame.pack(fill="both", expand=True)
+        frame.rowconfigure(2, weight=1)
+        frame.columnconfigure(1, weight=1)
+
+        status_var = tk.StringVar(value="Pronto para verificar.")
+        path_var = tk.StringVar(value="")
+
+        ttk.Label(frame, text="Pasta monitorada:").grid(row=0, column=0, sticky="w")
+        ttk.Label(frame, textvariable=path_var, wraplength=600).grid(
+            row=0,
+            column=1,
+            columnspan=2,
+            sticky="w",
+            padx=(8, 0),
+        )
+        ttk.Label(frame, textvariable=status_var).grid(
+            row=1,
+            column=0,
+            columnspan=3,
+            sticky="w",
+            pady=(10, 8),
+        )
+
+        list_frame = ttk.Frame(frame)
+        list_frame.grid(row=2, column=0, columnspan=3, sticky="nsew")
+        list_frame.rowconfigure(0, weight=1)
+        list_frame.columnconfigure(0, weight=1)
+        script_list = tk.Listbox(list_frame)
+        y_scroll = ttk.Scrollbar(list_frame, orient="vertical", command=script_list.yview)
+        script_list.configure(yscrollcommand=y_scroll.set)
+        script_list.grid(row=0, column=0, sticky="nsew")
+        y_scroll.grid(row=0, column=1, sticky="ns")
+
+        def update_result(result):
+            path_var.set(str(result.directory))
+            script_list.delete(0, tk.END)
+            if result.error:
+                status_var.set(result.error)
+                return
+            if result.new_files:
+                status_var.set(
+                    f"{len(result.new_files)} script(s) novo(s) encontrado(s)."
+                )
+                for file_name in result.new_files:
+                    script_list.insert(tk.END, file_name)
+                return
+            status_var.set(
+                f"Nenhum script novo. Total monitorado: {result.total_files}."
+            )
+
+        def verify_now():
+            status_var.set("Verificando scripts...")
+            self._run_script_monitor_check(
+                show_without_news=True,
+                on_result=update_result,
+            )
+
+        def open_folder():
+            directory = Path(path_var.get())
+            if not directory.exists():
+                messagebox.showerror(
+                    "Monitoramento de Scripts",
+                    f"Pasta nao encontrada:\n{directory}",
+                )
+                return
+            os.startfile(directory)
+
+        button_bar = ttk.Frame(frame)
+        button_bar.grid(row=3, column=0, columnspan=3, sticky="e", pady=(12, 0))
+        ttk.Button(button_bar, text="Verificar agora", command=verify_now).grid(
+            row=0,
+            column=0,
+            padx=(0, 8),
+        )
+        ttk.Button(button_bar, text="Abrir Pasta", command=open_folder).grid(
+            row=0,
+            column=1,
+            padx=(0, 8),
+        )
+        ttk.Button(button_bar, text="Fechar", command=monitor_window.destroy).grid(
+            row=0,
+            column=2,
+        )
+
+        verify_now()
 
     def choose_base_directory(self, target_var):
         selected_directory = filedialog.askdirectory(

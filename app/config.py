@@ -43,6 +43,9 @@ COPY_TARGET_DIRECTORIES = (
     Path(r"\\citel-fileserve\Modem\VERSOES\379_Versoes\379.48.02\379.48.2.30"),
     COPY_TARGET_DIRECTORY,
 )
+SCRIPT_MONITOR_DIRECTORY = Path(
+    r"\\citel-fileserve\Modem\WEBSERVICE_CITEL\Scripts"
+)
 
 IGNORED_PROJECT_FOLDERS = {
     "pastateste",

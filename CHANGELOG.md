@@ -5,6 +5,15 @@ Todas as alteracoes relevantes deste projeto sao documentadas neste arquivo.
 O formato e baseado em Keep a Changelog e o projeto segue Versionamento
 Semantico (`MAIOR.MENOR.CORRECAO`).
 
+## [1.2.9] - 2026-06-17
+
+### Adicionado
+- Novo menu `Monitoramento > Scripts Banco Modelo` verifica uma vez ao dia a
+  pasta `\\citel-fileserve\Modem\WEBSERVICE_CITEL\Scripts` e avisa quando
+  encontrar scripts novos.
+- Estado do monitoramento de scripts e salvo em `settings.json`, evitando
+  alertas repetidos no mesmo dia.
+
 ## [1.2.8] - 2026-06-17
 
 ### Alterado
