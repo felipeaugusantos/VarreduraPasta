@@ -136,11 +136,14 @@ def load_script_monitor_state():
     data = _load_settings()
     state = data.get("script_monitor")
     if not isinstance(state, dict):
-        return {"last_check_date": "", "known_files": []}
+        return {"last_check_date": "", "known_files": [], "pending_files": []}
 
     known_files = state.get("known_files")
     if not isinstance(known_files, list):
         known_files = []
+    pending_files = state.get("pending_files")
+    if not isinstance(pending_files, list):
+        pending_files = []
     return {
         "last_check_date": str(state.get("last_check_date") or ""),
         "known_files": sorted(
@@ -150,17 +153,33 @@ def load_script_monitor_state():
                 if str(file_name).strip()
             }
         ),
+        "pending_files": sorted(
+            {
+                str(file_name).strip()
+                for file_name in pending_files
+                if str(file_name).strip()
+            }
+        ),
     }
 
 
-def save_script_monitor_state(last_check_date, known_files):
+def save_script_monitor_state(last_check_date, known_files, pending_files=None):
     data = _load_settings()
+    if pending_files is None:
+        pending_files = load_script_monitor_state().get("pending_files", [])
     data["script_monitor"] = {
         "last_check_date": str(last_check_date or ""),
         "known_files": sorted(
             {
                 str(file_name).strip()
                 for file_name in known_files
+                if str(file_name).strip()
+            }
+        ),
+        "pending_files": sorted(
+            {
+                str(file_name).strip()
+                for file_name in pending_files
                 if str(file_name).strip()
             }
         ),

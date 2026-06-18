@@ -5,7 +5,12 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from app import settings
-from app.script_monitor import check_scripts, should_check_today
+from app.script_monitor import (
+    check_scripts,
+    load_pending_scripts,
+    mark_pending_scripts_done,
+    should_check_today,
+)
 
 
 class ScriptMonitorTests(unittest.TestCase):
@@ -53,6 +58,8 @@ class ScriptMonitorTests(unittest.TestCase):
         self.assertFalse(result.first_run)
         self.assertEqual(result.total_files, 2)
         self.assertEqual(result.new_files, ["script_002.sql"])
+        self.assertEqual(result.pending_files, ["script_002.sql"])
+        self.assertEqual(load_pending_scripts(), ["script_002.sql"])
 
     def test_daily_check_is_skipped_when_already_checked_today(self):
         directory = Path(self._temp_directory.name) / "scripts"
@@ -69,6 +76,19 @@ class ScriptMonitorTests(unittest.TestCase):
 
         self.assertFalse(result.checked)
         self.assertEqual(result.new_files, [])
+
+    def test_mark_pending_scripts_done_clears_pending_list(self):
+        directory = Path(self._temp_directory.name) / "scripts"
+        directory.mkdir()
+        (directory / "script_001.sql").write_text("select 1", encoding="utf-8")
+
+        with patch("app.script_monitor.write_log"):
+            check_scripts(force=True, today=date(2026, 6, 17), directory=directory)
+            (directory / "script_002.sql").write_text("select 2", encoding="utf-8")
+            check_scripts(force=True, today=date(2026, 6, 18), directory=directory)
+            mark_pending_scripts_done()
+
+        self.assertEqual(load_pending_scripts(), [])
 
 
 if __name__ == "__main__":

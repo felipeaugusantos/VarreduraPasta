@@ -15,6 +15,7 @@ class ScriptMonitorResult:
     first_run: bool
     total_files: int
     new_files: list[str]
+    pending_files: list[str]
     error: str
     last_check_date: str
 
@@ -52,6 +53,7 @@ def check_scripts(force=False, today=None, directory=SCRIPT_MONITOR_DIRECTORY):
             first_run=False,
             total_files=len(state.get("known_files", [])),
             new_files=[],
+            pending_files=list(state.get("pending_files", [])),
             error="",
             last_check_date=state.get("last_check_date", ""),
         )
@@ -66,6 +68,7 @@ def check_scripts(force=False, today=None, directory=SCRIPT_MONITOR_DIRECTORY):
             first_run=False,
             total_files=0,
             new_files=[],
+            pending_files=list(state.get("pending_files", [])),
             error=error,
             last_check_date=state.get("last_check_date", ""),
         )
@@ -81,6 +84,7 @@ def check_scripts(force=False, today=None, directory=SCRIPT_MONITOR_DIRECTORY):
             first_run=False,
             total_files=0,
             new_files=[],
+            pending_files=list(state.get("pending_files", [])),
             error=error_text,
             last_check_date=state.get("last_check_date", ""),
         )
@@ -90,7 +94,14 @@ def check_scripts(force=False, today=None, directory=SCRIPT_MONITOR_DIRECTORY):
     new_files = [] if first_run else [
         file_name for file_name in current_files if file_name not in known_files
     ]
-    save_script_monitor_state(today_text, current_files)
+    pending_files = sorted(
+        {
+            *state.get("pending_files", []),
+            *new_files,
+        },
+        key=str.lower,
+    )
+    save_script_monitor_state(today_text, current_files, pending_files)
 
     if new_files:
         _write_monitor_log(
@@ -108,9 +119,24 @@ def check_scripts(force=False, today=None, directory=SCRIPT_MONITOR_DIRECTORY):
         first_run=first_run,
         total_files=len(current_files),
         new_files=new_files,
+        pending_files=pending_files,
         error="",
         last_check_date=today_text,
     )
+
+
+def load_pending_scripts():
+    return list(load_script_monitor_state().get("pending_files", []))
+
+
+def mark_pending_scripts_done():
+    state = load_script_monitor_state()
+    save_script_monitor_state(
+        state.get("last_check_date", ""),
+        state.get("known_files", []),
+        [],
+    )
+    _write_monitor_log("pendencias_concluidas", SCRIPT_MONITOR_DIRECTORY, "scripts marcados como feito")
 
 
 def _write_monitor_log(result, directory, reason):

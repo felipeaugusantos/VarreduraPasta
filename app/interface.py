@@ -12,7 +12,12 @@ from app.config import COPY_TARGET_DIRECTORIES, SCAN_INTERVAL_MS
 from app.pattern import generate_pattern_from_projects, save_pattern
 from app.runtime import executable_generation_text, resource_path
 from app.scanner import enrich_project_file_versions, scan_projects
-from app.script_monitor import check_scripts, should_check_today
+from app.script_monitor import (
+    check_scripts,
+    load_pending_scripts,
+    mark_pending_scripts_done,
+    should_check_today,
+)
 from app.settings import (
     load_additional_copy_target_directories,
     load_base_directory,
@@ -1023,7 +1028,7 @@ class VersionScannerApp(tk.Tk):
     def open_script_monitor_window(self):
         monitor_window = tk.Toplevel(self)
         monitor_window.title("Monitoramento de Scripts")
-        monitor_window.geometry("780x420")
+        monitor_window.geometry("860x420")
         monitor_window.transient(self)
 
         frame = ttk.Frame(monitor_window, padding=12)
@@ -1066,11 +1071,12 @@ class VersionScannerApp(tk.Tk):
             if result.error:
                 status_var.set(result.error)
                 return
-            if result.new_files:
+            pending_files = result.pending_files or load_pending_scripts()
+            if pending_files:
                 status_var.set(
-                    f"{len(result.new_files)} script(s) novo(s) encontrado(s)."
+                    f"{len(pending_files)} script(s) pendente(s) para marcar como feito."
                 )
-                for file_name in result.new_files:
+                for file_name in pending_files:
                     script_list.insert(tk.END, file_name)
                 return
             status_var.set(
@@ -1082,6 +1088,21 @@ class VersionScannerApp(tk.Tk):
             self._run_script_monitor_check(
                 show_without_news=True,
                 on_result=update_result,
+            )
+
+        def mark_done():
+            if not load_pending_scripts():
+                messagebox.showinfo(
+                    "Monitoramento de Scripts",
+                    "Nao existe script pendente para marcar como feito.",
+                )
+                return
+            mark_pending_scripts_done()
+            script_list.delete(0, tk.END)
+            status_var.set("Scripts pendentes marcados como feito.")
+            messagebox.showinfo(
+                "Monitoramento de Scripts",
+                "Scripts marcados como feito.",
             )
 
         def open_folder():
@@ -1106,9 +1127,14 @@ class VersionScannerApp(tk.Tk):
             column=1,
             padx=(0, 8),
         )
-        ttk.Button(button_bar, text="Fechar", command=monitor_window.destroy).grid(
+        ttk.Button(button_bar, text="Marcar como feito", command=mark_done).grid(
             row=0,
             column=2,
+            padx=(0, 8),
+        )
+        ttk.Button(button_bar, text="Fechar", command=monitor_window.destroy).grid(
+            row=0,
+            column=3,
         )
 
         verify_now()
@@ -1181,6 +1207,7 @@ class VersionScannerApp(tk.Tk):
             "- Monitoramento > Scripts Banco Modelo verifica a pasta de scripts do banco modelo.\n"
             "- A verificacao acontece uma vez ao dia ao abrir o sistema.\n"
             "- Tambem e possivel clicar em Verificar agora.\n"
+            "- Quando houver scripts novos, eles ficam pendentes ate clicar em Marcar como feito.\n"
             "- O sistema apenas avisa quando existe script novo; nenhum script e executado automaticamente.\n"
         )
 

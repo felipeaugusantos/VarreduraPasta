@@ -72,7 +72,8 @@ Tudo fica em `settings.json`, ao lado do executavel (criado automaticamente):
   ZIPs grandes. As varreduras seguintes na mesma execucao tendem a ser mais
   rapidas por uso de cache em memoria.
 - O monitoramento de scripts verifica a pasta uma vez ao dia ao abrir o sistema
-  e tambem permite verificacao manual pelo menu.
+  e tambem permite verificacao manual pelo menu. Scripts novos ficam pendentes
+  ate o operador clicar em `Marcar como feito`.
 
 ## Regras de validacao
 

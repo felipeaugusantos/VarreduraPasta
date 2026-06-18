@@ -5,6 +5,12 @@ Todas as alteracoes relevantes deste projeto sao documentadas neste arquivo.
 O formato e baseado em Keep a Changelog e o projeto segue Versionamento
 Semantico (`MAIOR.MENOR.CORRECAO`).
 
+## [1.2.11] - 2026-06-18
+
+### Adicionado
+- Monitoramento de scripts agora mantem scripts novos como pendentes ate o
+  operador clicar em `Marcar como feito`.
+
 ## [1.2.10] - 2026-06-17
 
 ### Adicionado
