@@ -303,6 +303,79 @@ def validar_pos_fechamento(project):
     )
 
 
+def limpar_pasta(project):
+    if not project.path.exists():
+        _write_action_audit(
+            "Limpar Pasta",
+            "bloqueado",
+            project,
+            reason=f"pasta nao encontrada: {project.path}",
+        )
+        messagebox.showerror(
+            "Limpar Pasta",
+            f"Pasta nao encontrada:\n{project.path}",
+        )
+        return
+
+    confirmed = messagebox.askyesno(
+        "Limpar Pasta",
+        "Deseja limpar a pasta do projeto?\n\n"
+        f"Projeto: {project.folder_name}\n"
+        f"Pasta: {project.path}\n\n"
+        "Sera preservada a pasta comandosCMD.\n"
+        "Todos os demais arquivos e pastas da raiz serao removidos.",
+    )
+    if not confirmed:
+        _write_action_audit(
+            "Limpar Pasta",
+            "cancelado",
+            project,
+            reason="usuario cancelou",
+        )
+        return
+
+    try:
+        cleaned_items = _cleanup_source_after_copy(project.path)
+    except CleanupError as error:
+        _write_action_audit(
+            "Limpar Pasta",
+            "erro",
+            project,
+            reason=f"{error}; removido={error.cleaned_items} item(ns)",
+        )
+        messagebox.showwarning(
+            "Limpar Pasta",
+            "A limpeza falhou parcialmente e deve ser conferida manualmente.\n\n"
+            f"{error}",
+        )
+        return
+    except OSError as error:
+        _write_action_audit(
+            "Limpar Pasta",
+            "erro",
+            project,
+            reason=str(error),
+        )
+        messagebox.showerror(
+            "Limpar Pasta",
+            f"Nao foi possivel limpar a pasta:\n{error}",
+        )
+        return
+
+    _write_action_audit(
+        "Limpar Pasta",
+        "concluido",
+        project,
+        reason=f"{cleaned_items} item(ns) removido(s); preservado=comandosCMD",
+    )
+    messagebox.showinfo(
+        "Limpar Pasta",
+        "Limpeza concluida.\n\n"
+        f"{cleaned_items} item(ns) removido(s).\n"
+        "A pasta comandosCMD foi preservada.",
+    )
+
+
 def copiar_local(project):
     if _is_cloud_project(project):
         _write_action_audit(
@@ -351,11 +424,12 @@ def copiar_cloud(project):
             "Copiar Cloud",
             "bloqueado",
             project,
-            reason=f"Autcom precisa estar acima de {CLOUD_MIN_AUTCOM_MB} MB",
+            reason=f"Autcom precisa ter pelo menos {CLOUD_MIN_AUTCOM_MB} MB",
         )
         messagebox.showerror(
             "Copiar Cloud",
-            "Autcom.exe precisa estar acima de 200 MB para copia cloud.",
+            f"Autcom.exe precisa ter pelo menos {CLOUD_MIN_AUTCOM_MB} MB "
+            "para copia cloud.",
         )
         return
     if _block_on_zip_name_errors(project, "Copiar Cloud"):
@@ -691,7 +765,7 @@ def _build_copy_safety_checks(project, destination, target_root, title):
         add(
             "Limite Cloud",
             project.cloud_copy_allowed,
-            f"Autcom acima de {CLOUD_MIN_AUTCOM_MB} MB",
+            f"Autcom a partir de {CLOUD_MIN_AUTCOM_MB} MB",
         )
     add(
         "Status do projeto",

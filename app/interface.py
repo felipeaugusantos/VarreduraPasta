@@ -8,7 +8,7 @@ from tkinter import filedialog, messagebox, ttk
 
 from app import __version__, actions
 from app.audit import filter_log_entries, list_log_files, parse_log_entries, read_log_file
-from app.config import COPY_TARGET_DIRECTORIES, SCAN_INTERVAL_MS
+from app.config import CLOUD_MIN_AUTCOM_MB, COPY_TARGET_DIRECTORIES, SCAN_INTERVAL_MS
 from app.pattern import generate_pattern_from_projects, save_pattern
 from app.runtime import executable_generation_text, resource_path
 from app.scanner import enrich_project_file_versions, scan_projects
@@ -238,38 +238,46 @@ class VersionScannerApp(tk.Tk):
         )
         self.validate_close_button.grid(row=0, column=2, padx=(4, 12))
 
+        self.clean_folder_button = ttk.Button(
+            button_bar,
+            text="Limpar Pasta",
+            command=lambda: self._run_action(actions.limpar_pasta),
+        )
+        self.clean_folder_button.grid(row=0, column=3, padx=(4, 12))
+
         self.local_copy_button = ttk.Button(
             button_bar,
             text="Copiar Local",
             command=lambda: self._run_action(actions.copiar_local),
         )
-        self.local_copy_button.grid(row=0, column=3, padx=4)
+        self.local_copy_button.grid(row=0, column=4, padx=4)
 
         self.cloud_copy_button = ttk.Button(
             button_bar,
             text="Copiar Cloud",
             command=lambda: self._run_action(actions.copiar_cloud),
         )
-        self.cloud_copy_button.grid(row=0, column=4, padx=4)
+        self.cloud_copy_button.grid(row=0, column=5, padx=4)
 
         self.details_button = ttk.Button(
             button_bar,
             text="Detalhes",
             command=self.open_project_details,
         )
-        self.details_button.grid(row=0, column=5, padx=(12, 4))
+        self.details_button.grid(row=0, column=6, padx=(12, 4))
 
         self.open_folder_button = ttk.Button(
             button_bar,
             text="Abrir Pasta",
             command=self.open_selected_project_folder,
         )
-        self.open_folder_button.grid(row=0, column=6, padx=4)
+        self.open_folder_button.grid(row=0, column=7, padx=4)
 
         self.buttons = (
             self.local_close_button,
             self.cloud_close_button,
             self.validate_close_button,
+            self.clean_folder_button,
             self.local_copy_button,
             self.cloud_copy_button,
             self.details_button,
@@ -1187,8 +1195,9 @@ class VersionScannerApp(tk.Tk):
             "- Depois que o BAT terminar, clique em Atualizar e em Validar Fechamento para "
             "registrar a versao/status final na Auditoria.\n\n"
             "4. Copiar Local e Copiar Cloud\n"
+            "- Limpar Pasta remove os arquivos da raiz do projeto preservando comandosCMD.\n"
             "- Copiar Local exige Autcom abaixo de 100 MB.\n"
-            "- Copiar Cloud exige Autcom acima de 200 MB.\n"
+            f"- Copiar Cloud exige Autcom a partir de {CLOUD_MIN_AUTCOM_MB} MB.\n"
             "- A copia envia somente arquivos .zip para o destino.\n"
             "- Apos a copia ser verificada, a origem e limpa preservando apenas comandosCMD.\n"
             "- O caminho do destino e copiado automaticamente para a area de transferencia.\n"
@@ -1272,7 +1281,10 @@ class VersionScannerApp(tk.Tk):
         if not project.local_copy_allowed:
             hints.append("Copiar Local indisponível: Autcom precisa estar abaixo de 100 MB.")
         if not project.cloud_copy_allowed:
-            hints.append("Copiar Cloud indisponível: Autcom precisa estar acima de 200 MB.")
+            hints.append(
+                "Copiar Cloud indisponível: "
+                f"Autcom precisa ter pelo menos {CLOUD_MIN_AUTCOM_MB} MB."
+            )
         if project.status != "OK":
             hints.append(f"Detalhe: {self._summarize_project_detail(project.status)}")
         return "\n".join(hints)

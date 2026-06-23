@@ -97,8 +97,10 @@ Tudo fica em `settings.json`, ao lado do executavel (criado automaticamente):
   (Local sem `_CLOUD`; Cloud com `_CLOUD`).
 - `Validar Fechamento`: apos o BAT terminar, clique em `Atualizar` e use este
   botao para registrar na Auditoria a versao/status final do projeto.
+- `Limpar Pasta`: remove os arquivos e subpastas da raiz do projeto selecionado,
+  preservando sempre `comandosCMD`, apos confirmacao do operador.
 - `Copiar Local`: permitido quando `Autcom.exe` esta abaixo de 100 MB.
-- `Copiar Cloud`: permitido quando `Autcom.exe` esta acima de 200 MB.
+- `Copiar Cloud`: permitido quando `Autcom.exe` tem pelo menos 180 MB.
 - A copia procura no destino de rede uma pasta com o mesmo nome do projeto,
   pede confirmacao mostrando origem e destino e envia somente os arquivos
   `.zip` da pasta do projeto.

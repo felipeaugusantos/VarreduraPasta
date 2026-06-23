@@ -18,6 +18,7 @@ from app.actions import (
     _find_destination_folders,
     _verify_critical_file_hashes,
     fechamento_local,
+    limpar_pasta,
     validar_pos_fechamento,
 )
 
@@ -543,6 +544,61 @@ class CopyHashVerificationTests(unittest.TestCase):
 
         self.assertEqual(cleaned_items, 3)
         self.assertEqual(remaining, ["comandosCMD"])
+
+    def test_manual_clean_folder_keeps_comandoscmd_and_audits_success(self):
+        from tempfile import TemporaryDirectory
+
+        with TemporaryDirectory() as temp_directory:
+            source = Path(temp_directory)
+            commands = source / "comandosCMD"
+            commands.mkdir()
+            (commands / "_FechamentoArquivos.bat").write_text("echo ok", encoding="utf-8")
+            (source / "Autcom.exe").write_bytes(b"abc123")
+            (source / "autcom.zip").write_bytes(b"zip")
+            project = make_project(path=source)
+
+            with (
+                patch("app.actions.messagebox.askyesno", return_value=True),
+                patch("app.actions.messagebox.showinfo") as showinfo,
+                patch("app.actions._write_action_audit") as write_audit,
+            ):
+                limpar_pasta(project)
+
+            remaining = sorted(item.name for item in source.iterdir())
+
+        self.assertEqual(remaining, ["comandosCMD"])
+        showinfo.assert_called_once()
+        write_audit.assert_called_with(
+            "Limpar Pasta",
+            "concluido",
+            project,
+            reason="2 item(ns) removido(s); preservado=comandosCMD",
+        )
+
+    def test_manual_clean_folder_cancel_does_not_remove_files(self):
+        from tempfile import TemporaryDirectory
+
+        with TemporaryDirectory() as temp_directory:
+            source = Path(temp_directory)
+            (source / "comandosCMD").mkdir()
+            (source / "Autcom.exe").write_bytes(b"abc123")
+            project = make_project(path=source)
+
+            with (
+                patch("app.actions.messagebox.askyesno", return_value=False),
+                patch("app.actions._write_action_audit") as write_audit,
+            ):
+                limpar_pasta(project)
+
+            remaining = sorted(item.name for item in source.iterdir())
+
+        self.assertEqual(remaining, ["Autcom.exe", "comandosCMD"])
+        write_audit.assert_called_with(
+            "Limpar Pasta",
+            "cancelado",
+            project,
+            reason="usuario cancelou",
+        )
 
 
 if __name__ == "__main__":

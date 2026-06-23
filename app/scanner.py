@@ -492,7 +492,7 @@ def scan_projects(base_directory=BASE_DIRECTORY):
                 ),
                 cloud_copy_allowed=(
                     autcom_check.size_mb is not None
-                    and autcom_check.size_mb > CLOUD_MIN_AUTCOM_MB
+                    and autcom_check.size_mb >= CLOUD_MIN_AUTCOM_MB
                 ),
                 file_checks=file_checks,
                 discovered_files=discovered_files,

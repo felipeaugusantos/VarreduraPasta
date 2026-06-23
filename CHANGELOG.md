@@ -5,6 +5,17 @@ Todas as alteracoes relevantes deste projeto sao documentadas neste arquivo.
 O formato e baseado em Keep a Changelog e o projeto segue Versionamento
 Semantico (`MAIOR.MENOR.CORRECAO`).
 
+## [1.2.13] - 2026-06-23
+
+### Adicionado
+- Novo botao `Limpar Pasta` remove os arquivos da raiz do projeto selecionado,
+  preserva `comandosCMD` e registra a acao na Auditoria.
+
+## [1.2.12] - 2026-06-18
+
+### Alterado
+- Copiar Cloud agora considera `Autcom.exe` valido a partir de 180 MB.
+
 ## [1.2.11] - 2026-06-18
 
 ### Adicionado

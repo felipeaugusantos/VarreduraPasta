@@ -1,3 +1,3 @@
 """Sistema de acompanhamento de copia."""
 
-__version__ = "1.2.11"
+__version__ = "1.2.13"
