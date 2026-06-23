@@ -5,6 +5,12 @@ Todas as alteracoes relevantes deste projeto sao documentadas neste arquivo.
 O formato e baseado em Keep a Changelog e o projeto segue Versionamento
 Semantico (`MAIOR.MENOR.CORRECAO`).
 
+## [2.0.0] - 2026-06-23
+
+### Corrigido
+- `Limpar Pasta` agora executa em segundo plano com janela de progresso,
+  evitando que o sistema pareca travado durante limpezas demoradas.
+
 ## [1.2.14] - 2026-06-23
 
 ### Adicionado

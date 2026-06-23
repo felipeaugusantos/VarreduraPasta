@@ -16,6 +16,7 @@ from app.actions import (
     _build_copy_safety_checks,
     _copy_block_reasons,
     _find_destination_folders,
+    _finish_manual_cleanup,
     _verify_critical_file_hashes,
     fechamento_local,
     limpar_pasta,
@@ -545,7 +546,7 @@ class CopyHashVerificationTests(unittest.TestCase):
         self.assertEqual(cleaned_items, 3)
         self.assertEqual(remaining, ["comandosCMD"])
 
-    def test_manual_clean_folder_keeps_comandoscmd_and_audits_success(self):
+    def test_manual_clean_folder_starts_background_cleanup(self):
         from tempfile import TemporaryDirectory
 
         with TemporaryDirectory() as temp_directory:
@@ -559,14 +560,28 @@ class CopyHashVerificationTests(unittest.TestCase):
 
             with (
                 patch("app.actions.messagebox.askyesno", return_value=True),
-                patch("app.actions.messagebox.showinfo") as showinfo,
-                patch("app.actions._write_action_audit") as write_audit,
+                patch("app.actions._start_manual_cleanup") as start_cleanup,
             ):
                 limpar_pasta(project)
 
             remaining = sorted(item.name for item in source.iterdir())
 
-        self.assertEqual(remaining, ["comandosCMD"])
+        self.assertEqual(remaining, ["Autcom.exe", "autcom.zip", "comandosCMD"])
+        start_cleanup.assert_called_once_with(project)
+
+    def test_finish_manual_clean_folder_audits_success(self):
+        class FakeProgress:
+            def winfo_exists(self):
+                return False
+
+        project = make_project()
+
+        with (
+            patch("app.actions.messagebox.showinfo") as showinfo,
+            patch("app.actions._write_action_audit") as write_audit,
+        ):
+            _finish_manual_cleanup(FakeProgress(), project, 2, None)
+
         showinfo.assert_called_once()
         write_audit.assert_called_with(
             "Limpar Pasta",

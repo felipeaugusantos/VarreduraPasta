@@ -334,31 +334,84 @@ def limpar_pasta(project):
         )
         return
 
-    try:
-        cleaned_items = _cleanup_source_after_copy(project.path)
-    except CleanupError as error:
+    _start_manual_cleanup(project)
+
+
+def _start_manual_cleanup(project):
+    progress = Toplevel()
+    progress.title("Limpar Pasta")
+    progress.geometry("560x120")
+    progress.resizable(False, False)
+    progress.protocol("WM_DELETE_WINDOW", lambda: None)
+    progress.grab_set()
+    frame = ttk.Frame(progress, padding=12)
+    frame.pack(fill="both", expand=True)
+    ttk.Label(
+        frame,
+        text=f"Limpando pasta {project.folder_name}...",
+    ).pack(anchor="w")
+    ttk.Label(
+        frame,
+        text="A pasta comandosCMD sera preservada.",
+    ).pack(anchor="w", pady=(4, 0))
+    progress_bar = ttk.Progressbar(frame, mode="indeterminate")
+    progress_bar.pack(fill="x", pady=(12, 0))
+    progress_bar.start(10)
+
+    result_queue = queue.Queue()
+
+    def worker():
+        cleaned_items = 0
+        cleanup_error = None
+        try:
+            cleaned_items = _cleanup_source_after_copy(project.path)
+        except CleanupError as error:
+            cleaned_items = error.cleaned_items
+            cleanup_error = error
+        except OSError as error:
+            cleanup_error = error
+        result_queue.put((cleaned_items, cleanup_error))
+
+    def poll():
+        try:
+            cleaned_items, cleanup_error = result_queue.get_nowait()
+        except queue.Empty:
+            if progress.winfo_exists():
+                progress.after(POLL_INTERVAL_MS, poll)
+            return
+
+        _finish_manual_cleanup(progress, project, cleaned_items, cleanup_error)
+
+    threading.Thread(target=worker, daemon=True).start()
+    progress.after(POLL_INTERVAL_MS, poll)
+
+
+def _finish_manual_cleanup(progress, project, cleaned_items, cleanup_error):
+    _safe_destroy(progress)
+    if isinstance(cleanup_error, CleanupError):
         _write_action_audit(
             "Limpar Pasta",
             "erro",
             project,
-            reason=f"{error}; removido={error.cleaned_items} item(ns)",
+            reason=f"{cleanup_error}; removido={cleanup_error.cleaned_items} item(ns)",
         )
         messagebox.showwarning(
             "Limpar Pasta",
             "A limpeza falhou parcialmente e deve ser conferida manualmente.\n\n"
-            f"{error}",
+            f"{cleanup_error}",
         )
         return
-    except OSError as error:
+
+    if cleanup_error is not None:
         _write_action_audit(
             "Limpar Pasta",
             "erro",
             project,
-            reason=str(error),
+            reason=str(cleanup_error),
         )
         messagebox.showerror(
             "Limpar Pasta",
-            f"Nao foi possivel limpar a pasta:\n{error}",
+            f"Nao foi possivel limpar a pasta:\n{cleanup_error}",
         )
         return
 
