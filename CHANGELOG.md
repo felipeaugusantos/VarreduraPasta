@@ -5,6 +5,12 @@ Todas as alteracoes relevantes deste projeto sao documentadas neste arquivo.
 O formato e baseado em Keep a Changelog e o projeto segue Versionamento
 Semantico (`MAIOR.MENOR.CORRECAO`).
 
+## [1.2.14] - 2026-06-23
+
+### Adicionado
+- Novo menu `Jenkins` permite configurar URL, usuario e senha do Jenkins local,
+  abrir o painel no navegador e testar conexao sem registrar a senha na Auditoria.
+
 ## [1.2.13] - 2026-06-23
 
 ### Adicionado

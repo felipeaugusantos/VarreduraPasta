@@ -91,6 +91,32 @@ class CopyTargetDirectoryTests(SettingsTestCase):
         )
 
 
+class JenkinsConfigTests(SettingsTestCase):
+    def test_default_jenkins_config(self):
+        self.assertEqual(
+            settings.load_jenkins_config(),
+            {
+                "url": "http://localhost:8080",
+                "username": "admin",
+                "password": "",
+            },
+        )
+
+    def test_jenkins_config_roundtrip_preserves_other_settings(self):
+        settings.save_base_directory(r"C:\OutraPasta")
+        settings.save_jenkins_config("localhost:8080", "admin", "fechadas")
+
+        self.assertEqual(
+            settings.load_jenkins_config(),
+            {
+                "url": "localhost:8080",
+                "username": "admin",
+                "password": "fechadas",
+            },
+        )
+        self.assertEqual(settings.load_base_directory(), Path(r"C:\OutraPasta"))
+
+
 class IgnoredProjectFoldersTests(SettingsTestCase):
     def test_default_when_settings_missing(self):
         self.assertEqual(

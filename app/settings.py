@@ -105,6 +105,29 @@ def save_copy_target_directory(copy_target_directory):
     save_copy_target_directories([value] if value else [])
 
 
+def load_jenkins_config():
+    data = _load_settings()
+    value = data.get("jenkins")
+    if not isinstance(value, dict):
+        value = {}
+
+    return {
+        "url": str(value.get("url") or "http://localhost:8080").strip(),
+        "username": str(value.get("username") or "admin").strip(),
+        "password": str(value.get("password") or ""),
+    }
+
+
+def save_jenkins_config(url, username, password):
+    data = _load_settings()
+    data["jenkins"] = {
+        "url": str(url or "").strip() or "http://localhost:8080",
+        "username": str(username or "").strip(),
+        "password": str(password or ""),
+    }
+    _save_settings(data)
+
+
 def load_ignored_project_folders():
     data = _load_settings()
     value = data.get("ignored_project_folders")

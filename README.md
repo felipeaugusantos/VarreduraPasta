@@ -52,6 +52,8 @@ Tudo fica em `settings.json`, ao lado do executavel (criado automaticamente):
   Cloud; os arquivos encontrados nelas viram o padrao essencial aplicado em
   todas as versoes (gravado em `project_pattern.json`).
 - `Configuracoes > Pastas Ignoradas`: pastas excluidas da varredura.
+- `Jenkins > Configuracoes`: cadastra URL, usuario e senha do Jenkins local
+  (padrao `http://localhost:8080`) e permite testar conexao.
 - `Auditoria > Logs`: consulta os registros mensais em tabela a partir de
   `logs/fechamentos-AAAA-MM.log`.
 - `Monitoramento > Scripts Banco Modelo`: verifica scripts novos em

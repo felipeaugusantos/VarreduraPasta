@@ -2,13 +2,15 @@ import os
 import queue
 import threading
 import tkinter as tk
+import webbrowser
 from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from app import __version__, actions
+from app import __version__, actions, logging_utils
 from app.audit import filter_log_entries, list_log_files, parse_log_entries, read_log_file
 from app.config import CLOUD_MIN_AUTCOM_MB, COPY_TARGET_DIRECTORIES, SCAN_INTERVAL_MS
+from app.jenkins import normalize_jenkins_url, test_jenkins_connection
 from app.pattern import generate_pattern_from_projects, save_pattern
 from app.runtime import executable_generation_text, resource_path
 from app.scanner import enrich_project_file_versions, scan_projects
@@ -22,9 +24,11 @@ from app.settings import (
     load_additional_copy_target_directories,
     load_base_directory,
     load_ignored_project_folders,
+    load_jenkins_config,
     save_base_directory,
     save_copy_target_directories,
     save_ignored_project_folders,
+    save_jenkins_config,
 )
 
 
@@ -48,6 +52,7 @@ class VersionScannerApp(tk.Tk):
         self.sort_column = "folder"
         self.sort_reverse = False
         self.config_window = None
+        self.jenkins_window = None
         self._build_menu()
         self._build_layout()
         self.after(100, self.refresh)
@@ -88,6 +93,17 @@ class VersionScannerApp(tk.Tk):
             command=self.open_script_monitor_window,
         )
         menu_bar.add_cascade(label="Monitoramento", menu=monitor_menu)
+
+        jenkins_menu = tk.Menu(menu_bar, tearoff=False)
+        jenkins_menu.add_command(
+            label="Configurações",
+            command=self.open_jenkins_settings_window,
+        )
+        jenkins_menu.add_command(
+            label="Abrir Jenkins",
+            command=self.open_jenkins_url,
+        )
+        menu_bar.add_cascade(label="Jenkins", menu=jenkins_menu)
 
         help_menu = tk.Menu(menu_bar, tearoff=False)
         help_menu.add_command(
@@ -644,6 +660,170 @@ class VersionScannerApp(tk.Tk):
             text="Cancelar",
             command=self.config_window.destroy,
         ).grid(row=0, column=1)
+
+    def open_jenkins_settings_window(self):
+        if self.jenkins_window and self.jenkins_window.winfo_exists():
+            self.jenkins_window.focus()
+            return
+
+        config = load_jenkins_config()
+        self.jenkins_window = tk.Toplevel(self)
+        self.jenkins_window.title("Jenkins")
+        self.jenkins_window.geometry("620x220")
+        self.jenkins_window.resizable(False, False)
+        self.jenkins_window.transient(self)
+
+        frame = ttk.Frame(self.jenkins_window, padding=12)
+        frame.pack(fill="both", expand=True)
+        frame.columnconfigure(1, weight=1)
+
+        url_var = tk.StringVar(value=config["url"])
+        username_var = tk.StringVar(value=config["username"])
+        password_var = tk.StringVar(value=config["password"])
+        status_var = tk.StringVar(
+            value="Disponivel apenas na maquina onde o Jenkins local esta rodando."
+        )
+
+        ttk.Label(frame, text="URL Jenkins:").grid(row=0, column=0, sticky="w")
+        ttk.Entry(frame, textvariable=url_var).grid(
+            row=0,
+            column=1,
+            columnspan=2,
+            sticky="ew",
+            padx=(8, 0),
+        )
+
+        ttk.Label(frame, text="Usuario:").grid(
+            row=1,
+            column=0,
+            sticky="w",
+            pady=(10, 0),
+        )
+        ttk.Entry(frame, textvariable=username_var).grid(
+            row=1,
+            column=1,
+            columnspan=2,
+            sticky="ew",
+            padx=(8, 0),
+            pady=(10, 0),
+        )
+
+        ttk.Label(frame, text="Senha:").grid(
+            row=2,
+            column=0,
+            sticky="w",
+            pady=(10, 0),
+        )
+        ttk.Entry(frame, textvariable=password_var, show="*").grid(
+            row=2,
+            column=1,
+            columnspan=2,
+            sticky="ew",
+            padx=(8, 0),
+            pady=(10, 0),
+        )
+
+        ttk.Label(frame, textvariable=status_var, wraplength=560).grid(
+            row=3,
+            column=0,
+            columnspan=3,
+            sticky="w",
+            pady=(14, 0),
+        )
+
+        button_bar = ttk.Frame(frame)
+        button_bar.grid(row=4, column=0, columnspan=3, sticky="e", pady=(18, 0))
+
+        test_button = ttk.Button(button_bar, text="Testar conexao")
+        test_button.grid(row=0, column=0, padx=(0, 8))
+
+        ttk.Button(
+            button_bar,
+            text="Abrir Jenkins",
+            command=lambda: webbrowser.open(normalize_jenkins_url(url_var.get())),
+        ).grid(row=0, column=1, padx=(0, 8))
+
+        ttk.Button(
+            button_bar,
+            text="Salvar",
+            command=lambda: self.save_jenkins_settings(
+                url_var.get(),
+                username_var.get(),
+                password_var.get(),
+            ),
+        ).grid(row=0, column=2, padx=(0, 8))
+        ttk.Button(
+            button_bar,
+            text="Cancelar",
+            command=self.jenkins_window.destroy,
+        ).grid(row=0, column=3)
+
+        def test_connection():
+            result_queue = queue.Queue()
+            test_button.config(state="disabled")
+            status_var.set("Testando conexao com Jenkins...")
+
+            def worker():
+                result_queue.put(
+                    test_jenkins_connection(
+                        url_var.get(),
+                        username_var.get(),
+                        password_var.get(),
+                    )
+                )
+
+            def poll():
+                try:
+                    ok, message = result_queue.get_nowait()
+                except queue.Empty:
+                    if self.jenkins_window and self.jenkins_window.winfo_exists():
+                        self.jenkins_window.after(100, poll)
+                    return
+
+                result = "online" if ok else "erro"
+                self._write_jenkins_audit(
+                    "teste_conexao",
+                    result,
+                    normalize_jenkins_url(url_var.get()),
+                    message,
+                )
+                status_var.set(message)
+                test_button.config(state="normal")
+                if ok:
+                    messagebox.showinfo("Jenkins", message)
+                else:
+                    messagebox.showwarning("Jenkins", message)
+
+            threading.Thread(target=worker, daemon=True).start()
+            self.jenkins_window.after(100, poll)
+
+        test_button.config(command=test_connection)
+
+    def save_jenkins_settings(self, url, username, password):
+        normalized_url = normalize_jenkins_url(url)
+        save_jenkins_config(normalized_url, username, password)
+        self._write_jenkins_audit(
+            "configuracao",
+            "salvo",
+            normalized_url,
+            f"usuario={username or ''}",
+        )
+        if self.jenkins_window and self.jenkins_window.winfo_exists():
+            self.jenkins_window.destroy()
+        messagebox.showinfo("Jenkins", "Configuracao do Jenkins salva.")
+
+    def open_jenkins_url(self):
+        config = load_jenkins_config()
+        url = normalize_jenkins_url(config["url"])
+        self._write_jenkins_audit("abrir", "solicitado", url, "navegador")
+        webbrowser.open(url)
+
+    def _write_jenkins_audit(self, action, result, url, reason):
+        user = os.environ.get("USERNAME") or os.environ.get("USER") or "desconhecido"
+        logging_utils.write_log(
+            f"Jenkins {action} | usuario={user} | destino={url} | "
+            f"resultado={result} | motivo={reason}"
+        )
 
     def open_pattern_window(self):
         pattern_window = tk.Toplevel(self)
@@ -1208,11 +1388,15 @@ class VersionScannerApp(tk.Tk):
             "- Destinos extras: adiciona novas raizes de busca alem dos destinos padrao.\n"
             "- Padrao de Arquivos: permite aprender o padrao esperado a partir de pastas modelo.\n"
             "- Pastas Ignoradas: define pastas que nao devem aparecer na varredura.\n\n"
-            "6. Auditoria\n"
+            "6. Jenkins\n"
+            "- Jenkins > Configuracoes salva URL, usuario e senha do Jenkins local.\n"
+            "- Jenkins > Abrir Jenkins abre o painel configurado no navegador.\n"
+            "- O teste de conexao registra o resultado na Auditoria sem gravar senha.\n\n"
+            "7. Auditoria\n"
             "- Auditoria > Logs exibe os registros mensais em tabela.\n"
             "- Use Buscar e Resultado para filtrar acoes, erros, bloqueios e conclusoes.\n"
             "- Os logs ficam na pasta logs ao lado do executavel.\n\n"
-            "7. Monitoramento de Scripts\n"
+            "8. Monitoramento de Scripts\n"
             "- Monitoramento > Scripts Banco Modelo verifica a pasta de scripts do banco modelo.\n"
             "- A verificacao acontece uma vez ao dia ao abrir o sistema.\n"
             "- Tambem e possivel clicar em Verificar agora.\n"
