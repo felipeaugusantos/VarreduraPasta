@@ -5,6 +5,12 @@ Todas as alteracoes relevantes deste projeto sao documentadas neste arquivo.
 O formato e baseado em Keep a Changelog e o projeto segue Versionamento
 Semantico (`MAIOR.MENOR.CORRECAO`).
 
+## [2.0.1] - 2026-06-23
+
+### Adicionado
+- Menu `Jenkins > Status dos Jobs` consulta os jobs do Jenkins local e mostra
+  ultimo build, status, duracao, data e link para abrir o build no navegador.
+
 ## [2.0.0] - 2026-06-23
 
 ### Corrigido

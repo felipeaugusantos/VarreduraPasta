@@ -10,7 +10,11 @@ from tkinter import filedialog, messagebox, ttk
 from app import __version__, actions, logging_utils
 from app.audit import filter_log_entries, list_log_files, parse_log_entries, read_log_file
 from app.config import CLOUD_MIN_AUTCOM_MB, COPY_TARGET_DIRECTORIES, SCAN_INTERVAL_MS
-from app.jenkins import normalize_jenkins_url, test_jenkins_connection
+from app.jenkins import (
+    get_jenkins_jobs_status,
+    normalize_jenkins_url,
+    test_jenkins_connection,
+)
 from app.pattern import generate_pattern_from_projects, save_pattern
 from app.runtime import executable_generation_text, resource_path
 from app.scanner import enrich_project_file_versions, scan_projects
@@ -53,6 +57,7 @@ class VersionScannerApp(tk.Tk):
         self.sort_reverse = False
         self.config_window = None
         self.jenkins_window = None
+        self.jenkins_jobs_window = None
         self._build_menu()
         self._build_layout()
         self.after(100, self.refresh)
@@ -102,6 +107,10 @@ class VersionScannerApp(tk.Tk):
         jenkins_menu.add_command(
             label="Abrir Jenkins",
             command=self.open_jenkins_url,
+        )
+        jenkins_menu.add_command(
+            label="Status dos Jobs",
+            command=self.open_jenkins_jobs_window,
         )
         menu_bar.add_cascade(label="Jenkins", menu=jenkins_menu)
 
@@ -818,6 +827,135 @@ class VersionScannerApp(tk.Tk):
         self._write_jenkins_audit("abrir", "solicitado", url, "navegador")
         webbrowser.open(url)
 
+    def open_jenkins_jobs_window(self):
+        if self.jenkins_jobs_window and self.jenkins_jobs_window.winfo_exists():
+            self.jenkins_jobs_window.focus()
+            return
+
+        self.jenkins_jobs_window = tk.Toplevel(self)
+        self.jenkins_jobs_window.title("Jenkins - Status dos Jobs")
+        self.jenkins_jobs_window.geometry("980x460")
+        self.jenkins_jobs_window.transient(self)
+
+        frame = ttk.Frame(self.jenkins_jobs_window, padding=12)
+        frame.pack(fill="both", expand=True)
+        frame.rowconfigure(1, weight=1)
+        frame.columnconfigure(0, weight=1)
+
+        status_var = tk.StringVar(value="Clique em Atualizar para consultar o Jenkins.")
+        ttk.Label(frame, textvariable=status_var).grid(row=0, column=0, sticky="w")
+
+        columns = ("job", "build", "status", "duracao", "data", "url")
+        tree = ttk.Treeview(frame, columns=columns, show="headings", height=14)
+        tree.heading("job", text="Job")
+        tree.heading("build", text="Build")
+        tree.heading("status", text="Status")
+        tree.heading("duracao", text="Duracao")
+        tree.heading("data", text="Data")
+        tree.heading("url", text="URL")
+        tree.column("job", width=220, anchor="center")
+        tree.column("build", width=80, anchor="center")
+        tree.column("status", width=130, anchor="center")
+        tree.column("duracao", width=110, anchor="center")
+        tree.column("data", width=150, anchor="center")
+        tree.column("url", width=260, anchor="w")
+        tree.grid(row=1, column=0, sticky="nsew", pady=(8, 0))
+
+        scrollbar = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
+        scrollbar.grid(row=1, column=1, sticky="ns", pady=(8, 0))
+        tree.configure(yscrollcommand=scrollbar.set)
+
+        button_bar = ttk.Frame(frame)
+        button_bar.grid(row=2, column=0, columnspan=2, sticky="e", pady=(12, 0))
+
+        refresh_button = ttk.Button(button_bar, text="Atualizar")
+        refresh_button.grid(row=0, column=0, padx=(0, 8))
+
+        def open_selected_build():
+            selection = tree.selection()
+            if not selection:
+                messagebox.showwarning("Jenkins", "Selecione um job para abrir.")
+                return
+            values = tree.item(selection[0], "values")
+            build_url = values[5] if len(values) >= 6 else ""
+            if not build_url:
+                messagebox.showwarning("Jenkins", "Este job nao possui build para abrir.")
+                return
+            self._write_jenkins_audit("abrir_build", "solicitado", build_url, values[0])
+            webbrowser.open(build_url)
+
+        ttk.Button(
+            button_bar,
+            text="Abrir Build",
+            command=open_selected_build,
+        ).grid(row=0, column=1, padx=(0, 8))
+        ttk.Button(
+            button_bar,
+            text="Fechar",
+            command=self.jenkins_jobs_window.destroy,
+        ).grid(row=0, column=2)
+
+        def refresh_jobs():
+            config = load_jenkins_config()
+            result_queue = queue.Queue()
+            refresh_button.config(state="disabled")
+            status_var.set("Consultando jobs do Jenkins...")
+
+            def worker():
+                result_queue.put(
+                    get_jenkins_jobs_status(
+                        config["url"],
+                        config["username"],
+                        config["password"],
+                    )
+                )
+
+            def poll():
+                try:
+                    ok, message, jobs = result_queue.get_nowait()
+                except queue.Empty:
+                    if self.jenkins_jobs_window and self.jenkins_jobs_window.winfo_exists():
+                        self.jenkins_jobs_window.after(100, poll)
+                    return
+
+                for item_id in tree.get_children():
+                    tree.delete(item_id)
+
+                if ok:
+                    for index, job in enumerate(jobs):
+                        tree.insert(
+                            "",
+                            "end",
+                            iid=str(index),
+                            values=(
+                                job["name"],
+                                job["number"],
+                                job["status"],
+                                job["duration"],
+                                job["timestamp"],
+                                job["url"],
+                            ),
+                        )
+                    result = "consultado"
+                else:
+                    result = "erro"
+                    messagebox.showwarning("Jenkins", message)
+
+                self._write_jenkins_audit(
+                    "status_jobs",
+                    result,
+                    normalize_jenkins_url(config["url"]),
+                    message,
+                )
+                status_var.set(message)
+                refresh_button.config(state="normal")
+
+            threading.Thread(target=worker, daemon=True).start()
+            self.jenkins_jobs_window.after(100, poll)
+
+        refresh_button.config(command=refresh_jobs)
+        refresh_jobs()
+
     def _write_jenkins_audit(self, action, result, url, reason):
         user = os.environ.get("USERNAME") or os.environ.get("USER") or "desconhecido"
         logging_utils.write_log(
@@ -1391,6 +1529,7 @@ class VersionScannerApp(tk.Tk):
             "6. Jenkins\n"
             "- Jenkins > Configuracoes salva URL, usuario e senha do Jenkins local.\n"
             "- Jenkins > Abrir Jenkins abre o painel configurado no navegador.\n"
+            "- Jenkins > Status dos Jobs mostra o ultimo build de cada job.\n"
             "- O teste de conexao registra o resultado na Auditoria sem gravar senha.\n\n"
             "7. Auditoria\n"
             "- Auditoria > Logs exibe os registros mensais em tabela.\n"

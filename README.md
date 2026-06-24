@@ -54,6 +54,8 @@ Tudo fica em `settings.json`, ao lado do executavel (criado automaticamente):
 - `Configuracoes > Pastas Ignoradas`: pastas excluidas da varredura.
 - `Jenkins > Configuracoes`: cadastra URL, usuario e senha do Jenkins local
   (padrao `http://localhost:8080`) e permite testar conexao.
+- `Jenkins > Status dos Jobs`: consulta o ultimo build de cada job e permite
+  abrir o build selecionado no navegador.
 - `Auditoria > Logs`: consulta os registros mensais em tabela a partir de
   `logs/fechamentos-AAAA-MM.log`.
 - `Monitoramento > Scripts Banco Modelo`: verifica scripts novos em
