@@ -1,7 +1,7 @@
 import base64
 import json
 from datetime import datetime
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -24,6 +24,15 @@ def _authorization_header(username, password):
 
 
 def _request_json(url, username, password, timeout):
+    parsed = urlsplit(url)
+    local_hosts = {"localhost", "127.0.0.1", "::1"}
+    if username or password:
+        if parsed.scheme != "https" and parsed.hostname not in local_hosts:
+            return (
+                False,
+                "Autenticacao Jenkins exige HTTPS para enderecos nao locais.",
+                {},
+            )
     request = Request(url)
     authorization = _authorization_header(username, password)
     if authorization:

@@ -30,6 +30,16 @@ class FakeResponse:
 
 
 class JenkinsTests(unittest.TestCase):
+    def test_remote_http_with_credentials_is_blocked(self):
+        with patch("app.jenkins.urlopen") as urlopen_mock:
+            ok, message = test_jenkins_connection(
+                "http://jenkins.interno:8080", "admin", "segredo"
+            )
+
+        self.assertFalse(ok)
+        self.assertIn("exige HTTPS", message)
+        urlopen_mock.assert_not_called()
+
     def test_normalize_jenkins_url_adds_scheme_and_removes_trailing_slash(self):
         self.assertEqual(
             normalize_jenkins_url("localhost:8080/"),

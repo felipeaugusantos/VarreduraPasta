@@ -6,6 +6,7 @@ import subprocess
 import threading
 import time
 from pathlib import Path
+from uuid import uuid4
 from tkinter import Listbox, TclError, Toplevel, messagebox, ttk
 
 from app import logging_utils
@@ -15,7 +16,6 @@ from app.scanner import validate_zip_names
 from app.settings import load_copy_target_directories
 
 POLL_INTERVAL_MS = 100
-CRITICAL_COPY_FILES = {"autcom.zip"}
 CLEANUP_RETRY_ATTEMPTS = 5
 CLEANUP_RETRY_DELAY_SECONDS = 1
 
@@ -995,24 +995,68 @@ def _start_copy(window, project, destination, title):
 
 
 def _copy_project_files(source, destination):
+    source = Path(source)
+    destination = Path(destination)
+    zip_errors = validate_zip_names(source)
+    if zip_errors:
+        raise OSError("Copia bloqueada por ZIP invalido: " + "; ".join(zip_errors[:3]))
+
     copied_files = 0
     copied_paths = []
-    for item in _iter_copyable_zip_files(source):
-        target = destination / item.name
-        shutil.copy2(item, target)
-        copied_paths.append(item.relative_to(source))
-        copied_files += 1
-
-    if copied_files == 0:
+    items = _iter_copyable_zip_files(source)
+    if not items:
         raise OSError("Nenhum arquivo .zip encontrado para copiar.")
 
+    transaction = destination / f".varredura-{uuid4().hex}"
+    staging = transaction / "novos"
+    backup = transaction / "anteriores"
+    staging.mkdir(parents=True)
+    promoted = []
+    backed_up = []
+    try:
+        for item in items:
+            relative_path = item.relative_to(source)
+            target = staging / relative_path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(item, target)
+            copied_paths.append(relative_path)
+            copied_files += 1
+
+        hash_summary, mismatches = _verify_file_hashes(
+            source, staging, copied_paths
+        )
+        if mismatches:
+            preview = ", ".join(mismatches[:5])
+            raise OSError(
+                f"Verificacao pos-copia encontrou {len(mismatches)} "
+                f"arquivo(s) divergente(s): {preview}"
+            )
+
+        backup.mkdir(parents=True)
+        for relative_path in copied_paths:
+            final_path = destination / relative_path
+            staged_path = staging / relative_path
+            if final_path.exists():
+                backup_path = backup / relative_path
+                backup_path.parent.mkdir(parents=True, exist_ok=True)
+                final_path.replace(backup_path)
+                backed_up.append(relative_path)
+            staged_path.replace(final_path)
+            promoted.append(relative_path)
+    except OSError:
+        for relative_path in reversed(promoted):
+            final_path = destination / relative_path
+            if final_path.exists():
+                final_path.unlink()
+        for relative_path in reversed(backed_up):
+            backup_path = backup / relative_path
+            if backup_path.exists():
+                backup_path.replace(destination / relative_path)
+        raise
+    finally:
+        shutil.rmtree(transaction, ignore_errors=True)
+
     mismatches = _collect_copy_mismatches(source, destination, copied_paths)
-    hash_summary, hash_mismatches = _verify_critical_file_hashes(
-        source,
-        destination,
-        copied_paths,
-    )
-    mismatches.extend(hash_mismatches)
     if mismatches:
         preview = ", ".join(mismatches[:5])
         if len(mismatches) > 5:
@@ -1109,6 +1153,10 @@ def _sha256_file(path):
 
 
 def _verify_critical_file_hashes(source, destination, relative_paths=None):
+    return _verify_file_hashes(source, destination, relative_paths)
+
+
+def _verify_file_hashes(source, destination, relative_paths=None):
     hashes = {}
     mismatches = []
     if relative_paths is None:
@@ -1118,9 +1166,6 @@ def _verify_critical_file_hashes(source, destination, relative_paths=None):
         ]
 
     for relative_path in relative_paths:
-        if Path(relative_path).name.lower() not in CRITICAL_COPY_FILES:
-            continue
-
         source_file = Path(source) / relative_path
         target_file = Path(destination) / relative_path
         relative_name = str(relative_path)

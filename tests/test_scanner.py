@@ -163,6 +163,16 @@ class BuildStatusTests(unittest.TestCase):
 
 
 class ValidateZipNamesTests(unittest.TestCase):
+    def test_corrupted_zip_is_reported(self):
+        with TemporaryDirectory() as temp_directory:
+            folder = Path(temp_directory)
+            (folder / "autcom.zip").write_bytes(b"nao e um zip")
+
+            errors = validate_zip_names(folder)
+
+        self.assertEqual(len(errors), 1)
+        self.assertIn("ZIP invalido ou corrompido", errors[0])
+
     def test_matching_zip_name_is_ok(self):
         with TemporaryDirectory() as temp_directory:
             folder = Path(temp_directory)

@@ -1,4 +1,6 @@
 import json
+import threading
+from functools import wraps
 from pathlib import Path
 from uuid import uuid4
 
@@ -10,9 +12,19 @@ from app.config import (
     SVN_BASE_PATH,
 )
 from app.runtime import application_directory
+from app.credentials import load_jenkins_password, save_jenkins_password
 
 
 SETTINGS_FILE = application_directory() / "settings.json"
+_SETTINGS_LOCK = threading.RLock()
+
+
+def _synchronized(function):
+    @wraps(function)
+    def wrapper(*args, **kwargs):
+        with _SETTINGS_LOCK:
+            return function(*args, **kwargs)
+    return wrapper
 
 
 def _load_settings():
@@ -47,6 +59,7 @@ def load_base_directory():
     return Path(value) if value else BASE_DIRECTORY
 
 
+@_synchronized
 def save_base_directory(base_directory):
     data = _load_settings()
     data["base_directory"] = str(Path(base_directory))
@@ -93,6 +106,7 @@ def load_copy_target_directories():
     )
 
 
+@_synchronized
 def save_copy_target_directories(copy_target_directories):
     data = _load_settings()
     directories = _unique_paths(copy_target_directories)
@@ -101,30 +115,43 @@ def save_copy_target_directories(copy_target_directories):
     _save_settings(data)
 
 
+@_synchronized
 def save_copy_target_directory(copy_target_directory):
     value = str(copy_target_directory).strip()
     save_copy_target_directories([value] if value else [])
 
 
+@_synchronized
 def load_jenkins_config():
     data = _load_settings()
     value = data.get("jenkins")
     if not isinstance(value, dict):
         value = {}
 
+    password = load_jenkins_password()
+    legacy_password = str(value.get("password") or "")
+    if not password and legacy_password:
+        username = str(value.get("username") or "admin").strip()
+        save_jenkins_password(username, legacy_password)
+        password = legacy_password
+        value.pop("password", None)
+        data["jenkins"] = value
+        _save_settings(data)
+
     return {
         "url": str(value.get("url") or "http://localhost:8080").strip(),
         "username": str(value.get("username") or "admin").strip(),
-        "password": str(value.get("password") or ""),
+        "password": password,
     }
 
 
+@_synchronized
 def save_jenkins_config(url, username, password):
+    save_jenkins_password(username, password)
     data = _load_settings()
     data["jenkins"] = {
         "url": str(url or "").strip() or "http://localhost:8080",
         "username": str(username or "").strip(),
-        "password": str(password or ""),
     }
     _save_settings(data)
 
@@ -134,6 +161,7 @@ def load_svn_base_path():
     return str(data.get("svn_base_path") or SVN_BASE_PATH).strip()
 
 
+@_synchronized
 def save_svn_base_path(svn_base_path):
     data = _load_settings()
     data["svn_base_path"] = str(svn_base_path or "").strip()
@@ -154,6 +182,7 @@ def load_ignored_project_folders():
     return folders
 
 
+@_synchronized
 def save_ignored_project_folders(folders):
     data = _load_settings()
     normalized = sorted(
@@ -198,6 +227,7 @@ def load_script_monitor_state():
     }
 
 
+@_synchronized
 def save_script_monitor_state(last_check_date, known_files, pending_files=None):
     data = _load_settings()
     if pending_files is None:

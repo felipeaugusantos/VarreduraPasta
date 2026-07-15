@@ -78,6 +78,25 @@ class SvnSearchTests(unittest.TestCase):
         self.assertIn("Caminhos alterados:", entries[0].detail_text)
         self.assertEqual(entries[1].revision, "r483980")
 
+    def test_changed_version_uses_project_version_folder_not_changed_file(self):
+        lines = [
+            "------------------------------------------------------------------------",
+            "r483733 | thobias | 2026-07-13 15:05:30 -0300 (seg, 13 jul 2026) | 10 lines",
+            "Changed paths:",
+            "   M /Padrao/027.18/27.18.379/379.48.02.REV.FECHADAs/379.48.02.30.FECHADAS/379.48.2.30.74.150.45.59/padra_atualizado/fontes/movimentacaoitens/untTransfArmazens.pas",
+            "Req. 446120",
+            "Analise de Requisito:",
+            "------------------------------------------------------------------------",
+        ]
+
+        entry = parse_svn_log(lines)[0]
+
+        self.assertEqual(entry.changed_version, "379.48.2.30.74.150.45.59")
+        self.assertEqual(
+            entry.changed_parent_path,
+            "/Padrao/027.18/27.18.379/379.48.02.REV.FECHADAs/379.48.02.30.FECHADAS",
+        )
+
     @patch("app.svn_search.subprocess.run")
     def test_revision_and_requirement_filter_keeps_complete_entry(self, run_mock):
         run_mock.return_value.returncode = 0

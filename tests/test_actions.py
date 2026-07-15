@@ -3,6 +3,7 @@ from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
+from zipfile import ZipFile
 
 from app.actions import (
     CleanupError,
@@ -39,6 +40,11 @@ def make_project(**overrides):
     }
     values.update(overrides)
     return SimpleNamespace(**values)
+
+
+def create_valid_zip(path, member="Autcom.exe", content=b"zip123"):
+    with ZipFile(path, "w") as archive:
+        archive.writestr(member, content)
 
 
 class CopySafetyChecksTests(unittest.TestCase):
@@ -315,6 +321,35 @@ class ActionAuditTests(unittest.TestCase):
 
 
 class CopyHashVerificationTests(unittest.TestCase):
+    def test_transaction_restores_existing_files_when_promotion_fails(self):
+        from tempfile import TemporaryDirectory
+
+        with TemporaryDirectory() as temp_directory:
+            root = Path(temp_directory)
+            source = root / "origem"
+            destination = root / "destino"
+            source.mkdir()
+            destination.mkdir()
+            create_valid_zip(source / "a.zip", "a.exe", b"novo-a")
+            create_valid_zip(source / "b.zip", "b.exe", b"novo-b")
+            (destination / "a.zip").write_bytes(b"antigo-a")
+            (destination / "b.zip").write_bytes(b"antigo-b")
+            original_replace = Path.replace
+
+            def fail_second_promotion(path, target):
+                if path.name == "b.zip" and path.parent.name == "novos":
+                    raise OSError("falha simulada")
+                return original_replace(path, target)
+
+            with patch("pathlib.Path.replace", fail_second_promotion):
+                with self.assertRaisesRegex(OSError, "falha simulada"):
+                    _copy_project_files(source, destination)
+
+            self.assertEqual((destination / "a.zip").read_bytes(), b"antigo-a")
+            self.assertEqual((destination / "b.zip").read_bytes(), b"antigo-b")
+            self.assertTrue((source / "a.zip").exists())
+            self.assertFalse(any(destination.glob(".varredura-*")))
+
     def test_finish_copy_copies_destination_to_clipboard(self):
         class FakeProgress:
             def __init__(self):
@@ -398,7 +433,7 @@ class CopyHashVerificationTests(unittest.TestCase):
             source.mkdir()
             destination.mkdir()
             (source / "Autcom.exe").write_bytes(b"abc123")
-            (source / "autcom.zip").write_bytes(b"zip123")
+            create_valid_zip(source / "autcom.zip")
             (source / "comandosCMD").mkdir()
             (source / "comandosCMD" / "_FechamentoArquivos.bat").write_text(
                 "echo ok",
@@ -446,7 +481,7 @@ class CopyHashVerificationTests(unittest.TestCase):
             destination = root / "destino"
             source.mkdir()
             destination.mkdir()
-            (source / "autcom.zip").write_bytes(b"zip123")
+            create_valid_zip(source / "autcom.zip")
             (source / "comandosCMD").mkdir()
 
             with patch(

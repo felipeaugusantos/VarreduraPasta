@@ -1,0 +1,23 @@
+name: Validar projeto
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  tests:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Compilar fontes
+        shell: pwsh
+        run: |
+          $files = @('main.py') + (Get-ChildItem -Path app,tests -Filter '*.py' | ForEach-Object { $_.FullName })
+          python -m py_compile @files
+      - name: Executar testes
+        run: python -m unittest discover -s tests -t .
+      - name: Validar importacao da interface
+        run: python -c "import app.interface; print('ok')"

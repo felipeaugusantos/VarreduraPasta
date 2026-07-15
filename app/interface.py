@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from app import __version__, actions, logging_utils
+from app import __version__, actions, logging_utils, project_view
 from app.audit import filter_log_entries, list_log_files, parse_log_entries, read_log_file
 from app.config import CLOUD_MIN_AUTCOM_MB, COPY_TARGET_DIRECTORIES, SCAN_INTERVAL_MS
 from app.jenkins import (
@@ -434,119 +434,31 @@ class VersionScannerApp(tk.Tk):
         self.search_var.set("")
 
     def _matches_search(self, project):
-        term = self.search_var.get().strip().lower()
-        if not term:
-            return True
-        searchable = " ".join(
-            (
-                project.folder_name,
-                project.display_file_version or "",
-                project.display_product_version or "",
-                project.expected_file_version or "",
-                project.expected_product_version or "",
-                self._short_zip_status(project),
-                self._short_status(project),
-                project.status,
-            )
-        ).lower()
-        return term in searchable
+        return project_view.matches_search(project, self.search_var.get())
 
     def _matches_filter(self, project):
-        selected_filter = self.filter_var.get()
-        if selected_filter == "Somente OK":
-            return project.status == "OK"
-        if selected_filter == "Com erro":
-            return project.status != "OK"
-        if selected_filter == "Local":
-            return not self._is_cloud_project(project)
-        if selected_filter == "Cloud":
-            return self._is_cloud_project(project)
-        return True
+        return project_view.matches_filter(project, self.filter_var.get())
 
     def _short_status(self, project):
-        if project.status == "OK":
-            return "OK"
-        normalized = project.status.lower()
-        if "ausente" in normalized:
-            return "Arquivo ausente"
-        if "zip" in normalized:
-            return "Pendência ZIP"
-        if "fileversion" in normalized or "productversion" in normalized:
-            return "Versão incorreta"
-        return "Pendência"
+        return project_view.short_status(project)
 
     def _status_category(self, project):
-        short_status = self._short_status(project)
-        if short_status == "OK":
-            return "ok"
-        if short_status == "Arquivo ausente":
-            return "missing"
-        if short_status == "Versão incorreta":
-            return "version"
-        if short_status == "Pendência ZIP":
-            return "zip"
-        return "other"
+        return project_view.status_category(project)
 
     def _status_tag(self, project):
-        category = self._status_category(project)
-        if category == "ok":
-            return "ok"
-        if category in {"missing", "version", "zip"}:
-            return "error"
-        return "warning"
+        return project_view.status_tag(project)
 
     def _short_zip_status(self, project):
-        if project.zip_status == "Autcom zip OK":
-            return "ZIP OK"
-        if project.zip_status == "Sem autcom.zip":
-            return "Somente EXE"
-        if project.zip_status == "Autcom ausente":
-            return "Sem Autcom"
-        return "Pendência"
+        return project_view.short_zip_status(project)
 
     def _project_type(self, project):
-        return "Cloud" if self._is_cloud_project(project) else "Local"
+        return project_view.project_type(project)
 
     def _summary_text(self, projects):
-        total = len(projects)
-        ok_count = sum(1 for project in projects if self._status_category(project) == "ok")
-        version_count = sum(
-            1 for project in projects if self._status_category(project) == "version"
-        )
-        missing_count = sum(
-            1 for project in projects if self._status_category(project) == "missing"
-        )
-        zip_count = sum(1 for project in projects if self._status_category(project) == "zip")
-        other_count = sum(
-            1 for project in projects if self._status_category(project) == "other"
-        )
-        analyzed_total = len(self.projects)
-        now = datetime.now().strftime("%H:%M:%S")
-        pending_parts = [
-            f"{version_count} versão incorreta",
-            f"{missing_count} arquivo ausente",
-            f"{zip_count} pendência ZIP",
-        ]
-        if other_count:
-            pending_parts.append(f"{other_count} outras pendências")
-        return (
-            f"{total} exibido(s) de {analyzed_total} analisado(s) | "
-            f"{ok_count} OK | {' | '.join(pending_parts)} | Atualizado às {now}"
-        )
+        return project_view.summary_text(projects, len(self.projects))
 
     def _sort_value(self, project, column):
-        values = {
-            "folder": project.folder_name.lower(),
-            "type": self._project_type(project),
-            "file_version": project.display_file_version or "",
-            "product_version": project.display_product_version or "",
-            "expected_file": project.expected_file_version or "",
-            "expected_product": project.expected_product_version or "",
-            "autcom_size": project.display_autcom_size_mb or 0,
-            "zip": self._short_zip_status(project),
-            "status": self._short_status(project),
-        }
-        return values.get(column, "")
+        return project_view.sort_value(project, column)
 
     def _sort_by_column(self, column):
         if self.sort_column == column:
@@ -1348,9 +1260,20 @@ class VersionScannerApp(tk.Tk):
         self.after(24 * 60 * 60 * 1000, self.check_scripts_daily)
 
     def _run_script_monitor_check(self, show_without_news=True, on_result=None):
+        result_queue = queue.Queue()
+
         def worker():
             result = check_scripts(force=show_without_news)
-            self.after(0, lambda: finish(result))
+            result_queue.put(result)
+
+        def poll():
+            try:
+                result = result_queue.get_nowait()
+            except queue.Empty:
+                if self.winfo_exists():
+                    self.after(100, poll)
+                return
+            finish(result)
 
         def finish(result):
             if on_result:
@@ -1379,6 +1302,7 @@ class VersionScannerApp(tk.Tk):
                 )
 
         threading.Thread(target=worker, daemon=True).start()
+        self.after(100, poll)
 
     def open_script_monitor_window(self):
         monitor_window = tk.Toplevel(self)

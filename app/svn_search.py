@@ -1,3 +1,4 @@
+import re
 import subprocess
 import unicodedata
 from dataclasses import dataclass
@@ -64,13 +65,17 @@ class SvnLogEntry:
 
     @property
     def changed_version(self):
+        version_path = _split_version_path(self.first_changed_path)
+        if version_path:
+            return version_path[0]
         path = self.first_changed_path.rstrip("/")
-        if not path:
-            return ""
-        return path.rsplit("/", 1)[-1]
+        return path.rsplit("/", 1)[-1] if path else ""
 
     @property
     def changed_parent_path(self):
+        version_path = _split_version_path(self.first_changed_path)
+        if version_path:
+            return version_path[1]
         path = self.first_changed_path.rstrip("/")
         if "/" not in path:
             return ""
@@ -324,6 +329,25 @@ def _is_changed_path_line(line):
     if len(line) < 3:
         return False
     return line[0] in {"A", "M", "D", "R"} and line[1:].lstrip().startswith("/")
+
+
+def _split_version_path(path):
+    cleaned_path = str(path or "").strip().rstrip("/")
+    if not cleaned_path:
+        return None
+    parts = [part for part in cleaned_path.split("/") if part]
+    for index, part in enumerate(parts):
+        if _looks_like_project_version(part):
+            parent = "/" + "/".join(parts[:index]) if index else ""
+            return part, parent
+    return None
+
+
+def _looks_like_project_version(value):
+    normalized = str(value or "").strip()
+    if "_" in normalized:
+        normalized = normalized.split("_", 1)[0]
+    return bool(re.fullmatch(r"\d+(?:\.\d+){4,}(?:\.\d+)*", normalized))
 
 
 def _clean_log_line(line):

@@ -53,7 +53,9 @@ Tudo fica em `settings.json`, ao lado do executavel (criado automaticamente):
   todas as versoes (gravado em `project_pattern.json`).
 - `Configuracoes > Pastas Ignoradas`: pastas excluidas da varredura.
 - `Jenkins > Configuracoes`: cadastra URL, usuario e senha do Jenkins local
-  (padrao `http://localhost:8080`) e permite testar conexao.
+  (padrao `http://localhost:8080`) e permite testar conexao. A senha fica no
+  Gerenciador de Credenciais do Windows, nunca no `settings.json`. Enderecos
+  nao locais exigem HTTPS quando houver autenticacao.
 - `Jenkins > Status dos Jobs`: consulta o ultimo build de cada job e permite
   abrir o build selecionado no navegador.
 - `Auditoria > Logs`: consulta os registros mensais em tabela a partir de
@@ -116,6 +118,8 @@ Tudo fica em `settings.json`, ao lado do executavel (criado automaticamente):
 - Fechamentos e copias sao bloqueados quando existem ZIPs com nome diferente do
   arquivo interno.
 - Todas as acoes geram registro mensal em `logs/fechamentos-AAAA-MM.log`.
+- ZIPs invalidos ou corrompidos bloqueiam a copia. Todos os ZIPs sao validados
+  por SHA-256 em uma area temporaria do destino antes da substituicao final.
 
 ## Checklist de seguranca antes da copia
 

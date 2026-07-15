@@ -8,12 +8,26 @@ Semantico (`MAIOR.MENOR.CORRECAO`).
 ## [2.0.3] - 2026-07-14
 
 ### Adicionado
+- Validacao continua no GitHub Actions para compilacao, testes e importacao da
+  interface em Windows.
+- Senha do Jenkins passou a ser armazenada no Gerenciador de Credenciais do
+  Windows; autenticacao remota por HTTP sem TLS agora e bloqueada.
+- Copia passou a usar area temporaria transacional e SHA-256 para todos os ZIPs.
+- Regras de apresentacao da tabela principal foram extraidas da interface para
+  um modulo independente e testavel.
 - Resultado da Consulta SVN passou a ser exibido em tabela por revisao, com
   detalhe completo da revisao selecionada.
 - Tela de Consulta SVN recebeu visual mais profissional, data resumida,
   detalhe estruturado, barras de rolagem e botoes para copiar revisao/caminho.
 - Tabela da Consulta SVN agora separa o caminho alterado em colunas `Versao`
   e `Caminho`.
+- Coluna `Versao` da Consulta SVN agora identifica a pasta de versao do projeto
+  dentro do caminho, mesmo quando o item alterado e um arquivo abaixo dela.
+
+### Corrigido
+- ZIP invalido ou corrompido agora bloqueia a operacao de copia.
+- Monitoramento de scripts nao acessa mais o Tkinter pela thread secundaria.
+- Escritas concorrentes no arquivo de configuracao agora sao serializadas.
 
 ## [2.0.2] - 2026-07-14
 

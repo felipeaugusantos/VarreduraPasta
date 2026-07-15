@@ -107,6 +107,7 @@ def validate_zip_names(project_path):
                     and not Path(info.filename).name.lower().startswith("err_")
                 ]
         except BadZipFile:
+            errors.append(f"{zip_path.name}: ZIP invalido ou corrompido")
             continue
         except OSError as error:
             errors.append(f"{zip_path.name}: erro ao ler ZIP ({error})")

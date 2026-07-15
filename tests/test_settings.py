@@ -1,4 +1,6 @@
 import unittest
+import threading
+from unittest.mock import patch
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -92,6 +94,22 @@ class CopyTargetDirectoryTests(SettingsTestCase):
 
 
 class JenkinsConfigTests(SettingsTestCase):
+    def setUp(self):
+        super().setUp()
+        self.password_loader = patch(
+            "app.settings.load_jenkins_password", return_value=""
+        )
+        self.password_saver = patch(
+            "app.settings.save_jenkins_password"
+        )
+        self.password_loader.start()
+        self.password_saver_mock = self.password_saver.start()
+
+    def tearDown(self):
+        self.password_saver.stop()
+        self.password_loader.stop()
+        super().tearDown()
+
     def test_default_jenkins_config(self):
         self.assertEqual(
             settings.load_jenkins_config(),
@@ -102,7 +120,24 @@ class JenkinsConfigTests(SettingsTestCase):
             },
         )
 
+    def test_legacy_plaintext_password_is_migrated(self):
+        settings.SETTINGS_FILE.write_text(
+            '{"jenkins":{"url":"http://localhost:8080","username":"admin","password":"antiga"}}',
+            encoding="utf-8",
+        )
+
+        config = settings.load_jenkins_config()
+
+        self.assertEqual(config["password"], "antiga")
+        self.password_saver_mock.assert_called_once_with("admin", "antiga")
+        self.assertNotIn("password", settings._load_settings()["jenkins"])
+
     def test_jenkins_config_roundtrip_preserves_other_settings(self):
+        self.password_loader.stop()
+        self.password_loader = patch(
+            "app.settings.load_jenkins_password", return_value="fechadas"
+        )
+        self.password_loader.start()
         settings.save_base_directory(r"C:\OutraPasta")
         settings.save_jenkins_config("localhost:8080", "admin", "fechadas")
 
@@ -115,6 +150,10 @@ class JenkinsConfigTests(SettingsTestCase):
             },
         )
         self.assertEqual(settings.load_base_directory(), Path(r"C:\OutraPasta"))
+        self.password_saver_mock.assert_called_once_with("admin", "fechadas")
+        self.assertNotIn(
+            "password", settings._load_settings().get("jenkins", {})
+        )
 
 
 class SvnBasePathTests(SettingsTestCase):
@@ -127,6 +166,27 @@ class SvnBasePathTests(SettingsTestCase):
 
         self.assertEqual(settings.load_svn_base_path(), r"\\servidor\svn")
         self.assertEqual(settings.load_base_directory(), Path(r"C:\OutraPasta"))
+
+    def test_concurrent_saves_preserve_both_values(self):
+        barrier = threading.Barrier(3)
+
+        def save_base():
+            barrier.wait()
+            settings.save_base_directory(r"C:\Concorrente")
+
+        def save_svn():
+            barrier.wait()
+            settings.save_svn_base_path(r"\\servidor\svn")
+
+        threads = [threading.Thread(target=save_base), threading.Thread(target=save_svn)]
+        for thread in threads:
+            thread.start()
+        barrier.wait()
+        for thread in threads:
+            thread.join()
+
+        self.assertEqual(settings.load_base_directory(), Path(r"C:\Concorrente"))
+        self.assertEqual(settings.load_svn_base_path(), r"\\servidor\svn")
 
 
 class IgnoredProjectFoldersTests(SettingsTestCase):
