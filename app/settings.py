@@ -7,6 +7,7 @@ from app.config import (
     COPY_TARGET_DIRECTORIES,
     COPY_TARGET_DIRECTORY,
     IGNORED_PROJECT_FOLDERS,
+    SVN_BASE_PATH,
 )
 from app.runtime import application_directory
 
@@ -125,6 +126,17 @@ def save_jenkins_config(url, username, password):
         "username": str(username or "").strip(),
         "password": str(password or ""),
     }
+    _save_settings(data)
+
+
+def load_svn_base_path():
+    data = _load_settings()
+    return str(data.get("svn_base_path") or SVN_BASE_PATH).strip()
+
+
+def save_svn_base_path(svn_base_path):
+    data = _load_settings()
+    data["svn_base_path"] = str(svn_base_path or "").strip()
     _save_settings(data)
 
 

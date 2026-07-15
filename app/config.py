@@ -46,6 +46,7 @@ COPY_TARGET_DIRECTORIES = (
 SCRIPT_MONITOR_DIRECTORY = Path(
     r"\\citel-fileserve\Modem\WEBSERVICE_CITEL\Scripts"
 )
+SVN_BASE_PATH = ""
 
 IGNORED_PROJECT_FOLDERS = {
     "pastateste",

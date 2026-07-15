@@ -117,6 +117,18 @@ class JenkinsConfigTests(SettingsTestCase):
         self.assertEqual(settings.load_base_directory(), Path(r"C:\OutraPasta"))
 
 
+class SvnBasePathTests(SettingsTestCase):
+    def test_default_svn_base_path(self):
+        self.assertEqual(settings.load_svn_base_path(), "")
+
+    def test_svn_base_path_roundtrip_preserves_other_settings(self):
+        settings.save_base_directory(r"C:\OutraPasta")
+        settings.save_svn_base_path(r"\\servidor\svn")
+
+        self.assertEqual(settings.load_svn_base_path(), r"\\servidor\svn")
+        self.assertEqual(settings.load_base_directory(), Path(r"C:\OutraPasta"))
+
+
 class IgnoredProjectFoldersTests(SettingsTestCase):
     def test_default_when_settings_missing(self):
         self.assertEqual(

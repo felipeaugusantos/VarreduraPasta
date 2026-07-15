@@ -5,6 +5,23 @@ Todas as alteracoes relevantes deste projeto sao documentadas neste arquivo.
 O formato e baseado em Keep a Changelog e o projeto segue Versionamento
 Semantico (`MAIOR.MENOR.CORRECAO`).
 
+## [2.0.3] - 2026-07-14
+
+### Adicionado
+- Resultado da Consulta SVN passou a ser exibido em tabela por revisao, com
+  detalhe completo da revisao selecionada.
+- Tela de Consulta SVN recebeu visual mais profissional, data resumida,
+  detalhe estruturado, barras de rolagem e botoes para copiar revisao/caminho.
+- Tabela da Consulta SVN agora separa o caminho alterado em colunas `Versao`
+  e `Caminho`.
+
+## [2.0.2] - 2026-07-14
+
+### Adicionado
+- Novo submenu `Monitoramento > Consulta SVN` permite buscar por revisao,
+  requisito ou ambos usando o caminho base SVN configurado.
+- Tela de configuracoes passou a salvar o caminho base SVN em `settings.json`.
+
 ## [2.0.1] - 2026-06-23
 
 ### Adicionado

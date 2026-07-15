@@ -29,11 +29,14 @@ from app.settings import (
     load_base_directory,
     load_ignored_project_folders,
     load_jenkins_config,
+    load_svn_base_path,
     save_base_directory,
     save_copy_target_directories,
     save_ignored_project_folders,
     save_jenkins_config,
+    save_svn_base_path,
 )
+from app.svn_search import search_svn
 
 
 class VersionScannerApp(tk.Tk):
@@ -58,6 +61,7 @@ class VersionScannerApp(tk.Tk):
         self.config_window = None
         self.jenkins_window = None
         self.jenkins_jobs_window = None
+        self.svn_search_window = None
         self._build_menu()
         self._build_layout()
         self.after(100, self.refresh)
@@ -96,6 +100,10 @@ class VersionScannerApp(tk.Tk):
         monitor_menu.add_command(
             label="Scripts Banco Modelo",
             command=self.open_script_monitor_window,
+        )
+        monitor_menu.add_command(
+            label="Consulta SVN",
+            command=self.open_svn_search_window,
         )
         menu_bar.add_cascade(label="Monitoramento", menu=monitor_menu)
 
@@ -555,7 +563,7 @@ class VersionScannerApp(tk.Tk):
 
         self.config_window = tk.Toplevel(self)
         self.config_window.title("Configurações")
-        self.config_window.geometry("820x360")
+        self.config_window.geometry("820x420")
         self.config_window.resizable(False, False)
         self.config_window.transient(self)
 
@@ -565,6 +573,7 @@ class VersionScannerApp(tk.Tk):
 
         settings_base_var = tk.StringVar(value=self.base_directory_var.get())
         settings_copy_var = tk.StringVar()
+        settings_svn_var = tk.StringVar(value=load_svn_base_path())
 
         ttk.Label(frame, text="Diretório-base:").grid(row=0, column=0, sticky="w")
         ttk.Entry(frame, textvariable=settings_base_var).grid(
@@ -580,8 +589,27 @@ class VersionScannerApp(tk.Tk):
             command=lambda: self.choose_base_directory(settings_base_var),
         ).grid(row=0, column=2, sticky="e")
 
-        ttk.Label(frame, text="Destinos padrão:").grid(
+        ttk.Label(frame, text="Caminho base SVN:").grid(
             row=1,
+            column=0,
+            sticky="w",
+            pady=(12, 0),
+        )
+        ttk.Entry(frame, textvariable=settings_svn_var).grid(
+            row=1,
+            column=1,
+            sticky="ew",
+            padx=(8, 8),
+            pady=(12, 0),
+        )
+        ttk.Button(
+            frame,
+            text="Procurar",
+            command=lambda: self.choose_base_directory(settings_svn_var),
+        ).grid(row=1, column=2, sticky="e", pady=(12, 0))
+
+        ttk.Label(frame, text="Destinos padrão:").grid(
+            row=2,
             column=0,
             sticky="nw",
             pady=(12, 0),
@@ -590,16 +618,16 @@ class VersionScannerApp(tk.Tk):
             frame,
             text="\n".join(str(path) for path in COPY_TARGET_DIRECTORIES),
             wraplength=620,
-        ).grid(row=1, column=1, columnspan=2, sticky="w", pady=(12, 0))
+        ).grid(row=2, column=1, columnspan=2, sticky="w", pady=(12, 0))
 
         ttk.Label(frame, text="Destino adicional:").grid(
-            row=2,
+            row=3,
             column=0,
             sticky="w",
             pady=(12, 0),
         )
         ttk.Entry(frame, textvariable=settings_copy_var).grid(
-            row=2,
+            row=3,
             column=1,
             sticky="ew",
             padx=(8, 8),
@@ -610,21 +638,21 @@ class VersionScannerApp(tk.Tk):
             frame,
             text="Procurar",
             command=lambda: self.choose_base_directory(settings_copy_var),
-        ).grid(row=2, column=2, sticky="e", pady=(12, 0))
+        ).grid(row=3, column=2, sticky="e", pady=(12, 0))
 
         ttk.Label(frame, text="Destinos extras:").grid(
-            row=3,
+            row=4,
             column=0,
             sticky="nw",
             pady=(8, 0),
         )
         target_list = tk.Listbox(frame, height=5)
-        target_list.grid(row=3, column=1, sticky="ew", padx=(8, 8), pady=(8, 0))
+        target_list.grid(row=4, column=1, sticky="ew", padx=(8, 8), pady=(8, 0))
         for target in load_additional_copy_target_directories():
             target_list.insert(tk.END, str(target))
 
         target_buttons = ttk.Frame(frame)
-        target_buttons.grid(row=3, column=2, sticky="n", pady=(8, 0))
+        target_buttons.grid(row=4, column=2, sticky="n", pady=(8, 0))
 
         def add_target():
             value = settings_copy_var.get().strip()
@@ -655,13 +683,14 @@ class VersionScannerApp(tk.Tk):
         )
 
         button_bar = ttk.Frame(frame)
-        button_bar.grid(row=4, column=0, columnspan=3, sticky="e", pady=(16, 0))
+        button_bar.grid(row=5, column=0, columnspan=3, sticky="e", pady=(16, 0))
         ttk.Button(
             button_bar,
             text="Salvar",
             command=lambda: self.save_settings(
                 settings_base_var.get(),
                 [target_list.get(index) for index in range(target_list.size())],
+                settings_svn_var.get(),
             ),
         ).grid(row=0, column=0, padx=(0, 8))
         ttk.Button(
@@ -1465,6 +1494,309 @@ class VersionScannerApp(tk.Tk):
 
         verify_now()
 
+    def open_svn_search_window(self):
+        if self.svn_search_window and self.svn_search_window.winfo_exists():
+            self.svn_search_window.focus()
+            return
+
+        self.svn_search_window = tk.Toplevel(self)
+        self.svn_search_window.title("Consulta SVN")
+        self.svn_search_window.geometry("1180x720")
+        self.svn_search_window.minsize(980, 620)
+        self.svn_search_window.transient(self)
+
+        frame = ttk.Frame(self.svn_search_window, padding=12)
+        frame.pack(fill="both", expand=True)
+        frame.rowconfigure(4, weight=3)
+        frame.rowconfigure(5, weight=2)
+        frame.columnconfigure(1, weight=1)
+
+        base_var = tk.StringVar(value=load_svn_base_path())
+        revision_var = tk.StringVar()
+        requirement_var = tk.StringVar()
+        status_var = tk.StringVar(value="Informe uma revisao, um requisito ou os dois.")
+
+        ttk.Label(frame, text="Caminho base SVN:").grid(row=0, column=0, sticky="w")
+        ttk.Entry(frame, textvariable=base_var).grid(
+            row=0,
+            column=1,
+            sticky="ew",
+            padx=(8, 8),
+        )
+        ttk.Button(
+            frame,
+            text="Salvar base",
+            command=lambda: self._save_svn_base_from_window(base_var.get(), status_var),
+        ).grid(row=0, column=2, sticky="e")
+
+        ttk.Label(frame, text="Revisao:").grid(row=1, column=0, sticky="w", pady=(10, 0))
+        ttk.Entry(frame, textvariable=revision_var, width=24).grid(
+            row=1,
+            column=1,
+            sticky="w",
+            padx=(8, 8),
+            pady=(10, 0),
+        )
+
+        ttk.Label(frame, text="Requisito:").grid(row=2, column=0, sticky="w", pady=(10, 0))
+        ttk.Entry(frame, textvariable=requirement_var).grid(
+            row=2,
+            column=1,
+            columnspan=2,
+            sticky="ew",
+            padx=(8, 0),
+            pady=(10, 0),
+        )
+
+        ttk.Label(frame, textvariable=status_var).grid(
+            row=3,
+            column=0,
+            columnspan=3,
+            sticky="w",
+            pady=(10, 8),
+        )
+
+        result_frame = ttk.LabelFrame(frame, text="Resultados")
+        result_frame.grid(row=4, column=0, columnspan=3, sticky="nsew")
+        result_frame.rowconfigure(0, weight=1)
+        result_frame.columnconfigure(0, weight=1)
+
+        result_columns = (
+            "revision",
+            "author",
+            "date",
+            "requirement",
+            "version",
+            "path",
+            "summary",
+        )
+        result_tree = ttk.Treeview(
+            result_frame,
+            columns=result_columns,
+            show="headings",
+            height=8,
+        )
+        result_headings = {
+            "revision": "Revisao",
+            "author": "Autor",
+            "date": "Data",
+            "requirement": "Requisito",
+            "version": "Versao",
+            "path": "Caminho",
+            "summary": "Resumo",
+        }
+        result_widths = {
+            "revision": 80,
+            "author": 120,
+            "date": 140,
+            "requirement": 100,
+            "version": 210,
+            "path": 430,
+            "summary": 280,
+        }
+        for column in result_columns:
+            result_tree.heading(column, text=result_headings[column], anchor="center")
+            result_tree.column(column, width=result_widths[column], anchor="w")
+        result_tree.column("revision", anchor="center")
+        result_tree.column("author", anchor="center")
+        result_tree.column("date", anchor="center")
+        result_tree.column("requirement", anchor="center")
+
+        tree_y_scroll = ttk.Scrollbar(
+            result_frame,
+            orient="vertical",
+            command=result_tree.yview,
+        )
+        tree_x_scroll = ttk.Scrollbar(
+            result_frame,
+            orient="horizontal",
+            command=result_tree.xview,
+        )
+        result_tree.configure(
+            yscrollcommand=tree_y_scroll.set,
+            xscrollcommand=tree_x_scroll.set,
+        )
+        result_tree.grid(row=0, column=0, sticky="nsew")
+        tree_y_scroll.grid(row=0, column=1, sticky="ns")
+        tree_x_scroll.grid(row=1, column=0, sticky="ew")
+
+        detail_frame = ttk.LabelFrame(frame, text="Detalhes da revisao selecionada")
+        detail_frame.grid(row=5, column=0, columnspan=3, sticky="nsew", pady=(10, 0))
+        detail_frame.rowconfigure(0, weight=1)
+        detail_frame.columnconfigure(0, weight=1)
+
+        detail_text = tk.Text(detail_frame, wrap="none", height=12, font=("Consolas", 9))
+        detail_y_scroll = ttk.Scrollbar(
+            detail_frame,
+            orient="vertical",
+            command=detail_text.yview,
+        )
+        detail_x_scroll = ttk.Scrollbar(
+            detail_frame,
+            orient="horizontal",
+            command=detail_text.xview,
+        )
+        detail_text.configure(
+            yscrollcommand=detail_y_scroll.set,
+            xscrollcommand=detail_x_scroll.set,
+        )
+        detail_text.grid(row=0, column=0, sticky="nsew")
+        detail_y_scroll.grid(row=0, column=1, sticky="ns")
+        detail_x_scroll.grid(row=1, column=0, sticky="ew")
+        svn_result_entries = []
+
+        def set_detail(text):
+            detail_text.config(state="normal")
+            detail_text.delete("1.0", tk.END)
+            detail_text.insert("1.0", text)
+            detail_text.config(state="disabled")
+
+        def clear_results():
+            for item_id in result_tree.get_children():
+                result_tree.delete(item_id)
+            svn_result_entries.clear()
+            set_detail("")
+
+        def render_result(result):
+            clear_results()
+            if result.entries:
+                for index, entry in enumerate(result.entries):
+                    svn_result_entries.append(entry)
+                    result_tree.insert(
+                        "",
+                        "end",
+                        iid=str(index),
+                        values=(
+                            entry.revision,
+                            entry.author,
+                            entry.display_date,
+                            entry.requirement,
+                            entry.changed_version,
+                            entry.changed_parent_path,
+                            entry.summary,
+                        ),
+                    )
+                result_tree.selection_set("0")
+                result_tree.focus("0")
+                set_detail(result.entries[0].detail_text)
+                return
+            set_detail("\n".join(result.lines))
+
+        def show_selected_detail(_event=None):
+            selection = result_tree.selection()
+            if not selection:
+                return
+            index = int(selection[0])
+            if index >= len(svn_result_entries):
+                return
+            set_detail(svn_result_entries[index].detail_text)
+
+        result_tree.bind("<<TreeviewSelect>>", show_selected_detail)
+
+        def selected_svn_entry():
+            selection = result_tree.selection()
+            if not selection:
+                return None
+            index = int(selection[0])
+            if index >= len(svn_result_entries):
+                return None
+            return svn_result_entries[index]
+
+        def copy_selected_revision():
+            entry = selected_svn_entry()
+            if not entry:
+                messagebox.showwarning("Consulta SVN", "Selecione uma revisao para copiar.")
+                return
+            self.clipboard_clear()
+            self.clipboard_append(entry.revision)
+            status_var.set(f"Revisao {entry.revision} copiada.")
+
+        def copy_selected_path():
+            entry = selected_svn_entry()
+            if not entry or not entry.paths:
+                messagebox.showwarning(
+                    "Consulta SVN",
+                    "Selecione uma revisao com caminho alterado para copiar.",
+                )
+                return
+            self.clipboard_clear()
+            self.clipboard_append(entry.first_changed_path)
+            status_var.set("Caminho alterado copiado.")
+
+        def consult():
+            base_path = base_var.get().strip()
+            revision = revision_var.get().strip()
+            requirement = requirement_var.get().strip()
+            save_svn_base_path(base_path)
+            status_var.set("Consultando SVN...")
+            clear_results()
+            result_queue = queue.Queue()
+
+            def worker():
+                result_queue.put(search_svn(base_path, revision, requirement))
+
+            def poll():
+                try:
+                    result = result_queue.get_nowait()
+                except queue.Empty:
+                    if self.svn_search_window and self.svn_search_window.winfo_exists():
+                        self.svn_search_window.after(100, poll)
+                    return
+
+                if result.ok:
+                    status_var.set(
+                        f"Consulta concluida pela origem {result.source}. "
+                        f"{len(result.entries) or len(result.lines)} registro(s) retornado(s)."
+                    )
+                    render_result(result)
+                    return
+                status_var.set(result.error)
+                set_detail(result.error)
+
+            threading.Thread(target=worker, daemon=True).start()
+            self.svn_search_window.after(100, poll)
+
+        def open_base():
+            base_path = Path(base_var.get().strip())
+            if not base_path.exists():
+                messagebox.showwarning(
+                    "Consulta SVN",
+                    "O caminho base so pode ser aberto automaticamente quando for uma pasta local.",
+                )
+                return
+            os.startfile(base_path)
+
+        button_bar = ttk.Frame(frame)
+        button_bar.grid(row=6, column=0, columnspan=3, sticky="e", pady=(12, 0))
+        ttk.Button(button_bar, text="Consultar", command=consult).grid(
+            row=0,
+            column=0,
+            padx=(0, 8),
+        )
+        ttk.Button(button_bar, text="Copiar Revisao", command=copy_selected_revision).grid(
+            row=0,
+            column=1,
+            padx=(0, 8),
+        )
+        ttk.Button(button_bar, text="Copiar Caminho", command=copy_selected_path).grid(
+            row=0,
+            column=2,
+            padx=(0, 8),
+        )
+        ttk.Button(button_bar, text="Abrir Base", command=open_base).grid(
+            row=0,
+            column=3,
+            padx=(0, 8),
+        )
+        ttk.Button(button_bar, text="Fechar", command=self.svn_search_window.destroy).grid(
+            row=0,
+            column=4,
+        )
+
+    def _save_svn_base_from_window(self, svn_base_path, status_var):
+        save_svn_base_path(svn_base_path)
+        status_var.set("Caminho base SVN salvo.")
+
     def open_user_manual_window(self):
         manual_window = tk.Toplevel(self)
         manual_window.title("Manual de Utilizacao")
@@ -1523,6 +1855,7 @@ class VersionScannerApp(tk.Tk):
             "o caminho correto antes de continuar.\n\n"
             "5. Configuracoes\n"
             "- Diretorio-base: define a pasta analisada.\n"
+            "- Caminho base SVN: define o repositorio ou working copy usado na Consulta SVN.\n"
             "- Destinos extras: adiciona novas raizes de busca alem dos destinos padrao.\n"
             "- Padrao de Arquivos: permite aprender o padrao esperado a partir de pastas modelo.\n"
             "- Pastas Ignoradas: define pastas que nao devem aparecer na varredura.\n\n"
@@ -1541,6 +1874,9 @@ class VersionScannerApp(tk.Tk):
             "- Tambem e possivel clicar em Verificar agora.\n"
             "- Quando houver scripts novos, eles ficam pendentes ate clicar em Marcar como feito.\n"
             "- O sistema apenas avisa quando existe script novo; nenhum script e executado automaticamente.\n"
+            "- Monitoramento > Consulta SVN busca historico por revisao, requisito ou ambos.\n"
+            "- A consulta usa o comando svn quando disponivel; para pasta local, tambem busca "
+            "o requisito em nomes e conteudo de arquivos.\n"
         )
 
     def open_about_window(self):
@@ -1561,10 +1897,11 @@ class VersionScannerApp(tk.Tk):
         if selected_directory:
             target_var.set(selected_directory)
 
-    def save_settings(self, base_directory, copy_target_directories):
+    def save_settings(self, base_directory, copy_target_directories, svn_base_path=""):
         self.base_directory_var.set(base_directory.strip())
         save_base_directory(self.base_directory_var.get())
         save_copy_target_directories(copy_target_directories)
+        save_svn_base_path(svn_base_path)
         if self.config_window and self.config_window.winfo_exists():
             self.config_window.destroy()
         self.refresh()
