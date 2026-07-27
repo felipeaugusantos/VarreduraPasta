@@ -90,7 +90,7 @@ def check_scripts(force=False, today=None, directory=SCRIPT_MONITOR_DIRECTORY):
         )
 
     known_files = set(state.get("known_files", []))
-    first_run = not known_files
+    first_run = not state.get("initialized", False)
     new_files = [] if first_run else [
         file_name for file_name in current_files if file_name not in known_files
     ]
@@ -135,6 +135,7 @@ def mark_pending_scripts_done():
         state.get("last_check_date", ""),
         state.get("known_files", []),
         [],
+        initialized=state.get("initialized", False),
     )
     _write_monitor_log("pendencias_concluidas", SCRIPT_MONITOR_DIRECTORY, "scripts marcados como feito")
 

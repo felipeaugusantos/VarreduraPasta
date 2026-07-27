@@ -1,13 +1,19 @@
 import json
+import shutil
+import threading
 from pathlib import Path
 from uuid import uuid4
 from zipfile import BadZipFile, ZipFile
 
 from app.config import KNOWN_FILE_ALTERNATIVES, OPTIONAL_FILE_NAMES
-from app.runtime import application_directory
+from app.runtime import resource_path, user_data_file
 
 
-PATTERN_FILE = application_directory() / "project_pattern.json"
+PATTERN_FILE = user_data_file(
+    "project_pattern.json",
+    seed_file=resource_path("project_pattern.json"),
+)
+_PATTERN_LOCK = threading.RLock()
 SUPPORTED_SUFFIXES = {".exe", ".dll"}
 IGNORED_PREFIXES = ("err_",)
 VERSION_GROUP_KEYS = {"autcom", "autcomtinta", "autban", "auttin"}
@@ -177,13 +183,22 @@ def _normalize_groups(groups):
 
 
 def _read_pattern_file():
-    if not PATTERN_FILE.exists():
-        return None
-
-    try:
-        return json.loads(PATTERN_FILE.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
+    with _PATTERN_LOCK:
+        if not PATTERN_FILE.exists():
+            return None
+        try:
+            return json.loads(PATTERN_FILE.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            try:
+                shutil.copy2(
+                    PATTERN_FILE,
+                    PATTERN_FILE.with_name(f"{PATTERN_FILE.name}.corrupt.bak"),
+                )
+            except OSError:
+                pass
+            return None
+        except OSError:
+            return None
 
 
 def load_required_file_groups(project_folder_name=None):
@@ -205,19 +220,20 @@ def load_required_file_groups(project_folder_name=None):
 
 
 def save_pattern(pattern):
-    PATTERN_FILE.parent.mkdir(parents=True, exist_ok=True)
-    temp_file = PATTERN_FILE.with_name(f".{PATTERN_FILE.name}.{uuid4().hex}.tmp")
-    try:
-        temp_file.write_text(
-            json.dumps(pattern, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
-        temp_file.replace(PATTERN_FILE)
-    finally:
+    with _PATTERN_LOCK:
+        PATTERN_FILE.parent.mkdir(parents=True, exist_ok=True)
+        temp_file = PATTERN_FILE.with_name(f".{PATTERN_FILE.name}.{uuid4().hex}.tmp")
         try:
-            temp_file.unlink(missing_ok=True)
-        except OSError:
-            pass
+            temp_file.write_text(
+                json.dumps(pattern, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            temp_file.replace(PATTERN_FILE)
+        finally:
+            try:
+                temp_file.unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 def generate_versioned_pattern_from_project(project):
@@ -266,15 +282,15 @@ def generate_versioned_pattern_from_project(project):
 
 
 def save_project_pattern(project):
-    project_pattern = generate_versioned_pattern_from_project(project)
-    if not project_pattern:
-        return False, None
-
-    data = _read_pattern_file() or {}
-    data.setdefault("source_projects", [])
-    data.setdefault("required_groups", [])
-    project_patterns = data.setdefault("project_patterns", {})
-    key = pattern_scope_from_project_name(project.folder_name)
-    project_patterns[key] = project_pattern
-    save_pattern(data)
-    return True, key
+    with _PATTERN_LOCK:
+        project_pattern = generate_versioned_pattern_from_project(project)
+        if not project_pattern:
+            return False, None
+        data = _read_pattern_file() or {}
+        data.setdefault("source_projects", [])
+        data.setdefault("required_groups", [])
+        project_patterns = data.setdefault("project_patterns", {})
+        key = pattern_scope_from_project_name(project.folder_name)
+        project_patterns[key] = project_pattern
+        save_pattern(data)
+        return True, key

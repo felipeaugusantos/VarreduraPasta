@@ -321,6 +321,42 @@ class ActionAuditTests(unittest.TestCase):
 
 
 class CopyHashVerificationTests(unittest.TestCase):
+    def test_failed_rollback_preserves_backup_transaction(self):
+        from tempfile import TemporaryDirectory
+
+        with TemporaryDirectory() as temp_directory:
+            root = Path(temp_directory)
+            source = root / "origem"
+            destination = root / "destino"
+            source.mkdir()
+            destination.mkdir()
+            create_valid_zip(source / "a.zip", "a.exe", b"novo-a")
+            create_valid_zip(source / "b.zip", "b.exe", b"novo-b")
+            (destination / "a.zip").write_bytes(b"antigo-a")
+            (destination / "b.zip").write_bytes(b"antigo-b")
+            original_replace = Path.replace
+
+            def fail_promotion_and_restore(path, target):
+                if path.name == "b.zip" and path.parent.name == "novos":
+                    raise OSError("falha na promocao")
+                if path.name == "a.zip" and path.parent.name == "anteriores":
+                    raise OSError("falha na restauracao")
+                return original_replace(path, target)
+
+            with patch("pathlib.Path.replace", fail_promotion_and_restore):
+                with self.assertRaisesRegex(OSError, "backups preservados"):
+                    _copy_project_files(source, destination)
+
+            transactions = list(destination.glob(".varredura-*"))
+            self.assertEqual(len(transactions), 1)
+            self.assertTrue(
+                (transactions[0] / "anteriores" / "a.zip").exists()
+            )
+            self.assertTrue((transactions[0] / "manifest.json").exists())
+            self.assertTrue(
+                (transactions[0] / "ROLLBACK_INCOMPLETO.txt").exists()
+            )
+
     def test_transaction_restores_existing_files_when_promotion_fails(self):
         from tempfile import TemporaryDirectory
 

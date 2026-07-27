@@ -1,6 +1,7 @@
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
+import shutil
 from tempfile import TemporaryDirectory
 from zipfile import BadZipFile, ZipFile
 
@@ -17,6 +18,13 @@ from app.version_reader import read_exe_versions
 
 _ZIP_VERSION_CACHE = {}
 _ZIP_NAME_CACHE = {}
+_MAX_CACHE_ENTRIES = 512
+
+
+def _cache_store(cache, key, value):
+    cache[key] = value
+    while len(cache) > _MAX_CACHE_ENTRIES:
+        cache.pop(next(iter(cache)))
 
 
 @dataclass
@@ -122,7 +130,7 @@ def validate_zip_names(project_path):
             errors.append(
                 f"{zip_path.name} contem {inner_name}; esperado {expected_zip_name}"
             )
-    _ZIP_NAME_CACHE[cache_key] = (cache_stamp, tuple(errors))
+    _cache_store(_ZIP_NAME_CACHE, cache_key, (cache_stamp, tuple(errors)))
     return errors
 
 
@@ -268,7 +276,10 @@ def _read_version_from_zip(zip_path, file_name, read_version=True):
                 if read_version:
                     with TemporaryDirectory() as temp_directory:
                         extracted_path = Path(temp_directory) / Path(file_info.filename).name
-                        extracted_path.write_bytes(archive.read(file_info))
+                        with archive.open(file_info) as source, extracted_path.open(
+                            "wb"
+                        ) as target:
+                            shutil.copyfileobj(source, target, length=1024 * 1024)
                         file_version, product_version = read_exe_versions(extracted_path)
                         result = (file_version, product_version, size_mb, None)
                 else:
@@ -278,7 +289,7 @@ def _read_version_from_zip(zip_path, file_name, read_version=True):
     except OSError as error:
         result = (None, None, None, f"Erro ao ler zip: {error}")
 
-    _ZIP_VERSION_CACHE[cache_key] = (cache_stamp, result)
+    _cache_store(_ZIP_VERSION_CACHE, cache_key, (cache_stamp, result))
     return result
 
 
@@ -369,10 +380,12 @@ def _version_errors(file_checks, expected_file, expected_product):
             continue
         if not check.validate_version:
             continue
-        if expected_file and check.file_version and check.file_version != expected_file:
-            errors.append(f"{check.group_name} FileVersion incorreto")
-        if expected_product and check.product_version and check.product_version != expected_product:
-            errors.append(f"{check.group_name} ProductVersion incorreto")
+        if expected_file and check.file_version != expected_file:
+            reason = "ausente" if not check.file_version else "incorreto"
+            errors.append(f"{check.group_name} FileVersion {reason}")
+        if expected_product and check.product_version != expected_product:
+            reason = "ausente" if not check.product_version else "incorreto"
+            errors.append(f"{check.group_name} ProductVersion {reason}")
     return errors
 
 

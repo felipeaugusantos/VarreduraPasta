@@ -20,17 +20,23 @@ O executavel fica dentro da pasta:
 dist\VarreduraSistema
 ```
 
-Importante: use a pasta inteira `VarreduraSistema`, pois ela contem arquivos internos, configuracoes e logs.
+Importante: use a pasta inteira `VarreduraSistema`, pois ela contem os arquivos internos do executavel.
 
-Instale em uma pasta com permissao de escrita, por exemplo:
+O pacote e portatil e pode ser copiado para uma pasta comum, por exemplo:
 
 ```text
 C:\VarreduraSistema
 ```
 
-Evite `C:\Program Files`, pois o sistema precisa gravar `settings.json`, `project_pattern.json` e arquivos em `logs`.
+Nao e necessario instalar componentes nem ter permissao administrativa. As
+configuracoes, logs e o historico de aprendizado ficam em:
 
-Antes de distribuir o pacote para outra maquina, exclua `settings.json` da pasta enviada ou revise seu conteudo. Se o arquivo nao existir, o sistema cria um novo com os valores padrao.
+```text
+%LOCALAPPDATA%\VarreduraSistema
+```
+
+Arquivos de configuracao antigos encontrados ao lado do executavel sao
+migrados automaticamente.
 
 ## 3. Configuracoes
 

@@ -14,6 +14,29 @@ from app.script_monitor import (
 
 
 class ScriptMonitorTests(unittest.TestCase):
+    def test_script_created_after_empty_baseline_is_detected(self):
+        directory = Path(self._temp_directory.name) / "scripts"
+        directory.mkdir()
+
+        with patch("app.script_monitor.write_log"):
+            baseline = check_scripts(
+                force=True,
+                today=date(2026, 6, 17),
+                directory=directory,
+            )
+            (directory / "primeiro.sql").write_text(
+                "select 1", encoding="utf-8"
+            )
+            result = check_scripts(
+                force=True,
+                today=date(2026, 6, 18),
+                directory=directory,
+            )
+
+        self.assertTrue(baseline.first_run)
+        self.assertFalse(result.first_run)
+        self.assertEqual(result.new_files, ["primeiro.sql"])
+
     def setUp(self):
         self._temp_directory = TemporaryDirectory()
         self._original_settings_file = settings.SETTINGS_FILE

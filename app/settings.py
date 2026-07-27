@@ -1,4 +1,5 @@
 import json
+import shutil
 import threading
 from functools import wraps
 from pathlib import Path
@@ -11,11 +12,11 @@ from app.config import (
     IGNORED_PROJECT_FOLDERS,
     SVN_BASE_PATH,
 )
-from app.runtime import application_directory
+from app.runtime import user_data_file
 from app.credentials import load_jenkins_password, save_jenkins_password
 
 
-SETTINGS_FILE = application_directory() / "settings.json"
+SETTINGS_FILE = user_data_file("settings.json")
 _SETTINGS_LOCK = threading.RLock()
 
 
@@ -33,7 +34,16 @@ def _load_settings():
 
     try:
         return json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except json.JSONDecodeError:
+        try:
+            shutil.copy2(
+                SETTINGS_FILE,
+                SETTINGS_FILE.with_name(f"{SETTINGS_FILE.name}.corrupt.bak"),
+            )
+        except OSError:
+            pass
+        return {}
+    except OSError:
         return {}
 
 
@@ -200,7 +210,12 @@ def load_script_monitor_state():
     data = _load_settings()
     state = data.get("script_monitor")
     if not isinstance(state, dict):
-        return {"last_check_date": "", "known_files": [], "pending_files": []}
+        return {
+            "initialized": False,
+            "last_check_date": "",
+            "known_files": [],
+            "pending_files": [],
+        }
 
     known_files = state.get("known_files")
     if not isinstance(known_files, list):
@@ -209,6 +224,7 @@ def load_script_monitor_state():
     if not isinstance(pending_files, list):
         pending_files = []
     return {
+        "initialized": bool(state.get("initialized", False)),
         "last_check_date": str(state.get("last_check_date") or ""),
         "known_files": sorted(
             {
@@ -228,11 +244,17 @@ def load_script_monitor_state():
 
 
 @_synchronized
-def save_script_monitor_state(last_check_date, known_files, pending_files=None):
+def save_script_monitor_state(
+    last_check_date,
+    known_files,
+    pending_files=None,
+    initialized=True,
+):
     data = _load_settings()
     if pending_files is None:
         pending_files = load_script_monitor_state().get("pending_files", [])
     data["script_monitor"] = {
+        "initialized": bool(initialized),
         "last_check_date": str(last_check_date or ""),
         "known_files": sorted(
             {

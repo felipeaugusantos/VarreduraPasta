@@ -5,6 +5,30 @@ Todas as alteracoes relevantes deste projeto sao documentadas neste arquivo.
 O formato e baseado em Keep a Changelog e o projeto segue Versionamento
 Semantico (`MAIOR.MENOR.CORRECAO`).
 
+## [2.1.0] - 2026-07-27
+
+### Adicionado
+- Consulta SVN recebeu barra de progresso, tempo decorrido, cancelamento real,
+  busca por Enter e modos de primeira ou todas as ocorrencias.
+- Pesquisa SVN por requisito agora percorre o historico em blocos adaptativos.
+- Aprendizado estatistico local com SQLite registra projetos validos sem API,
+  internet, instalador ou permissao administrativa.
+- Plano de evolucao da IA local documentado em `docs/PLANO_IA_LOCAL.md`.
+- CI passou a validar tambem a geracao do executavel.
+
+### Alterado
+- Configuracoes, padroes, logs e aprendizado agora ficam em
+  `%LOCALAPPDATA%\VarreduraSistema`, com migracao dos arquivos antigos.
+- Build inclui `project_pattern.json` automaticamente quando ele esta presente.
+
+### Corrigido
+- Versoes obrigatorias ausentes agora geram pendencia.
+- Baseline vazio do monitor de scripts agora detecta o primeiro arquivo criado.
+- Rollback incompleto preserva backups e manifesto para recuperacao manual.
+- JSON corrompido e preservado como `.corrupt.bak`.
+- Escritas de logs e padroes foram serializadas.
+- Processo SVN interrompido pelo Windows repete a faixa com bloco menor.
+
 ## [2.0.3] - 2026-07-14
 
 ### Adicionado

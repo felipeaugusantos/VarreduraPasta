@@ -1,4 +1,5 @@
 import hashlib
+import json
 import os
 import queue
 import shutil
@@ -1013,6 +1014,7 @@ def _copy_project_files(source, destination):
     staging.mkdir(parents=True)
     promoted = []
     backed_up = []
+    remove_transaction = False
     try:
         for item in items:
             relative_path = item.relative_to(source)
@@ -1033,6 +1035,16 @@ def _copy_project_files(source, destination):
             )
 
         backup.mkdir(parents=True)
+        manifest = {
+            "source": str(source),
+            "destination": str(destination),
+            "files": [str(path) for path in copied_paths],
+            "backup_directory": str(backup),
+        }
+        (transaction / "manifest.json").write_text(
+            json.dumps(manifest, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
         for relative_path in copied_paths:
             final_path = destination / relative_path
             staged_path = staging / relative_path
@@ -1043,28 +1055,52 @@ def _copy_project_files(source, destination):
                 backed_up.append(relative_path)
             staged_path.replace(final_path)
             promoted.append(relative_path)
-    except OSError:
+        final_hashes, final_mismatches = _verify_file_hashes(
+            source, destination, copied_paths
+        )
+        if final_mismatches:
+            raise OSError(
+                "Verificacao no destino definitivo falhou: "
+                + ", ".join(final_mismatches[:5])
+            )
+        hash_summary = final_hashes
+        remove_transaction = True
+    except OSError as original_error:
+        rollback_errors = []
         for relative_path in reversed(promoted):
             final_path = destination / relative_path
-            if final_path.exists():
-                final_path.unlink()
+            try:
+                if final_path.exists():
+                    final_path.unlink()
+            except OSError as rollback_error:
+                rollback_errors.append(f"remover {final_path}: {rollback_error}")
         for relative_path in reversed(backed_up):
             backup_path = backup / relative_path
-            if backup_path.exists():
-                backup_path.replace(destination / relative_path)
+            try:
+                if backup_path.exists():
+                    backup_path.replace(destination / relative_path)
+            except OSError as rollback_error:
+                rollback_errors.append(
+                    f"restaurar {backup_path}: {rollback_error}"
+                )
+        if rollback_errors:
+            try:
+                (transaction / "ROLLBACK_INCOMPLETO.txt").write_text(
+                    "\n".join(rollback_errors),
+                    encoding="utf-8",
+                )
+            except OSError:
+                pass
+            raise OSError(
+                f"{original_error}. Rollback incompleto; backups preservados em "
+                f"{transaction}. Detalhes: {'; '.join(rollback_errors[:3])}"
+            ) from original_error
+        remove_transaction = True
         raise
     finally:
-        shutil.rmtree(transaction, ignore_errors=True)
+        if remove_transaction:
+            shutil.rmtree(transaction, ignore_errors=True)
 
-    mismatches = _collect_copy_mismatches(source, destination, copied_paths)
-    if mismatches:
-        preview = ", ".join(mismatches[:5])
-        if len(mismatches) > 5:
-            preview += f" (+{len(mismatches) - 5})"
-        raise OSError(
-            f"Verificacao pos-copia encontrou {len(mismatches)} "
-            f"arquivo(s) divergente(s) no destino: {preview}"
-        )
     cleanup_error = None
     try:
         cleaned_items = _cleanup_source_after_copy(source)

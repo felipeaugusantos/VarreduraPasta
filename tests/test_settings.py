@@ -35,6 +35,11 @@ class BaseDirectoryTests(SettingsTestCase):
     def test_corrupted_settings_falls_back_to_default(self):
         settings.SETTINGS_FILE.write_text("{json invalido", encoding="utf-8")
         self.assertEqual(settings.load_base_directory(), BASE_DIRECTORY)
+        backup = settings.SETTINGS_FILE.with_name(
+            f"{settings.SETTINGS_FILE.name}.corrupt.bak"
+        )
+        self.assertTrue(backup.exists())
+        self.assertEqual(backup.read_text(encoding="utf-8"), "{json invalido")
 
 
 class CopyTargetDirectoryTests(SettingsTestCase):

@@ -1,6 +1,7 @@
 import os
 import queue
 import threading
+import time
 import tkinter as tk
 import webbrowser
 from datetime import datetime
@@ -15,6 +16,7 @@ from app.jenkins import (
     normalize_jenkins_url,
     test_jenkins_connection,
 )
+from app.learning import insights_for_project, learn_from_projects
 from app.pattern import generate_pattern_from_projects, save_pattern
 from app.runtime import executable_generation_text, resource_path
 from app.scanner import enrich_project_file_versions, scan_projects
@@ -355,6 +357,16 @@ class VersionScannerApp(tk.Tk):
         except Exception as scan_error:
             projects = []
             error = scan_error
+        else:
+            try:
+                learn_from_projects(projects)
+            except Exception as learning_error:
+                try:
+                    logging_utils.write_log(
+                        f"APRENDIZADO_LOCAL FALHA erro={learning_error}"
+                    )
+                except OSError:
+                    pass
 
         self.scan_queue.put((generation, projects, error))
 
@@ -1438,6 +1450,7 @@ class VersionScannerApp(tk.Tk):
         base_var = tk.StringVar(value=load_svn_base_path())
         revision_var = tk.StringVar()
         requirement_var = tk.StringVar()
+        find_all_var = tk.BooleanVar(value=False)
         status_var = tk.StringVar(value="Informe uma revisao, um requisito ou os dois.")
 
         ttk.Label(frame, text="Caminho base SVN:").grid(row=0, column=0, sticky="w")
@@ -1454,16 +1467,23 @@ class VersionScannerApp(tk.Tk):
         ).grid(row=0, column=2, sticky="e")
 
         ttk.Label(frame, text="Revisao:").grid(row=1, column=0, sticky="w", pady=(10, 0))
-        ttk.Entry(frame, textvariable=revision_var, width=24).grid(
+        revision_entry = ttk.Entry(frame, textvariable=revision_var, width=24)
+        revision_entry.grid(
             row=1,
             column=1,
             sticky="w",
             padx=(8, 8),
             pady=(10, 0),
         )
+        ttk.Checkbutton(
+            frame,
+            text="Buscar todas as ocorrencias",
+            variable=find_all_var,
+        ).grid(row=1, column=2, sticky="e", pady=(10, 0))
 
         ttk.Label(frame, text="Requisito:").grid(row=2, column=0, sticky="w", pady=(10, 0))
-        ttk.Entry(frame, textvariable=requirement_var).grid(
+        requirement_entry = ttk.Entry(frame, textvariable=requirement_var)
+        requirement_entry.grid(
             row=2,
             column=1,
             columnspan=2,
@@ -1475,10 +1495,22 @@ class VersionScannerApp(tk.Tk):
         ttk.Label(frame, textvariable=status_var).grid(
             row=3,
             column=0,
-            columnspan=3,
+            columnspan=2,
             sticky="w",
             pady=(10, 8),
         )
+        search_progress = ttk.Progressbar(
+            frame,
+            mode="indeterminate",
+            length=180,
+        )
+        search_progress.grid(
+            row=3,
+            column=2,
+            sticky="e",
+            pady=(10, 8),
+        )
+        search_progress.grid_remove()
 
         result_frame = ttk.LabelFrame(frame, text="Resultados")
         result_frame.grid(row=4, column=0, columnspan=3, sticky="nsew")
@@ -1568,6 +1600,8 @@ class VersionScannerApp(tk.Tk):
         detail_y_scroll.grid(row=0, column=1, sticky="ns")
         detail_x_scroll.grid(row=1, column=0, sticky="ew")
         svn_result_entries = []
+        search_in_progress = False
+        active_cancellation = [None]
 
         def set_detail(text):
             detail_text.config(state="normal")
@@ -1648,29 +1682,80 @@ class VersionScannerApp(tk.Tk):
             status_var.set("Caminho alterado copiado.")
 
         def consult():
+            nonlocal search_in_progress
+            if search_in_progress:
+                return
+
             base_path = base_var.get().strip()
             revision = revision_var.get().strip()
             requirement = requirement_var.get().strip()
+            find_all = find_all_var.get()
             save_svn_base_path(base_path)
-            status_var.set("Consultando SVN...")
+            search_in_progress = True
+            cancellation_event = threading.Event()
+            active_cancellation[0] = cancellation_event
+            started_at = time.monotonic()
+            status_var.set("Consultando SVN... 0 s")
+            search_progress.grid()
+            search_progress.start(10)
+            consult_button.config(state="disabled")
+            cancel_button.config(state="normal")
             clear_results()
             result_queue = queue.Queue()
+            current_stage = ["Consultando SVN"]
 
             def worker():
-                result_queue.put(search_svn(base_path, revision, requirement))
+                def report_progress(message):
+                    result_queue.put(("progress", message))
+
+                result = search_svn(
+                    base_path,
+                    revision,
+                    requirement,
+                    progress_callback=report_progress,
+                    cancellation_event=cancellation_event,
+                    find_all=find_all,
+                )
+                result_queue.put(("done", result))
 
             def poll():
                 try:
-                    result = result_queue.get_nowait()
+                    event, payload = result_queue.get_nowait()
                 except queue.Empty:
                     if self.svn_search_window and self.svn_search_window.winfo_exists():
+                        elapsed = int(time.monotonic() - started_at)
+                        status_var.set(f"{current_stage[0]}... {elapsed} s")
                         self.svn_search_window.after(100, poll)
                     return
 
+                if event == "progress":
+                    current_stage[0] = payload
+                    elapsed = int(time.monotonic() - started_at)
+                    status_var.set(f"{payload}... {elapsed} s")
+                    self.svn_search_window.after(100, poll)
+                    return
+
+                result = payload
+                search_in_progress = False
+                active_cancellation[0] = None
+                search_progress.stop()
+                search_progress.grid_remove()
+                consult_button.config(state="normal")
+                cancel_button.config(state="disabled")
                 if result.ok:
+                    if result.entries:
+                        result_count = len(result.entries)
+                    elif result.source == "arquivos" and result.lines:
+                        result_count = (
+                            0
+                            if result.lines[0].startswith("Nenhum arquivo")
+                            else len(result.lines)
+                        )
+                    else:
+                        result_count = 0
                     status_var.set(
                         f"Consulta concluida pela origem {result.source}. "
-                        f"{len(result.entries) or len(result.lines)} registro(s) retornado(s)."
+                        f"{result_count} registro(s) encontrado(s)."
                     )
                     render_result(result)
                     return
@@ -1679,6 +1764,24 @@ class VersionScannerApp(tk.Tk):
 
             threading.Thread(target=worker, daemon=True).start()
             self.svn_search_window.after(100, poll)
+
+        def cancel_search():
+            event = active_cancellation[0]
+            if event:
+                event.set()
+                status_var.set("Cancelando consulta SVN...")
+                cancel_button.config(state="disabled")
+
+        def close_svn_window():
+            cancel_search()
+            self.svn_search_window.destroy()
+
+        def consult_on_enter(_event):
+            consult()
+            return "break"
+
+        revision_entry.bind("<Return>", consult_on_enter)
+        requirement_entry.bind("<Return>", consult_on_enter)
 
         def open_base():
             base_path = Path(base_var.get().strip())
@@ -1692,30 +1795,39 @@ class VersionScannerApp(tk.Tk):
 
         button_bar = ttk.Frame(frame)
         button_bar.grid(row=6, column=0, columnspan=3, sticky="e", pady=(12, 0))
-        ttk.Button(button_bar, text="Consultar", command=consult).grid(
+        consult_button = ttk.Button(button_bar, text="Consultar", command=consult)
+        consult_button.grid(
             row=0,
             column=0,
             padx=(0, 8),
         )
-        ttk.Button(button_bar, text="Copiar Revisao", command=copy_selected_revision).grid(
-            row=0,
-            column=1,
-            padx=(0, 8),
+        cancel_button = ttk.Button(
+            button_bar,
+            text="Cancelar",
+            command=cancel_search,
+            state="disabled",
         )
-        ttk.Button(button_bar, text="Copiar Caminho", command=copy_selected_path).grid(
+        cancel_button.grid(row=0, column=1, padx=(0, 8))
+        ttk.Button(button_bar, text="Copiar Revisao", command=copy_selected_revision).grid(
             row=0,
             column=2,
             padx=(0, 8),
         )
-        ttk.Button(button_bar, text="Abrir Base", command=open_base).grid(
+        ttk.Button(button_bar, text="Copiar Caminho", command=copy_selected_path).grid(
             row=0,
             column=3,
             padx=(0, 8),
         )
-        ttk.Button(button_bar, text="Fechar", command=self.svn_search_window.destroy).grid(
+        ttk.Button(button_bar, text="Abrir Base", command=open_base).grid(
             row=0,
             column=4,
+            padx=(0, 8),
         )
+        ttk.Button(button_bar, text="Fechar", command=close_svn_window).grid(
+            row=0,
+            column=5,
+        )
+        self.svn_search_window.protocol("WM_DELETE_WINDOW", close_svn_window)
 
     def _save_svn_base_from_window(self, svn_base_path, status_var):
         save_svn_base_path(svn_base_path)
@@ -1907,7 +2019,7 @@ class VersionScannerApp(tk.Tk):
 
         details_window = tk.Toplevel(self)
         details_window.title(f"Detalhes - {selected.folder_name}")
-        details_window.geometry("980x360")
+        details_window.geometry("980x390")
         details_window.transient(self)
 
         header = ttk.Frame(details_window, padding=(12, 10))
@@ -1917,6 +2029,11 @@ class VersionScannerApp(tk.Tk):
         ttk.Label(header, text=f"Status: {selected.status}").pack(anchor="w")
         loading_label = ttk.Label(header, text="Carregando versões dos arquivos...")
         loading_label.pack(anchor="w", pady=(6, 0))
+        insight_label = ttk.Label(
+            header,
+            text="Aprendizado local: analisando historico...",
+        )
+        insight_label.pack(anchor="w", pady=(4, 0))
 
         details_frame = ttk.Frame(details_window)
         details_frame.pack(fill="both", expand=True, padx=12, pady=(0, 12))
@@ -1955,19 +2072,27 @@ class VersionScannerApp(tk.Tk):
 
         def worker():
             error = None
+            insights = []
             try:
                 enrich_project_file_versions(selected)
             except Exception as details_error:
                 error = details_error
+            if error is None:
+                try:
+                    insights = insights_for_project(selected)
+                except Exception:
+                    insights = []
             try:
                 self.after(
                     0,
                     lambda: self._finish_project_details(
                         details_window,
                         loading_label,
+                        insight_label,
                         details_tree,
                         selected,
                         error,
+                        insights,
                     ),
                 )
             except (RuntimeError, tk.TclError):
@@ -1975,7 +2100,16 @@ class VersionScannerApp(tk.Tk):
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _finish_project_details(self, details_window, loading_label, details_tree, selected, error):
+    def _finish_project_details(
+        self,
+        details_window,
+        loading_label,
+        insight_label,
+        details_tree,
+        selected,
+        error,
+        insights,
+    ):
         try:
             if not details_window.winfo_exists():
                 return
@@ -1984,9 +2118,22 @@ class VersionScannerApp(tk.Tk):
 
         if error:
             loading_label.config(text=f"Erro ao carregar versões: {error}")
+            insight_label.config(text="Aprendizado local: indisponivel.")
             return
 
         loading_label.config(text="Versões carregadas.")
+        if insights:
+            insight = insights[0]
+            insight_label.config(
+                text=(
+                    f"Sugestao local ({insight.confidence:.0%} de confianca): "
+                    f"{insight.message}"
+                )
+            )
+        else:
+            insight_label.config(
+                text="Aprendizado local: nenhuma anomalia estatistica identificada."
+            )
         for item_id in details_tree.get_children():
             details_tree.delete(item_id)
         for check in self._details_checks(selected, selected.file_checks):

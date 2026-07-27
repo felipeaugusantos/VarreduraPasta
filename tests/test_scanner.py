@@ -66,6 +66,17 @@ class ExpectedVersionsFromFolderTests(unittest.TestCase):
 
 
 class VersionErrorsTests(unittest.TestCase):
+    def test_missing_required_versions_are_reported(self):
+        checks = [make_check(file_version=None, product_version=None)]
+        errors = _version_errors(checks, "48.02.30.74", "02.30.74.150")
+        self.assertEqual(
+            errors,
+            [
+                "Autcom FileVersion ausente",
+                "Autcom ProductVersion ausente",
+            ],
+        )
+
     def test_matching_versions_produce_no_errors(self):
         checks = [make_check()]
         self.assertEqual(

@@ -19,30 +19,27 @@ python -m unittest discover -s tests -t .
 ## Build (executavel)
 
 ```powershell
-pyinstaller VarreduraSistema.spec
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\build_release.ps1
 ```
+
+O script valida o codigo e os testes, gera a pasta portatil, o ZIP de
+distribuicao e o arquivo SHA-256.
 
 ## Implantacao em producao
 
-Instale a pasta completa do executavel em um local com permissao de escrita,
-por exemplo:
+O pacote e portatil: copie a pasta completa e execute o `.exe`, sem instalador
+ou permissao administrativa. Configuracoes e dados de uso ficam no perfil:
 
 ```text
-C:\VarreduraSistema
+%LOCALAPPDATA%\VarreduraSistema
 ```
 
-Evite instalar em `C:\Program Files`, pois o aplicativo grava `settings.json`,
-`project_pattern.json` e `logs\fechamentos-AAAA-MM.log` ao lado do executavel.
-Sem permissao de escrita, configuracoes e auditoria podem falhar.
-
-Antes de distribuir o pacote, exclua `settings.json` da pasta enviada ou revise
-seu conteudo. O sistema cria esse arquivo automaticamente com os valores padrao
-quando ele nao existe; distribuir o arquivo do ambiente de desenvolvimento pode
-levar caminhos locais para outra maquina.
+Arquivos antigos encontrados ao lado do executavel sao migrados automaticamente.
 
 ## Configuracao
 
-Tudo fica em `settings.json`, ao lado do executavel (criado automaticamente):
+As configuracoes ficam em
+`%LOCALAPPDATA%\VarreduraSistema\settings.json`:
 
 - `Configuracoes > Diretorio-base`: pasta analisada (padrao `C:\VERSOES_FECHADAS`)
   e destinos adicionais de copia na rede. Por padrao, a busca de destino considera
@@ -50,7 +47,7 @@ Tudo fica em `settings.json`, ao lado do executavel (criado automaticamente):
   `\\citel-fileserve\Modem\_VERSOES_INDIVIDUAIS`.
 - `Configuracoes > Padrao de Arquivos`: seleciona uma pasta modelo Local e uma
   Cloud; os arquivos encontrados nelas viram o padrao essencial aplicado em
-  todas as versoes (gravado em `project_pattern.json`).
+  todas as versoes (gravado no perfil local da aplicacao).
 - `Configuracoes > Pastas Ignoradas`: pastas excluidas da varredura.
 - `Jenkins > Configuracoes`: cadastra URL, usuario e senha do Jenkins local
   (padrao `http://localhost:8080`) e permite testar conexao. A senha fica no
@@ -59,7 +56,7 @@ Tudo fica em `settings.json`, ao lado do executavel (criado automaticamente):
 - `Jenkins > Status dos Jobs`: consulta o ultimo build de cada job e permite
   abrir o build selecionado no navegador.
 - `Auditoria > Logs`: consulta os registros mensais em tabela a partir de
-  `logs/fechamentos-AAAA-MM.log`.
+  `%LOCALAPPDATA%\VarreduraSistema\logs\fechamentos-AAAA-MM.log`.
 - `Monitoramento > Scripts Banco Modelo`: verifica scripts novos em
   `\\citel-fileserve\Modem\WEBSERVICE_CITEL\Scripts`.
 - `Ajuda > Manual de Utilizacao`: mostra um guia rapido de uso dentro do sistema.
@@ -80,6 +77,18 @@ Tudo fica em `settings.json`, ao lado do executavel (criado automaticamente):
 - O monitoramento de scripts verifica a pasta uma vez ao dia ao abrir o sistema
   e tambem permite verificacao manual pelo menu. Scripts novos ficam pendentes
   ate o operador clicar em `Marcar como feito`.
+- A Consulta SVN aceita Enter, mostra a faixa pesquisada e pode ser cancelada.
+  Marque `Buscar todas as ocorrencias` quando quiser continuar depois do
+  primeiro bloco com resultados.
+
+## Aprendizado local
+
+O sistema inicia um perfil estatistico local de projetos validados em
+`%LOCALAPPDATA%\VarreduraSistema\learning.db`. Nenhum dado e enviado para API ou
+internet, e o recurso nunca executa acoes automaticamente. Quando houver
+historico suficiente, a tela `Detalhes` mostra uma sugestao explicavel sobre
+tamanhos fora do padrao observado. Consulte
+`docs/PLANO_IA_LOCAL.md` para o plano de evolucao.
 
 ## Regras de validacao
 
@@ -117,7 +126,8 @@ Tudo fica em `settings.json`, ao lado do executavel (criado automaticamente):
   sistema mostra uma tela de escolha antes da confirmacao da copia.
 - Fechamentos e copias sao bloqueados quando existem ZIPs com nome diferente do
   arquivo interno.
-- Todas as acoes geram registro mensal em `logs/fechamentos-AAAA-MM.log`.
+- Todas as acoes geram registro mensal em
+  `%LOCALAPPDATA%\VarreduraSistema\logs\fechamentos-AAAA-MM.log`.
 - ZIPs invalidos ou corrompidos bloqueiam a copia. Todos os ZIPs sao validados
   por SHA-256 em uma area temporaria do destino antes da substituicao final.
 

@@ -1,8 +1,17 @@
 import re
 import subprocess
+import time
 import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
+
+
+SVN_INTERRUPTED_EXIT_CODE = 0xC000013A
+SVN_CREATION_FLAGS = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+
+class _SvnSearchCancelled(Exception):
+    pass
 
 
 @dataclass
@@ -116,7 +125,16 @@ class SvnSearchResult:
     error: str
 
 
-def search_svn(base_path, revision="", requirement="", limit=200, timeout=60):
+def search_svn(
+    base_path,
+    revision="",
+    requirement="",
+    limit=200,
+    timeout=60,
+    progress_callback=None,
+    cancellation_event=None,
+    find_all=False,
+):
     base_path = str(base_path or "").strip()
     revision = str(revision or "").strip()
     requirement = str(requirement or "").strip()
@@ -131,7 +149,16 @@ def search_svn(base_path, revision="", requirement="", limit=200, timeout=60):
             "Informe uma revisao, um requisito ou os dois para consultar.",
         )
 
-    svn_result = _search_with_svn_cli(base_path, revision, requirement, limit, timeout)
+    svn_result = _search_with_svn_cli(
+        base_path,
+        revision,
+        requirement,
+        limit,
+        timeout,
+        progress_callback,
+        cancellation_event,
+        find_all,
+    )
     if svn_result is not None:
         return svn_result
 
@@ -147,21 +174,33 @@ def search_svn(base_path, revision="", requirement="", limit=200, timeout=60):
     )
 
 
-def _search_with_svn_cli(base_path, revision, requirement, limit, timeout):
+def _search_with_svn_cli(
+    base_path,
+    revision,
+    requirement,
+    limit,
+    timeout,
+    progress_callback=None,
+    cancellation_event=None,
+    find_all=False,
+):
+    if requirement and not revision:
+        return _search_requirement_in_batches(
+            base_path,
+            requirement,
+            limit,
+            timeout,
+            progress_callback,
+            cancellation_event,
+            find_all,
+        )
+
     command = ["svn", "log", base_path, "-v"]
     if revision:
         command.extend(["-r", revision])
-    if requirement and not revision:
-        command.extend(["--search", requirement, "-l", str(limit)])
 
     try:
-        completed = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            check=False,
-        )
+        completed = _run_svn_command(command, timeout, cancellation_event)
     except FileNotFoundError:
         return None
     except subprocess.TimeoutExpired:
@@ -171,10 +210,19 @@ def _search_with_svn_cli(base_path, revision, requirement, limit, timeout):
             requirement,
             "A consulta SVN demorou demais e foi interrompida.",
         )
+    except _SvnSearchCancelled:
+        return _cancelled(base_path, revision, requirement)
 
     output = (completed.stdout or "").splitlines()
     error_output = (completed.stderr or "").strip()
     if completed.returncode != 0:
+        if _svn_process_was_interrupted(completed.returncode):
+            return _error(
+                base_path,
+                revision,
+                requirement,
+                "O processo SVN foi interrompido pelo Windows. Tente novamente.",
+            )
         return _error(
             base_path,
             revision,
@@ -213,6 +261,241 @@ def _search_with_svn_cli(base_path, revision, requirement, limit, timeout):
         lines=lines,
         entries=entries,
         error="",
+    )
+
+
+def _search_requirement_in_batches(
+    base_path,
+    requirement,
+    limit,
+    timeout,
+    progress_callback,
+    cancellation_event,
+    find_all,
+):
+    latest_command = ["svn", "log", base_path, "-q", "-l", "1"]
+    try:
+        latest = _run_svn_command(latest_command, timeout, cancellation_event)
+    except FileNotFoundError:
+        return None
+    except subprocess.TimeoutExpired:
+        return _error(
+            base_path,
+            "",
+            requirement,
+            "Nao foi possivel identificar a revisao mais recente do SVN.",
+        )
+    except _SvnSearchCancelled:
+        return _cancelled(base_path, "", requirement)
+
+    if _svn_process_was_interrupted(latest.returncode):
+        _notify_progress(
+            progress_callback,
+            "Reiniciando processo SVN interrompido",
+        )
+        try:
+            latest = _run_svn_command(
+                latest_command, timeout, cancellation_event
+            )
+        except subprocess.TimeoutExpired:
+            return _error(
+                base_path,
+                "",
+                requirement,
+                "Nao foi possivel identificar a revisao mais recente do SVN.",
+            )
+        except _SvnSearchCancelled:
+            return _cancelled(base_path, "", requirement)
+
+    if latest.returncode != 0:
+        if _svn_process_was_interrupted(latest.returncode):
+            message = "O processo SVN foi interrompido novamente pelo Windows."
+        else:
+            message = (
+                (latest.stderr or "").strip()
+                or f"svn log retornou codigo {latest.returncode}."
+            )
+        return _error(
+            base_path,
+            "",
+            requirement,
+            message,
+        )
+
+    latest_match = re.search(r"^r(\d+)\s+\|", latest.stdout or "", re.MULTILINE)
+    if not latest_match:
+        return _svn_requirement_result(base_path, requirement, [])
+
+    upper_revision = int(latest_match.group(1))
+    batch_size = 5000
+    minimum_batch_size = 250
+    matching_entries = []
+    while upper_revision >= 1:
+        if cancellation_event and cancellation_event.is_set():
+            return _cancelled(base_path, "", requirement)
+        lower_revision = max(1, upper_revision - batch_size + 1)
+        _notify_progress(
+            progress_callback,
+            f"Pesquisando revisoes {upper_revision} a {lower_revision}",
+        )
+        command = [
+            "svn",
+            "log",
+            base_path,
+            "-v",
+            "--search",
+            requirement,
+            "-r",
+            f"{upper_revision}:{lower_revision}",
+        ]
+        timed_out = False
+        try:
+            completed = _run_svn_command(command, timeout, cancellation_event)
+        except subprocess.TimeoutExpired:
+            completed = None
+            timed_out = True
+        except _SvnSearchCancelled:
+            return _cancelled(base_path, "", requirement)
+
+        process_interrupted = (
+            completed is not None
+            and _svn_process_was_interrupted(completed.returncode)
+        )
+        if timed_out or process_interrupted:
+            if batch_size > minimum_batch_size:
+                batch_size = max(minimum_batch_size, batch_size // 2)
+                _notify_progress(
+                    progress_callback,
+                    f"Repetindo com bloco de {batch_size} revisoes",
+                )
+                continue
+            return _error(
+                base_path,
+                "",
+                requirement,
+                (
+                    "O processo SVN continuou sendo interrompido pelo Windows."
+                    if process_interrupted
+                    else "O servidor SVN nao respondeu nem para um bloco "
+                    "reduzido de revisoes."
+                ),
+            )
+
+        if completed.returncode != 0:
+            return _error(
+                base_path,
+                "",
+                requirement,
+                (completed.stderr or "").strip()
+                or f"svn log retornou codigo {completed.returncode}.",
+            )
+
+        entries = parse_svn_log((completed.stdout or "").splitlines())
+        if entries:
+            matching_entries.extend(entries)
+            if not find_all or len(matching_entries) >= limit:
+                return _svn_requirement_result(
+                    base_path, requirement, matching_entries[:limit]
+                )
+        upper_revision = lower_revision - 1
+
+    return _svn_requirement_result(
+        base_path, requirement, matching_entries[:limit]
+    )
+
+
+def _run_svn_command(command, timeout, cancellation_event=None):
+    if cancellation_event is None:
+        return subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+            creationflags=SVN_CREATION_FLAGS,
+        )
+
+    process = subprocess.Popen(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        creationflags=SVN_CREATION_FLAGS,
+    )
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            stdout, stderr = process.communicate(timeout=0.2)
+            return subprocess.CompletedProcess(
+                command,
+                process.returncode,
+                stdout,
+                stderr,
+            )
+        except subprocess.TimeoutExpired:
+            if cancellation_event.is_set():
+                _stop_process(process)
+                raise _SvnSearchCancelled
+            if time.monotonic() >= deadline:
+                _stop_process(process, force=True)
+                raise subprocess.TimeoutExpired(command, timeout)
+
+
+def _stop_process(process, force=False):
+    try:
+        process.kill() if force else process.terminate()
+        process.communicate(timeout=2)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.communicate()
+    except OSError:
+        pass
+
+
+def _svn_process_was_interrupted(return_code):
+    try:
+        normalized = int(return_code) & 0xFFFFFFFF
+    except (TypeError, ValueError):
+        return False
+    return normalized == SVN_INTERRUPTED_EXIT_CODE
+
+
+def _notify_progress(progress_callback, message):
+    if progress_callback:
+        progress_callback(message)
+
+
+def _svn_requirement_result(base_path, requirement, entries):
+    lines = [
+        line
+        for entry in entries
+        for line in entry.raw_lines
+        if line.strip()
+    ]
+    if not lines:
+        lines = ["Nenhum resultado encontrado."]
+    return SvnSearchResult(
+        ok=True,
+        base_path=base_path,
+        revision="",
+        requirement=requirement,
+        source="svn",
+        lines=lines,
+        entries=entries,
+        error="",
+    )
+
+
+def _cancelled(base_path, revision, requirement):
+    return SvnSearchResult(
+        ok=False,
+        base_path=base_path,
+        revision=revision,
+        requirement=requirement,
+        source="svn",
+        lines=[],
+        entries=[],
+        error="Consulta SVN cancelada pelo usuario.",
     )
 
 

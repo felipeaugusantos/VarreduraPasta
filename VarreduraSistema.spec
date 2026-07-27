@@ -1,11 +1,17 @@
 # -*- mode: python ; coding: utf-8 -*-
+from pathlib import Path
+
+
+datas = [('assets\\app-icon.ico', 'assets')]
+if Path('project_pattern.json').exists():
+    datas.append(('project_pattern.json', '.'))
 
 
 a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[('assets\\app-icon.ico', 'assets')],
+    datas=datas,
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

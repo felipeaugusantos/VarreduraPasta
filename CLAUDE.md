@@ -34,13 +34,7 @@ $files = @('main.py') + (Get-ChildItem -Path app,tests -Filter '*.py' | ForEach-
 ## Build do executavel
 
 ```powershell
-.\.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean VarreduraSistema.spec
-if (Test-Path -LiteralPath 'project_pattern.json') {
-    Copy-Item -LiteralPath 'project_pattern.json' -Destination 'dist\VarreduraSistema\project_pattern.json' -Force
-}
-if (Test-Path -LiteralPath 'dist\VarreduraSistema\settings.json') {
-    Remove-Item -LiteralPath 'dist\VarreduraSistema\settings.json' -Force
-}
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\build_release.ps1 -PythonExe .\.venv\Scripts\python.exe
 ```
 
 O executavel final fica em:
@@ -49,9 +43,10 @@ O executavel final fica em:
 dist\VarreduraSistema\VarreduraSistema.exe
 ```
 
-Nao distribuir `settings.json` junto do pacote. O sistema cria esse arquivo no
-primeiro uso. Instalar em pasta com permissao de escrita, por exemplo
-`C:\VarreduraSistema`, e evitar `C:\Program Files`.
+O script tambem gera o ZIP versionado e seu arquivo `.sha256`.
+
+Nao distribuir `settings.json` junto do pacote. Dados persistentes ficam em
+`%LOCALAPPDATA%\VarreduraSistema`; o pacote pode ser executado sem instalador.
 
 ## Estrutura principal
 

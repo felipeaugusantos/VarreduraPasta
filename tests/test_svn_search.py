@@ -1,12 +1,182 @@
+import subprocess
+import threading
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 from unittest.mock import patch
 
-from app.svn_search import parse_svn_log, search_svn
+from app.svn_search import (
+    _SvnSearchCancelled,
+    _run_svn_command,
+    parse_svn_log,
+    search_svn,
+)
 
 
 class SvnSearchTests(unittest.TestCase):
+    @patch("app.svn_search.subprocess.Popen")
+    def test_running_svn_process_can_be_cancelled(self, popen_mock):
+        process = popen_mock.return_value
+        process.communicate.side_effect = [
+            subprocess.TimeoutExpired(["svn"], 0.2),
+            ("", ""),
+        ]
+        cancellation = threading.Event()
+        cancellation.set()
+
+        with self.assertRaises(_SvnSearchCancelled):
+            _run_svn_command(["svn", "log"], 60, cancellation)
+
+        process.terminate.assert_called_once()
+
+    @patch("app.svn_search.subprocess.run")
+    def test_find_all_continues_after_first_matching_batch(self, run_mock):
+        latest = SimpleNamespace(
+            returncode=0,
+            stdout="r10000 | usuario | data | 1 line\n",
+            stderr="",
+        )
+        newest_match = SimpleNamespace(
+            returncode=0,
+            stdout=(
+                "r9000 | usuario | data | 1 line\nREQUISITO 77\n"
+            ),
+            stderr="",
+        )
+        oldest_match = SimpleNamespace(
+            returncode=0,
+            stdout=(
+                "r4000 | usuario | data | 1 line\nREQUISITO 77\n"
+            ),
+            stderr="",
+        )
+        run_mock.side_effect = [latest, newest_match, oldest_match]
+
+        result = search_svn(
+            "svn://servidor/repositorio",
+            requirement="77",
+            find_all=True,
+        )
+
+        self.assertEqual(
+            [entry.revision for entry in result.entries],
+            ["r9000", "r4000"],
+        )
+
+    @patch("app.svn_search.subprocess.run")
+    def test_interrupted_svn_batch_is_retried_with_smaller_range(self, run_mock):
+        latest = SimpleNamespace(
+            returncode=0,
+            stdout="r10000 | usuario | data | 1 line\n",
+            stderr="",
+        )
+        interrupted = SimpleNamespace(
+            returncode=3221225786,
+            stdout="",
+            stderr="",
+        )
+        matching = SimpleNamespace(
+            returncode=0,
+            stdout="\n".join(
+                [
+                    "------------------------------------------------------------------------",
+                    "r9000 | usuario | data | 1 line",
+                    "REQUISITO 362150",
+                    "------------------------------------------------------------------------",
+                ]
+            ),
+            stderr="",
+        )
+        run_mock.side_effect = [latest, interrupted, matching]
+        progress = []
+
+        result = search_svn(
+            "svn://servidor/repositorio",
+            requirement="362150",
+            progress_callback=progress.append,
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.entries[0].revision, "r9000")
+        self.assertTrue(
+            any("bloco de 2500 revisoes" in message for message in progress)
+        )
+        retried_command = run_mock.call_args.args[0]
+        self.assertIn("10000:7501", retried_command)
+
+    @patch("app.svn_search.subprocess.run")
+    def test_requirement_search_moves_to_older_revision_batch(self, run_mock):
+        latest = SimpleNamespace(
+            returncode=0,
+            stdout=(
+                "------------------------------------------------------------------------\n"
+                "r10000 | usuario | data | 1 line\n"
+                "------------------------------------------------------------------------\n"
+            ),
+            stderr="",
+        )
+        empty_batch = SimpleNamespace(
+            returncode=0,
+            stdout="------------------------------------------------------------------------\n",
+            stderr="",
+        )
+        matching_batch = SimpleNamespace(
+            returncode=0,
+            stdout="\n".join(
+                [
+                    "------------------------------------------------------------------------",
+                    "r4550 | usuario | data | 2 lines",
+                    "REQUISITO 362150",
+                    "ajuste",
+                    "------------------------------------------------------------------------",
+                ]
+            ),
+            stderr="",
+        )
+        run_mock.side_effect = [latest, empty_batch, matching_batch]
+        progress = []
+
+        result = search_svn(
+            "svn://servidor/repositorio",
+            requirement="362150",
+            progress_callback=progress.append,
+        )
+
+        self.assertEqual(result.entries[0].revision, "r4550")
+        self.assertIn("10000 a 5001", progress[0])
+        self.assertIn("5000 a 1", progress[1])
+        self.assertEqual(run_mock.call_count, 3)
+
+    @patch("app.svn_search.subprocess.run")
+    def test_requirement_search_does_not_limit_revisions_examined(self, run_mock):
+        run_mock.return_value.returncode = 0
+        run_mock.return_value.stdout = "\n".join(
+            [
+                "------------------------------------------------------------------------",
+                "r455383 | banzato | 2026-01-30 10:00:00 -0300 | 5 lines",
+                "Changed paths:",
+                "   M /Padrao/379.48.2.30.74.150.45/padra_atualizado/fonte.pas",
+                "",
+                "REQUISITO 362150",
+                "aplicar na 30.74.150.45",
+                "------------------------------------------------------------------------",
+            ]
+        )
+        run_mock.return_value.stderr = ""
+
+        result = search_svn(
+            "svn://10.0.0.205/Padrao/027.18/27.18.379",
+            requirement="362150",
+        )
+
+        command = run_mock.call_args.args[0]
+        self.assertIn("--search", command)
+        self.assertNotIn("-l", command)
+        self.assertEqual(len(result.entries), 1)
+        self.assertEqual(result.entries[0].revision, "r455383")
+        self.assertEqual(result.entries[0].requirement, "REQUISITO 362150")
+
     def test_requires_base_path_and_search_term(self):
         result = search_svn("")
         self.assertFalse(result.ok)
