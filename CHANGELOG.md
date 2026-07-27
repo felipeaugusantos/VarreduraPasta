@@ -5,6 +5,11 @@ Todas as alteracoes relevantes deste projeto sao documentadas neste arquivo.
 O formato e baseado em Keep a Changelog e o projeto segue Versionamento
 Semantico (`MAIOR.MENOR.CORRECAO`).
 
+## [2.1.1] - 2026-07-27
+
+### Alterado
+- Copiar Cloud agora considera `Autcom.exe` valido a partir de 150 MB.
+
 ## [2.1.0] - 2026-07-27
 
 ### Adicionado

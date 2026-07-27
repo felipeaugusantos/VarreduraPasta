@@ -116,7 +116,7 @@ tamanhos fora do padrao observado. Consulte
   preservando sempre `comandosCMD`, apos confirmacao do operador. A limpeza roda
   em segundo plano para manter a tela responsiva.
 - `Copiar Local`: permitido quando `Autcom.exe` esta abaixo de 100 MB.
-- `Copiar Cloud`: permitido quando `Autcom.exe` tem pelo menos 180 MB.
+- `Copiar Cloud`: permitido quando `Autcom.exe` tem pelo menos 150 MB.
 - A copia procura no destino de rede uma pasta com o mesmo nome do projeto,
   pede confirmacao mostrando origem e destino e envia somente os arquivos
   `.zip` da pasta do projeto.

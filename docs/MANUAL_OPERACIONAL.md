@@ -215,7 +215,7 @@ Permitido quando:
 Permitido quando:
 
 - O projeto e Cloud.
-- O Autcom esta acima de 200 MB.
+- O Autcom tem pelo menos 150 MB.
 - O projeto esta OK.
 - Nao existem ZIPs com nome incorreto.
 - Existe exatamente um destino com o mesmo nome na rede.

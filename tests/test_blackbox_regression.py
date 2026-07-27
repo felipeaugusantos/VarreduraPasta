@@ -105,22 +105,15 @@ class BlackBoxRegressionTests(unittest.TestCase):
         self.assertTrue(project.cloud_copy_allowed)
 
     def test_cloud_project_accepts_autcom_at_minimum_size(self):
-        original_cloud_min = scanner.CLOUD_MIN_AUTCOM_MB
-        original_local_max = scanner.LOCAL_MAX_AUTCOM_MB
-        scanner.CLOUD_MIN_AUTCOM_MB = 2
-        scanner.LOCAL_MAX_AUTCOM_MB = 1
+        self.assertEqual(scanner.CLOUD_MIN_AUTCOM_MB, 150)
         project_path = self.base / "379.48.2.30.74.150.90_CLOUD"
-        try:
-            create_file(project_path / "Autcom.exe", size=2 * 1024 * 1024)
-            create_file(project_path / "AutcomTinta.exe", size=1024)
-            create_file(project_path / "AutBan.exe", size=1024)
-            create_file(project_path / "Auttin.exe", size=1024)
+        create_file(project_path / "Autcom.exe", size=150 * 1024 * 1024)
+        create_file(project_path / "AutcomTinta.exe", size=1024)
+        create_file(project_path / "AutBan.exe", size=1024)
+        create_file(project_path / "Auttin.exe", size=1024)
 
-            with patch("app.scanner.read_exe_versions", side_effect=fake_versions):
-                projects = scan_projects(self.base)
-        finally:
-            scanner.CLOUD_MIN_AUTCOM_MB = original_cloud_min
-            scanner.LOCAL_MAX_AUTCOM_MB = original_local_max
+        with patch("app.scanner.read_exe_versions", side_effect=fake_versions):
+            projects = scan_projects(self.base)
 
         self.assertEqual(len(projects), 1)
         project = projects[0]

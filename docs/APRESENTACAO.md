@@ -69,7 +69,7 @@ Cloud:
 
 - Pasta com `_CLOUD`.
 - Fechamento Cloud habilitado.
-- Copiar Cloud permitido somente com Autcom acima de 200 MB.
+- Copiar Cloud permitido com Autcom a partir de 150 MB.
 
 ## Slide 7 - Travas de seguranca
 
