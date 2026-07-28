@@ -5,6 +5,15 @@ Todas as alteracoes relevantes deste projeto sao documentadas neste arquivo.
 O formato e baseado em Keep a Changelog e o projeto segue Versionamento
 Semantico (`MAIOR.MENOR.CORRECAO`).
 
+## [2.2.0] - 2026-07-28
+
+### Adicionado
+- Acao `Testar Autcom` prepara a `PastaTesteCopia` correspondente a versao,
+  executa `CopiaArquivos.bat` e valida a abertura do `Autcom.exe`.
+- Validacao identifica encerramento prematuro, janela travada e janela visivel,
+  responsiva e estavel, sem bibliotecas externas.
+- ZIPs da pasta de teste sao sincronizados transacionalmente com SHA-256.
+
 ## [2.1.1] - 2026-07-27
 
 ### Alterado

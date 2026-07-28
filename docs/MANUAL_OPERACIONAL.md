@@ -220,6 +220,31 @@ Permitido quando:
 - Nao existem ZIPs com nome incorreto.
 - Existe exatamente um destino com o mesmo nome na rede.
 
+### 8.5 Testar Autcom
+
+Disponivel para projetos com status `OK`. O sistema calcula a pasta de teste a
+partir da quinta e da sexta partes da versao:
+
+```text
+379.48.2.30.74.111.181
+        74.111
+          |
+PastaTesteCopia_74_111
+```
+
+Os ZIPs da versao substituem transacionalmente os ZIPs em
+`PastaTesteCopia_74_111\exe`, com verificacao SHA-256. Em seguida, o sistema
+executa `exe\CopiaArquivos.bat`, volta para a raiz da pasta de teste e inicia
+`Autcom.exe`.
+
+O resultado sera:
+
+- `OK`: janela visivel, responsiva e estavel por cinco segundos.
+- `FALHA`: BAT com erro, processo encerrado ou janela continuamente travada.
+- `INCONCLUSIVO`: processo aberto sem janela estavel confirmada em 60 segundos.
+
+Quando o resultado for `OK`, feche o Autcom normalmente depois da conferencia.
+
 ## 9. Validacao antes da copia
 
 Antes de copiar, o sistema mostra uma tela de confirmacao com origem, destino e validacoes.

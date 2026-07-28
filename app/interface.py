@@ -294,6 +294,20 @@ class VersionScannerApp(tk.Tk):
         )
         self.cloud_copy_button.grid(row=0, column=5, padx=4)
 
+        self.autcom_test_button = ttk.Button(
+            button_bar,
+            text="Testar Autcom",
+            command=lambda: self._run_action(actions.testar_autcom),
+        )
+        self.autcom_test_button.grid(
+            row=1,
+            column=4,
+            columnspan=2,
+            sticky="ew",
+            padx=4,
+            pady=(8, 0),
+        )
+
         self.details_button = ttk.Button(
             button_bar,
             text="Detalhes",
@@ -315,6 +329,7 @@ class VersionScannerApp(tk.Tk):
             self.clean_folder_button,
             self.local_copy_button,
             self.cloud_copy_button,
+            self.autcom_test_button,
             self.details_button,
             self.open_folder_button,
         )
@@ -1889,22 +1904,28 @@ class VersionScannerApp(tk.Tk):
             "- O caminho do destino e copiado automaticamente para a area de transferencia.\n"
             "- Se houver mais de um destino na rede, o sistema mostra uma tela para escolher "
             "o caminho correto antes de continuar.\n\n"
-            "5. Configuracoes\n"
+            "5. Testar Autcom\n"
+            "- Disponivel para projeto com status OK.\n"
+            "- Usa as partes 5 e 6 da versao para localizar PastaTesteCopia correspondente.\n"
+            "- Sincroniza os ZIPs na pasta exe, executa CopiaArquivos.bat e abre o Autcom "
+            "da raiz da pasta de teste.\n"
+            "- O resultado confirma janela responsiva ou informa falha/inconclusivo.\n\n"
+            "6. Configuracoes\n"
             "- Diretorio-base: define a pasta analisada.\n"
             "- Caminho base SVN: define o repositorio ou working copy usado na Consulta SVN.\n"
             "- Destinos extras: adiciona novas raizes de busca alem dos destinos padrao.\n"
             "- Padrao de Arquivos: permite aprender o padrao esperado a partir de pastas modelo.\n"
             "- Pastas Ignoradas: define pastas que nao devem aparecer na varredura.\n\n"
-            "6. Jenkins\n"
+            "7. Jenkins\n"
             "- Jenkins > Configuracoes salva URL, usuario e senha do Jenkins local.\n"
             "- Jenkins > Abrir Jenkins abre o painel configurado no navegador.\n"
             "- Jenkins > Status dos Jobs mostra o ultimo build de cada job.\n"
             "- O teste de conexao registra o resultado na Auditoria sem gravar senha.\n\n"
-            "7. Auditoria\n"
+            "8. Auditoria\n"
             "- Auditoria > Logs exibe os registros mensais em tabela.\n"
             "- Use Buscar e Resultado para filtrar acoes, erros, bloqueios e conclusoes.\n"
-            "- Os logs ficam na pasta logs ao lado do executavel.\n\n"
-            "8. Monitoramento de Scripts\n"
+            "- Os logs ficam em %LOCALAPPDATA%\\VarreduraSistema\\logs.\n\n"
+            "9. Monitoramento de Scripts\n"
             "- Monitoramento > Scripts Banco Modelo verifica a pasta de scripts do banco modelo.\n"
             "- A verificacao acontece uma vez ao dia ao abrir o sistema.\n"
             "- Tambem e possivel clicar em Verificar agora.\n"
@@ -1963,6 +1984,9 @@ class VersionScannerApp(tk.Tk):
             )
             self.cloud_copy_button.config(
                 state="normal" if selected.cloud_copy_allowed else "disabled"
+            )
+            self.autcom_test_button.config(
+                state="normal" if selected.status == "OK" else "disabled"
             )
             self.selection_hint_label.config(text=self._selection_hint(selected))
         else:

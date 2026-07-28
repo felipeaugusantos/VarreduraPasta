@@ -11,6 +11,7 @@ from uuid import uuid4
 from tkinter import Listbox, TclError, Toplevel, messagebox, ttk
 
 from app import logging_utils
+from app.autcom_test import resolve_test_layout, run_autcom_test
 from app.config import CLOUD_MIN_AUTCOM_MB, LOCAL_MAX_AUTCOM_MB
 from app.pattern import save_project_pattern
 from app.scanner import validate_zip_names
@@ -489,6 +490,138 @@ def copiar_cloud(project):
     if _block_on_zip_name_errors(project, "Copiar Cloud"):
         return
     _prepare_copy(project, "Copiar Cloud")
+
+
+def testar_autcom(project):
+    title = "Testar Abertura do Autcom"
+    if project.status != "OK":
+        _write_action_audit(
+            title,
+            "bloqueado",
+            project,
+            reason=f"projeto com pendencias: {project.status}",
+        )
+        messagebox.showerror(
+            title,
+            "O teste exige que o projeto esteja com status OK.",
+        )
+        return
+    if _block_on_zip_name_errors(project, title):
+        return
+
+    try:
+        layout = resolve_test_layout(project.path)
+    except ValueError as error:
+        _write_action_audit(title, "bloqueado", project, reason=str(error))
+        messagebox.showerror(title, str(error))
+        return
+
+    if not messagebox.askyesno(
+        title,
+        "Os arquivos ZIP da versao serao sincronizados com a pasta de teste.\n"
+        "Os ZIPs antigos existentes na pasta exe serao substituidos.\n\n"
+        f"Projeto:\n{project.path}\n\n"
+        f"Pasta de teste:\n{layout.root}\n\n"
+        "Deseja continuar?",
+    ):
+        _write_action_audit(
+            title,
+            "cancelado",
+            project,
+            destination=layout.root,
+            bat_path=layout.bat_path,
+            reason="operador cancelou a preparacao",
+        )
+        return
+
+    progress = Toplevel()
+    progress.title(title)
+    progress.geometry("600x140")
+    progress.resizable(False, False)
+    progress.protocol("WM_DELETE_WINDOW", lambda: None)
+    progress.grab_set()
+    frame = ttk.Frame(progress, padding=12)
+    frame.pack(fill="both", expand=True)
+    message_label = ttk.Label(
+        frame,
+        text=f"Preparando {layout.root.name}...",
+        wraplength=560,
+        justify="left",
+    )
+    message_label.pack(anchor="w")
+    progress_bar = ttk.Progressbar(frame, mode="indeterminate")
+    progress_bar.pack(fill="x", pady=(14, 0))
+    progress_bar.start(10)
+    result_queue = queue.Queue()
+
+    def worker():
+        try:
+            result = run_autcom_test(
+                project.path,
+                progress_callback=lambda message: result_queue.put(
+                    ("progress", message)
+                ),
+            )
+            result_queue.put(("done", result))
+        except Exception as error:
+            result_queue.put(("error", error))
+
+    def poll():
+        try:
+            kind, payload = result_queue.get_nowait()
+        except queue.Empty:
+            if progress.winfo_exists():
+                progress.after(POLL_INTERVAL_MS, poll)
+            return
+
+        if kind == "progress":
+            message_label.config(text=payload)
+            progress.after(POLL_INTERVAL_MS, poll)
+            return
+
+        progress_bar.stop()
+        _safe_destroy(progress)
+        if kind == "error":
+            _write_action_audit(
+                title,
+                "erro",
+                project,
+                destination=layout.root,
+                bat_path=layout.bat_path,
+                reason=str(payload),
+            )
+            messagebox.showerror(title, f"O teste falhou:\n\n{payload}")
+            return
+
+        result = payload
+        reason = (
+            f"status={result.status}; bat_codigo={result.bat_return_code}; "
+            f"pid={result.process_id}; janela={result.window_title}; "
+            f"detalhe={result.message}"
+        )
+        _write_action_audit(
+            title,
+            result.status.lower(),
+            project,
+            destination=layout.root,
+            bat_path=layout.bat_path,
+            reason=reason,
+        )
+        message = (
+            f"Resultado: {result.status}\n\n{result.message}\n\n"
+            f"Pasta de teste:\n{layout.root}"
+        )
+        if result.window_title:
+            message += f"\n\nJanela: {result.window_title}"
+        if result.ok:
+            messagebox.showinfo(title, message)
+        elif result.status == "INCONCLUSIVO":
+            messagebox.showwarning(title, message)
+        else:
+            messagebox.showerror(title, message)
+
+    threading.Thread(target=worker, daemon=True).start()
+    progress.after(POLL_INTERVAL_MS, poll)
 
 
 def _block_on_zip_name_errors(project, title):

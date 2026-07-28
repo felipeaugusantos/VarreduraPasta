@@ -57,6 +57,7 @@ Nao distribuir `settings.json` junto do pacote. Dados persistentes ficam em
 | `app/scanner.py` | Varredura dos projetos e montagem dos resultados. |
 | `app/version_reader.py` | Leitura de `FileVersion`/`ProductVersion` via WinAPI. |
 | `app/actions.py` | Fechamento, copia, limpeza de pasta e validacoes operacionais. |
+| `app/autcom_test.py` | Preparo da pasta de teste e validacao da abertura do Autcom. |
 | `app/pattern.py` | Padrao de arquivos por projeto. |
 | `app/settings.py` | Persistencia em `settings.json`. |
 | `app/audit.py` | Leitura/filtro dos logs para tela de Auditoria. |
@@ -75,7 +76,9 @@ Nao distribuir `settings.json` junto do pacote. Dados persistentes ficam em
 - `Fechamento Local` so fica disponivel para projeto Local.
 - `Fechamento Cloud` so fica disponivel para projeto Cloud.
 - `Copiar Local`: `Autcom` precisa estar abaixo de 100 MB.
-- `Copiar Cloud`: `Autcom` precisa ter pelo menos 180 MB.
+- `Copiar Cloud`: `Autcom` precisa ter pelo menos 150 MB.
+- `Testar Autcom` mapeia as partes 5 e 6 da versao para
+  `PastaTesteCopia_<parte5>_<parte6>`.
 - A copia envia somente arquivos `.zip`.
 - A copia nao envia `comandosCMD`.
 - A limpeza da origem preserva `comandosCMD`.

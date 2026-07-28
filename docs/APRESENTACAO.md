@@ -96,7 +96,15 @@ autcom (1).zip contem AutBan.exe; esperado AutBan.zip
 
 Essa trava evita que ZIPs gerados ou copiados com nome errado sejam enviados para producao.
 
-## Slide 9 - Auditoria
+## Slide 9 - Teste de abertura do Autcom
+
+- A versao determina automaticamente a `PastaTesteCopia`.
+- Os ZIPs sao sincronizados com verificacao SHA-256.
+- `CopiaArquivos.bat` e executado antes do Autcom.
+- A abertura exige janela visivel, responsiva e estavel.
+- O teste nao precisa de instalacao ou biblioteca externa.
+
+## Slide 10 - Auditoria
 
 Todas as acoes criticas geram log:
 
@@ -122,7 +130,7 @@ Resultados:
 - cancelado.
 - erro.
 
-## Slide 10 - Fluxo de uso
+## Slide 11 - Fluxo de uso
 
 1. Abrir o sistema.
 2. Confirmar Diretorio-base.
@@ -133,7 +141,7 @@ Resultados:
 7. Executar fechamento ou copia.
 8. Conferir Auditoria.
 
-## Slide 11 - Como agir em caso de erro
+## Slide 12 - Como agir em caso de erro
 
 - Verificar o Status na tela principal.
 - Abrir Detalhes.
@@ -141,7 +149,7 @@ Resultados:
 - Consultar Auditoria.
 - Enviar o arquivo mensal `logs\fechamentos-AAAA-MM.log` para suporte.
 
-## Slide 12 - Recomendacao para producao
+## Slide 13 - Recomendacao para producao
 
 - Primeira execucao acompanhada.
 - Testar 1 projeto Local OK.
@@ -149,7 +157,7 @@ Resultados:
 - Conferir Auditoria apos cada acao.
 - Depois liberar uso recorrente.
 
-## Slide 13 - Beneficios
+## Slide 14 - Beneficios
 
 - Reducao de erro manual.
 - Mais seguranca antes da copia.
@@ -157,7 +165,7 @@ Resultados:
 - Padronizacao da validacao.
 - Apoio rapido para suporte.
 
-## Slide 14 - Proximos passos
+## Slide 15 - Proximos passos
 
 - Validar primeira execucao real em rede.
 - Avaliar log centralizado em pasta de rede.
