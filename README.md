@@ -119,8 +119,9 @@ tamanhos fora do padrao observado. Consulte
 - `Copiar Cloud`: permitido quando `Autcom.exe` tem pelo menos 150 MB.
 - `Testar Autcom`: para uma versao como `379.48.2.30.74.111.181`, sincroniza
   os ZIPs em `C:\VERSOES_FECHADAS\PastaTesteCopia_74_111\exe`, executa
-  `CopiaArquivos.bat` e abre o `Autcom.exe` da raiz da pasta de teste. O
-  resultado diferencia abertura confirmada, falha e verificacao inconclusiva.
+  `CopiaArquivos.bat`, abre o `Autcom.exe` da raiz e preenche o login de teste
+  com usuario `998`, senha `998` e empresa `001`. O resultado diferencia
+  abertura autenticada, falha e verificacao inconclusiva.
 - A copia procura no destino de rede uma pasta com o mesmo nome do projeto,
   pede confirmacao mostrando origem e destino e envia somente os arquivos
   `.zip` da pasta do projeto.

@@ -235,11 +235,13 @@ PastaTesteCopia_74_111
 Os ZIPs da versao substituem transacionalmente os ZIPs em
 `PastaTesteCopia_74_111\exe`, com verificacao SHA-256. Em seguida, o sistema
 executa `exe\CopiaArquivos.bat`, volta para a raiz da pasta de teste e inicia
-`Autcom.exe`.
+`Autcom.exe`. Na tela de login, preenche usuario `998`, senha `998` e empresa
+`001` e aciona `LOGIN`.
 
 O resultado sera:
 
-- `OK`: janela visivel, responsiva e estavel por cinco segundos.
+- `OK`: login realizado e tela principal visivel, responsiva e estavel por
+  cinco segundos.
 - `FALHA`: BAT com erro, processo encerrado ou janela continuamente travada.
 - `INCONCLUSIVO`: processo aberto sem janela estavel confirmada em 60 segundos.
 

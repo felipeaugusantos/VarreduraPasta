@@ -10,9 +10,21 @@ from uuid import uuid4
 
 BAT_TIMEOUT_SECONDS = 10 * 60
 STARTUP_TIMEOUT_SECONDS = 60
+LOGIN_TIMEOUT_SECONDS = 60
 WINDOW_POLL_SECONDS = 0.5
 WINDOW_STABILITY_SECONDS = 5
 CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+LOGIN_USERNAME = "998"
+LOGIN_PASSWORD = "998"
+LOGIN_COMPANY = "001"
+
+
+@dataclass(frozen=True)
+class _WindowInfo:
+    handle: int
+    title: str
+    class_name: str
+    is_hung: bool
 
 
 @dataclass(frozen=True)
@@ -150,13 +162,41 @@ def run_autcom_test(
 
     _notify(progress_callback, "Aguardando janela do Autcom")
     startup = validate_process_startup(process, startup_timeout)
+    if not startup.ok:
+        copied_text = f"{len(copied_files)} ZIP(s) preparado(s). "
+        return AutcomTestResult(
+            status=startup.status,
+            message=copied_text + startup.message,
+            bat_return_code=completed.returncode,
+            process_id=process.pid,
+            window_title=startup.window_title,
+        )
+
+    _notify(progress_callback, "Preenchendo login de teste")
+    try:
+        login_handle = automate_autcom_login(process)
+    except OSError as error:
+        return AutcomTestResult(
+            status="FALHA",
+            message=f"Nao foi possivel preencher o login do Autcom: {error}",
+            bat_return_code=completed.returncode,
+            process_id=process.pid,
+            window_title=startup.window_title,
+        )
+
+    _notify(progress_callback, "Confirmando abertura da tela principal")
+    login_result = validate_login_completion(
+        process,
+        login_handle,
+        LOGIN_TIMEOUT_SECONDS,
+    )
     copied_text = f"{len(copied_files)} ZIP(s) preparado(s). "
     return AutcomTestResult(
-        status=startup.status,
-        message=copied_text + startup.message,
+        status=login_result.status,
+        message=copied_text + login_result.message,
         bat_return_code=completed.returncode,
         process_id=process.pid,
-        window_title=startup.window_title,
+        window_title=login_result.window_title,
     )
 
 
@@ -294,7 +334,152 @@ def validate_process_startup(
     )
 
 
+def automate_autcom_login(
+    process,
+    username=LOGIN_USERNAME,
+    password=LOGIN_PASSWORD,
+    company=LOGIN_COMPANY,
+    timeout=STARTUP_TIMEOUT_SECONDS,
+):
+    deadline = time.monotonic() + timeout
+    login_window = None
+    while time.monotonic() <= deadline:
+        if process.poll() is not None:
+            raise OSError("Autcom encerrou antes da tela de login.")
+        windows = _window_details_for_process(process.pid)
+        login_window = next(
+            (
+                window
+                for window in windows
+                if window.class_name.lower() == "tparentform"
+                and not window.is_hung
+            ),
+            None,
+        )
+        if login_window:
+            break
+        time.sleep(WINDOW_POLL_SECONDS)
+    if not login_window:
+        raise OSError("Tela de login TParentForm nao foi identificada.")
+
+    user32 = ctypes.windll.user32
+    width, height, origin_x, origin_y = _client_geometry(
+        user32,
+        login_window.handle,
+    )
+    points = login_points(width, height)
+    user32.ShowWindow(login_window.handle, 9)
+    user32.SetForegroundWindow(login_window.handle)
+    time.sleep(0.3)
+
+    for field_name, value in (
+        ("usuario", username),
+        ("senha", password),
+        ("empresa", company),
+    ):
+        x, y = points[field_name]
+        _click_screen_point(user32, origin_x + x, origin_y + y)
+        if user32.GetForegroundWindow() != login_window.handle:
+            raise OSError("Nao foi possivel manter o foco na tela de login.")
+        _replace_focused_text(user32, value)
+
+    login_x, login_y = points["login"]
+    _click_screen_point(user32, origin_x + login_x, origin_y + login_y)
+    return login_window.handle
+
+
+def validate_login_completion(
+    process,
+    login_handle,
+    timeout=LOGIN_TIMEOUT_SECONDS,
+    stability_seconds=WINDOW_STABILITY_SECONDS,
+):
+    deadline = time.monotonic() + timeout
+    principal_since = None
+    principal_title = ""
+    while time.monotonic() <= deadline:
+        return_code = process.poll()
+        if return_code is not None:
+            return AutcomTestResult(
+                status="FALHA",
+                message=(
+                    "Autcom encerrou durante a autenticacao "
+                    f"(codigo {return_code})."
+                ),
+                process_id=process.pid,
+            )
+        windows = _window_details_for_process(process.pid)
+        login_is_visible = any(
+            window.handle == login_handle
+            for window in windows
+        )
+        principal = next(
+            (
+                window
+                for window in windows
+                if window.handle != login_handle
+                and window.class_name.lower() == "tfrmprincipal"
+                and not window.is_hung
+            ),
+            None,
+        )
+        if principal and not login_is_visible:
+            principal_title = principal.title
+            principal_since = principal_since or time.monotonic()
+            if time.monotonic() - principal_since >= stability_seconds:
+                return AutcomTestResult(
+                    status="OK",
+                    message=(
+                        "Login de teste realizado e tela principal do Autcom "
+                        f"confirmada por {stability_seconds} segundos. "
+                        "Feche-o normalmente depois da conferencia."
+                    ),
+                    process_id=process.pid,
+                    window_title=principal_title,
+                )
+        else:
+            principal_since = None
+        time.sleep(WINDOW_POLL_SECONDS)
+
+    login_is_visible = any(
+        window.handle == login_handle
+        for window in _window_details_for_process(process.pid)
+    )
+    if login_is_visible:
+        message = (
+            "A tela de login permaneceu aberta. Confira usuario, senha, empresa "
+            "ou alguma mensagem apresentada pelo Autcom."
+        )
+    else:
+        message = (
+            "A tela de login fechou, mas a tela principal responsiva nao foi "
+            "confirmada."
+        )
+    return AutcomTestResult(
+        status="FALHA",
+        message=message,
+        process_id=process.pid,
+        window_title=principal_title,
+    )
+
+
+def login_points(client_width, client_height):
+    return {
+        "usuario": (round(client_width * 0.16), round(client_height * 0.41)),
+        "senha": (round(client_width * 0.16), round(client_height * 0.55)),
+        "empresa": (round(client_width * 0.16), round(client_height * 0.69)),
+        "login": (round(client_width * 0.16), round(client_height * 0.875)),
+    }
+
+
 def _visible_windows_for_process(process_id):
+    return [
+        (window.title, window.is_hung)
+        for window in _window_details_for_process(process_id)
+    ]
+
+
+def _window_details_for_process(process_id):
     user32 = ctypes.windll.user32
     windows = []
     callback_type = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
@@ -312,11 +497,68 @@ def _visible_windows_for_process(process_id):
         length = user32.GetWindowTextLengthW(window_handle)
         buffer = ctypes.create_unicode_buffer(length + 1)
         user32.GetWindowTextW(window_handle, buffer, length + 1)
-        windows.append((buffer.value or "Autcom", bool(user32.IsHungAppWindow(window_handle))))
+        class_buffer = ctypes.create_unicode_buffer(256)
+        user32.GetClassNameW(window_handle, class_buffer, len(class_buffer))
+        windows.append(
+            _WindowInfo(
+                handle=int(window_handle),
+                title=buffer.value or "Autcom",
+                class_name=class_buffer.value,
+                is_hung=bool(user32.IsHungAppWindow(window_handle)),
+            )
+        )
         return True
 
     user32.EnumWindows(callback_type(inspect_window), 0)
     return windows
+
+
+def _client_geometry(user32, window_handle):
+    class Rect(ctypes.Structure):
+        _fields_ = [
+            ("left", ctypes.c_long),
+            ("top", ctypes.c_long),
+            ("right", ctypes.c_long),
+            ("bottom", ctypes.c_long),
+        ]
+
+    class Point(ctypes.Structure):
+        _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
+    rectangle = Rect()
+    if not user32.GetClientRect(window_handle, ctypes.byref(rectangle)):
+        raise OSError("Nao foi possivel obter o tamanho da tela de login.")
+    origin = Point(0, 0)
+    if not user32.ClientToScreen(window_handle, ctypes.byref(origin)):
+        raise OSError("Nao foi possivel localizar a tela de login.")
+    return (
+        rectangle.right - rectangle.left,
+        rectangle.bottom - rectangle.top,
+        origin.x,
+        origin.y,
+    )
+
+
+def _click_screen_point(user32, x, y):
+    if not user32.SetCursorPos(x, y):
+        raise OSError("Nao foi possivel posicionar o cursor no campo de login.")
+    user32.mouse_event(0x0002, 0, 0, 0, 0)
+    user32.mouse_event(0x0004, 0, 0, 0, 0)
+    time.sleep(0.2)
+
+
+def _replace_focused_text(user32, value):
+    user32.keybd_event(0x11, 0, 0, 0)
+    user32.keybd_event(ord("A"), 0, 0, 0)
+    user32.keybd_event(ord("A"), 0, 0x0002, 0)
+    user32.keybd_event(0x11, 0, 0x0002, 0)
+    user32.keybd_event(0x08, 0, 0, 0)
+    user32.keybd_event(0x08, 0, 0x0002, 0)
+    for character in str(value):
+        virtual_key = ord(character)
+        user32.keybd_event(virtual_key, 0, 0, 0)
+        user32.keybd_event(virtual_key, 0, 0x0002, 0)
+    time.sleep(0.15)
 
 
 def _sha256(file_path):

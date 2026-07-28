@@ -101,7 +101,8 @@ Essa trava evita que ZIPs gerados ou copiados com nome errado sejam enviados par
 - A versao determina automaticamente a `PastaTesteCopia`.
 - Os ZIPs sao sincronizados com verificacao SHA-256.
 - `CopiaArquivos.bat` e executado antes do Autcom.
-- A abertura exige janela visivel, responsiva e estavel.
+- Login de teste preenchido automaticamente (`998`, `998`, empresa `001`).
+- A abertura exige tela principal visivel, responsiva e estavel.
 - O teste nao precisa de instalacao ou biblioteca externa.
 
 ## Slide 10 - Auditoria

@@ -5,6 +5,14 @@ Todas as alteracoes relevantes deste projeto sao documentadas neste arquivo.
 O formato e baseado em Keep a Changelog e o projeto segue Versionamento
 Semantico (`MAIOR.MENOR.CORRECAO`).
 
+## [2.3.0] - 2026-07-28
+
+### Adicionado
+- Teste do Autcom preenche automaticamente usuario `998`, senha `998` e
+  empresa `001` na tela de login.
+- Resultado `OK` agora exige que a tela principal do Autcom fique visivel,
+  responsiva e estavel depois da autenticacao.
+
 ## [2.2.0] - 2026-07-28
 
 ### Adicionado

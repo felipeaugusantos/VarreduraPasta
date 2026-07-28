@@ -6,10 +6,12 @@ from unittest.mock import patch
 
 from app.autcom_test import (
     AutcomTestResult,
+    login_points,
     resolve_test_layout,
     run_autcom_test,
     synchronize_zip_files,
     test_folder_name,
+    validate_login_completion,
     validate_process_startup,
 )
 
@@ -40,6 +42,14 @@ class AutcomTestMappingTests(unittest.TestCase):
         self.assertEqual(layout.exe_directory.name, "exe")
         self.assertEqual(layout.bat_path.name, "CopiaArquivos.bat")
         self.assertEqual(layout.autcom_path.name, "Autcom.exe")
+
+    def test_login_points_follow_reference_screen_proportions(self):
+        points = login_points(696, 384)
+
+        self.assertEqual(points["usuario"], (111, 157))
+        self.assertEqual(points["senha"], (111, 211))
+        self.assertEqual(points["empresa"], (111, 265))
+        self.assertEqual(points["login"], (111, 336))
 
 
 class ZipSynchronizationTests(unittest.TestCase):
@@ -112,7 +122,54 @@ class ProcessStartupTests(unittest.TestCase):
         self.assertEqual(result.status, "INCONCLUSIVO")
 
 
+class LoginCompletionTests(unittest.TestCase):
+    @patch("app.autcom_test._window_details_for_process")
+    def test_responsive_principal_window_confirms_login(self, windows_mock):
+        windows_mock.return_value = [
+            SimpleNamespace(
+                handle=222,
+                class_name="TfrmPrincipal",
+                is_hung=False,
+                title="AutCom",
+            )
+        ]
+        process = SimpleNamespace(pid=123, poll=lambda: None)
+
+        result = validate_login_completion(
+            process,
+            login_handle=111,
+            timeout=1,
+            stability_seconds=0,
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.window_title, "AutCom")
+
+    @patch("app.autcom_test._window_details_for_process")
+    def test_login_window_remaining_open_is_failure(self, windows_mock):
+        windows_mock.return_value = [
+            SimpleNamespace(
+                handle=111,
+                class_name="TParentForm",
+                is_hung=False,
+                title="AutCom",
+            )
+        ]
+        process = SimpleNamespace(pid=123, poll=lambda: None)
+
+        result = validate_login_completion(
+            process,
+            login_handle=111,
+            timeout=-1,
+        )
+
+        self.assertEqual(result.status, "FALHA")
+        self.assertIn("permaneceu aberta", result.message)
+
+
 class CompleteAutcomTestTests(unittest.TestCase):
+    @patch("app.autcom_test.validate_login_completion")
+    @patch("app.autcom_test.automate_autcom_login")
     @patch("app.autcom_test.validate_process_startup")
     @patch("app.autcom_test.subprocess.Popen")
     @patch("app.autcom_test.subprocess.run")
@@ -121,6 +178,8 @@ class CompleteAutcomTestTests(unittest.TestCase):
         run_mock,
         popen_mock,
         startup_mock,
+        login_mock,
+        completion_mock,
     ):
         with TemporaryDirectory() as temporary_directory:
             base = Path(temporary_directory)
@@ -143,7 +202,14 @@ class CompleteAutcomTestTests(unittest.TestCase):
             popen_mock.return_value = SimpleNamespace(pid=456)
             startup_mock.return_value = AutcomTestResult(
                 status="OK",
-                message="abriu",
+                message="login abriu",
+                process_id=456,
+                window_title="AUTCOM",
+            )
+            login_mock.return_value = 1234
+            completion_mock.return_value = AutcomTestResult(
+                status="OK",
+                message="tela principal abriu",
                 process_id=456,
                 window_title="AUTCOM",
             )
