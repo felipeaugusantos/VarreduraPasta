@@ -5,6 +5,14 @@ Todas as alteracoes relevantes deste projeto sao documentadas neste arquivo.
 O formato e baseado em Keep a Changelog e o projeto segue Versionamento
 Semantico (`MAIOR.MENOR.CORRECAO`).
 
+## [2.3.1] - 2026-07-28
+
+### Corrigido
+- Identificacao da tela de login deixou de depender exclusivamente da classe
+  Delphi `TParentForm` e passou a aceitar a janela personalizada visivel.
+- Deteccao da tela principal agora aceita variacoes de classe, sem confundir
+  dialogs, janelas utilitarias ou mensagens com uma autenticacao concluida.
+
 ## [2.3.0] - 2026-07-28
 
 ### Adicionado

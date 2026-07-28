@@ -347,20 +347,21 @@ def automate_autcom_login(
         if process.poll() is not None:
             raise OSError("Autcom encerrou antes da tela de login.")
         windows = _window_details_for_process(process.pid)
-        login_window = next(
-            (
-                window
-                for window in windows
-                if window.class_name.lower() == "tparentform"
-                and not window.is_hung
-            ),
-            None,
-        )
+        login_window = _select_login_window(windows)
         if login_window:
             break
         time.sleep(WINDOW_POLL_SECONDS)
     if not login_window:
-        raise OSError("Tela de login TParentForm nao foi identificada.")
+        detected = ", ".join(
+            sorted(
+                {
+                    f"{window.class_name or '?'} ({window.title})"
+                    for window in windows
+                }
+            )
+        )
+        detail = f" Janelas detectadas: {detected}." if detected else ""
+        raise OSError(f"Tela de login nao foi identificada.{detail}")
 
     user32 = ctypes.windll.user32
     width, height, origin_x, origin_y = _client_geometry(
@@ -368,6 +369,7 @@ def automate_autcom_login(
         login_window.handle,
     )
     points = login_points(width, height)
+    user32.GetForegroundWindow.restype = ctypes.c_void_p
     user32.ShowWindow(login_window.handle, 9)
     user32.SetForegroundWindow(login_window.handle)
     time.sleep(0.3)
@@ -379,7 +381,8 @@ def automate_autcom_login(
     ):
         x, y = points[field_name]
         _click_screen_point(user32, origin_x + x, origin_y + y)
-        if user32.GetForegroundWindow() != login_window.handle:
+        foreground = int(user32.GetForegroundWindow() or 0)
+        if foreground != login_window.handle:
             raise OSError("Nao foi possivel manter o foco na tela de login.")
         _replace_focused_text(user32, value)
 
@@ -423,6 +426,17 @@ def validate_login_completion(
             ),
             None,
         )
+        if principal is None:
+            principal = next(
+                (
+                    window
+                    for window in windows
+                    if window.handle != login_handle
+                    and not window.is_hung
+                    and _is_application_window(window)
+                ),
+                None,
+            )
         if principal and not login_is_visible:
             principal_title = principal.title
             principal_since = principal_since or time.monotonic()
@@ -460,6 +474,60 @@ def validate_login_completion(
         message=message,
         process_id=process.pid,
         window_title=principal_title,
+    )
+
+
+def _select_login_window(windows):
+    responsive = [window for window in windows if not window.is_hung]
+    exact = next(
+        (
+            window
+            for window in responsive
+            if window.class_name.lower() == "tparentform"
+        ),
+        None,
+    )
+    if exact:
+        return exact
+
+    named = next(
+        (
+            window
+            for window in responsive
+            if any(
+                marker in window.class_name.lower()
+                for marker in ("login", "parent", "acesso", "autentic")
+            )
+        ),
+        None,
+    )
+    if named:
+        return named
+
+    candidates = [
+        window
+        for window in responsive
+        if window.class_name.lower() != "tfrmprincipal"
+        and _is_application_window(window)
+    ]
+    if len(candidates) == 1:
+        return candidates[0]
+    return None
+
+
+def _is_application_window(window):
+    class_name = window.class_name.lower()
+    return not any(
+        marker in class_name
+        for marker in (
+            "#32770",
+            "message",
+            "dialog",
+            "utilwindow",
+            "application",
+            "gdi+",
+            "ime",
+        )
     )
 
 

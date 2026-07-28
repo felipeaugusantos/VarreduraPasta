@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from app.autcom_test import (
+    _select_login_window,
     AutcomTestResult,
     login_points,
     resolve_test_layout,
@@ -50,6 +51,37 @@ class AutcomTestMappingTests(unittest.TestCase):
         self.assertEqual(points["senha"], (111, 211))
         self.assertEqual(points["empresa"], (111, 265))
         self.assertEqual(points["login"], (111, 336))
+
+    def test_single_custom_window_can_be_used_as_login(self):
+        custom_window = SimpleNamespace(
+            handle=111,
+            class_name="TfrmIdentificacao",
+            is_hung=False,
+            title="Autcom",
+        )
+
+        self.assertIs(
+            _select_login_window([custom_window]),
+            custom_window,
+        )
+
+    def test_principal_and_dialog_windows_are_not_used_as_login(self):
+        windows = [
+            SimpleNamespace(
+                handle=111,
+                class_name="TfrmPrincipal",
+                is_hung=False,
+                title="Autcom",
+            ),
+            SimpleNamespace(
+                handle=222,
+                class_name="#32770",
+                is_hung=False,
+                title="Aviso",
+            ),
+        ]
+
+        self.assertIsNone(_select_login_window(windows))
 
 
 class ZipSynchronizationTests(unittest.TestCase):
@@ -128,7 +160,7 @@ class LoginCompletionTests(unittest.TestCase):
         windows_mock.return_value = [
             SimpleNamespace(
                 handle=222,
-                class_name="TfrmPrincipal",
+                class_name="TMainForm",
                 is_hung=False,
                 title="AutCom",
             )
