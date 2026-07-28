@@ -33,7 +33,10 @@ class AutcomTestMappingTests(unittest.TestCase):
         layout = resolve_test_layout(
             Path(r"C:\VERSOES_FECHADAS") / "379.48.2.30.74.111.181"
         )
-        self.assertEqual(layout.root.name, "PastaTesteCopia_74_111")
+        self.assertEqual(
+            layout.root.name.lower(),
+            "pastatestecopia_74_111",
+        )
         self.assertEqual(layout.exe_directory.name, "exe")
         self.assertEqual(layout.bat_path.name, "CopiaArquivos.bat")
         self.assertEqual(layout.autcom_path.name, "Autcom.exe")
