@@ -212,6 +212,10 @@ Executa o mesmo BAT:
 - A saida de cada BAT e gravada em `logs\fechamentos_bat\<Projeto>_<data>.log`.
 - Um BAT que passar de 60 minutos e encerrado e marcado como erro.
 - Quando todos os fechamentos terminam, a tabela e atualizada automaticamente.
+- Enquanto o fechamento de um projeto estiver `Na fila` ou `Em andamento`,
+  `Copiar Local`, `Copiar Cloud`, `Limpar Pasta`, `Testar Autcom` e
+  `Validar Fechamento` ficam bloqueados para ele, pois o BAT ainda esta gerando
+  os ZIPs. `Detalhes` e `Abrir Pasta` continuam disponiveis.
 
 ### 8.3 Copiar Local
 

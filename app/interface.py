@@ -2020,12 +2020,32 @@ class VersionScannerApp(tk.Tk):
             self.autcom_test_button.config(
                 state="normal" if selected.status == "OK" else "disabled"
             )
+            if actions.CLOSING_MANAGER.is_active(selected):
+                for button in self._buttons_blocked_while_closing():
+                    button.config(state="disabled")
             self.selection_hint_label.config(text=self._selection_hint(selected))
         else:
             self.selection_hint_label.config(text="")
 
+    def _buttons_blocked_while_closing(self):
+        return (
+            self.local_close_button,
+            self.cloud_close_button,
+            self.validate_close_button,
+            self.clean_folder_button,
+            self.local_copy_button,
+            self.cloud_copy_button,
+            self.autcom_test_button,
+        )
+
     def _selection_hint(self, project):
         hints = [f"Projeto {self._project_type(project)} selecionado: {project.folder_name}."]
+        if actions.CLOSING_MANAGER.is_active(project):
+            hints.append(
+                "Fechamento em andamento: Copiar, Limpar Pasta, Testar Autcom e "
+                "Validar Fechamento ficam bloqueados até a coluna Fechamento "
+                "mostrar Concluído."
+            )
         if self._is_cloud_project(project):
             hints.append("Fechamento Local indisponível porque o projeto é Cloud.")
         else:
@@ -2117,6 +2137,9 @@ class VersionScannerApp(tk.Tk):
         ):
             self.closing_finished_seen = manager.finished_count
             self.refresh()
+
+        # Libera ou bloqueia os botoes conforme o fechamento do projeto selecionado.
+        self._sync_buttons()
 
         if reschedule:
             self.after(CLOSING_POLL_MS, self._update_closing_column)

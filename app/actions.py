@@ -300,7 +300,29 @@ def fechamento_cloud(projects):
     return _start_closings(projects, "Fechamento Cloud", expect_cloud=True)
 
 
+def _block_if_closing_active(project, title):
+    """Impede acoes no projeto enquanto o BAT ainda esta gerando os ZIPs."""
+    if not CLOSING_MANAGER.is_active(project):
+        return False
+    progress = CLOSING_MANAGER.progress_text(project)
+    _write_action_audit(
+        title,
+        "bloqueado",
+        project,
+        reason=f"fechamento na fila ou em andamento ({progress})",
+    )
+    messagebox.showerror(
+        title,
+        "O fechamento deste projeto ainda nao terminou.\n\n"
+        f"Situacao: {progress}\n\n"
+        "Aguarde a coluna Fechamento mostrar Concluido.",
+    )
+    return True
+
+
 def validar_pos_fechamento(project):
+    if _block_if_closing_active(project, "Validar Fechamento"):
+        return
     result = "validado_ok" if project.status == "OK" else "validado_pendente"
     _write_action_audit(
         "Validar Fechamento",
@@ -319,6 +341,8 @@ def validar_pos_fechamento(project):
 
 
 def limpar_pasta(project):
+    if _block_if_closing_active(project, "Limpar Pasta"):
+        return
     if not project.path.exists():
         _write_action_audit(
             "Limpar Pasta",
@@ -445,6 +469,8 @@ def _finish_manual_cleanup(progress, project, cleaned_items, cleanup_error):
 
 
 def copiar_local(project):
+    if _block_if_closing_active(project, "Copiar Local"):
+        return
     if _is_cloud_project(project):
         _write_action_audit(
             "Copiar Local",
@@ -475,6 +501,8 @@ def copiar_local(project):
 
 
 def copiar_cloud(project):
+    if _block_if_closing_active(project, "Copiar Cloud"):
+        return
     if not _is_cloud_project(project):
         _write_action_audit(
             "Copiar Cloud",
@@ -507,6 +535,8 @@ def copiar_cloud(project):
 
 def testar_autcom(project):
     title = "Testar Abertura do Autcom"
+    if _block_if_closing_active(project, title):
+        return
     if project.status != "OK":
         _write_action_audit(
             title,
@@ -1081,6 +1111,9 @@ def _cancel_copy(window, project, destination, title):
 
 def _start_copy(window, project, destination, title):
     window.destroy()
+    # Revalida: o fechamento pode ter sido iniciado enquanto a confirmacao estava aberta.
+    if _block_if_closing_active(project, title):
+        return
     _write_action_audit(title, "iniciado", project, destination)
     progress = Toplevel()
     progress.title(title)

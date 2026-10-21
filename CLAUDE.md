@@ -125,6 +125,9 @@ mesmo tipo) e os colocam na fila de `app/closing_runner.py`. O BAT
 `comandosCMD\_FechamentoArquivos.bat` roda oculto, ate 2 por vez, com saida em
 `logs\fechamentos_bat`. A coluna `Fechamento` da tabela consulta a fila a cada
 segundo. O sistema grava auditoria e aprende o padrao de arquivos do projeto.
+Enquanto o projeto estiver na fila ou em andamento, copia, limpeza, teste do
+Autcom e validacao ficam bloqueados (`_block_if_closing_active` em
+`app/actions.py`, alem dos botoes desabilitados na interface).
 
 ### Copia
 

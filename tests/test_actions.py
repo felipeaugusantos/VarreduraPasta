@@ -999,5 +999,127 @@ class BackgroundClosingRequestTests(unittest.TestCase):
         self.assertEqual(len(started), 1)
 
 
+class ActionsBlockedWhileClosingTests(unittest.TestCase):
+    def setUp(self):
+        from app.closing_runner import ClosingManager
+
+        self.started = []
+        self.manager = ClosingManager(
+            lambda job: 0,
+            start_thread=lambda target, job: self.started.append((target, job)),
+        )
+        patcher = patch("app.actions.CLOSING_MANAGER", self.manager)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def enqueue(self, project):
+        self.manager.enqueue(project, "Fechamento Local", project.path / "x.bat")
+
+    def assert_blocked(self, action, project, title, never_called):
+        with (
+            patch("app.actions._write_action_audit") as write_audit,
+            patch("app.actions.messagebox") as messagebox,
+            patch(never_called) as next_step,
+        ):
+            action(project)
+
+        next_step.assert_not_called()
+        messagebox.showerror.assert_called_once()
+        self.assertIn("Em andamento", messagebox.showerror.call_args.args[1])
+        write_audit.assert_called_once()
+        self.assertEqual(write_audit.call_args.args[:2], (title, "bloqueado"))
+        self.assertIn("fechamento na fila", write_audit.call_args.kwargs["reason"])
+
+    def test_copy_clean_test_and_validate_are_blocked(self):
+        from app.actions import copiar_cloud, copiar_local, testar_autcom
+
+        local = make_project()
+        cloud = make_project(
+            folder_name="379.48.2.30.74.150.99_CLOUD",
+            path=Path("C:/VERSOES_FECHADAS/379.48.2.30.74.150.99_CLOUD"),
+            cloud_copy_allowed=True,
+        )
+        self.enqueue(local)
+        self.enqueue(cloud)
+
+        self.assert_blocked(copiar_local, local, "Copiar Local", "app.actions._prepare_copy")
+        self.assert_blocked(copiar_cloud, cloud, "Copiar Cloud", "app.actions._prepare_copy")
+        self.assert_blocked(
+            limpar_pasta, local, "Limpar Pasta", "app.actions._start_manual_cleanup"
+        )
+        self.assert_blocked(
+            testar_autcom,
+            local,
+            "Testar Abertura do Autcom",
+            "app.actions.resolve_test_layout",
+        )
+        self.assert_blocked(
+            validar_pos_fechamento,
+            local,
+            "Validar Fechamento",
+            "app.actions.logging_utils.write_log",
+        )
+
+    def test_queued_project_is_also_blocked(self):
+        first = make_project(folder_name="p1", path=Path("C:/V/p1"))
+        second = make_project(folder_name="p2", path=Path("C:/V/p2"))
+        third = make_project(folder_name="p3", path=Path("C:/V/p3"))
+        for project in (first, second, third):
+            self.enqueue(project)
+        self.assertEqual(self.manager.progress_text(third), "Na fila")
+
+        with (
+            patch("app.actions._write_action_audit"),
+            patch("app.actions.messagebox") as messagebox,
+            patch("app.actions._prepare_copy") as prepare_copy,
+        ):
+            from app.actions import copiar_local
+
+            copiar_local(third)
+
+        prepare_copy.assert_not_called()
+        self.assertIn("Na fila", messagebox.showerror.call_args.args[1])
+
+    def test_copy_is_allowed_again_after_closing_finishes(self):
+        from app.actions import copiar_local
+
+        project = make_project()
+        self.enqueue(project)
+        target, job = self.started[0]
+        target(job)
+
+        with (
+            patch("app.actions._block_on_zip_name_errors", return_value=False),
+            patch("app.actions.messagebox") as messagebox,
+            patch("app.actions._prepare_copy") as prepare_copy,
+        ):
+            copiar_local(project)
+
+        prepare_copy.assert_called_once_with(project, "Copiar Local")
+        messagebox.showerror.assert_not_called()
+
+    def test_copy_rechecks_closing_after_confirmation(self):
+        from unittest.mock import MagicMock
+        from app.actions import _start_copy
+
+        project = make_project()
+        confirmation = MagicMock()
+        self.enqueue(project)
+
+        with (
+            patch("app.actions._write_action_audit") as write_audit,
+            patch("app.actions.messagebox") as messagebox,
+            patch("app.actions.Toplevel") as toplevel,
+            patch("app.actions._copy_project_files") as copy_files,
+        ):
+            _start_copy(confirmation, project, Path("C:/destino/p"), "Copiar Local")
+
+        confirmation.destroy.assert_called_once()
+        toplevel.assert_not_called()
+        copy_files.assert_not_called()
+        messagebox.showerror.assert_called_once()
+        self.assertEqual(write_audit.call_args.args[1], "bloqueado")
+
+
 if __name__ == "__main__":
     unittest.main()

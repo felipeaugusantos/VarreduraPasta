@@ -15,7 +15,9 @@ from app.config import (
 
 class SettingsTestCase(unittest.TestCase):
     def setUp(self):
-        self._temp_directory = TemporaryDirectory()
+        # No Windows, antivirus/indexador pode segurar por instantes um arquivo
+        # recem-gravado; isso nao deve derrubar o teste (nem o build).
+        self._temp_directory = TemporaryDirectory(ignore_cleanup_errors=True)
         self._original_settings_file = settings.SETTINGS_FILE
         settings.SETTINGS_FILE = Path(self._temp_directory.name) / "settings.json"
 

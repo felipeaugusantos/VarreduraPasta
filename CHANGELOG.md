@@ -16,6 +16,10 @@ Semantico (`MAIOR.MENOR.CORRECAO`).
   BATs simultaneos e o restante em fila.
 - BAT que passar de 60 minutos e encerrado e registrado como erro.
 - Ao sair com fechamentos ativos, o sistema pede confirmacao.
+- Enquanto o fechamento de um projeto esta na fila ou em andamento, Copiar,
+  Limpar Pasta, Testar Autcom e Validar Fechamento ficam bloqueados para ele
+  (botoes desabilitados e verificacao tambem na acao, auditada como
+  `bloqueado`). A copia revalida logo antes de iniciar.
 
 ### Corrigido
 - BAT de fechamento roda em console proprio oculto: o `timeout` do laco de
