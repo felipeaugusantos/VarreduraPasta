@@ -57,6 +57,7 @@ Nao distribuir `settings.json` junto do pacote. Dados persistentes ficam em
 | `app/scanner.py` | Varredura dos projetos e montagem dos resultados. |
 | `app/version_reader.py` | Leitura de `FileVersion`/`ProductVersion` via WinAPI. |
 | `app/actions.py` | Fechamento, copia, limpeza de pasta e validacoes operacionais. |
+| `app/closing_runner.py` | Fila de fechamentos em segundo plano (sem Tkinter). |
 | `app/autcom_test.py` | Preparo da pasta de teste e validacao da abertura do Autcom. |
 | `app/pattern.py` | Padrao de arquivos por projeto. |
 | `app/settings.py` | Persistencia em `settings.json`. |
@@ -119,9 +120,11 @@ Os resultados alimentam a tabela principal sem travar a UI.
 
 ### Fechamento
 
-Os botoes de fechamento entram na pasta do projeto, acessam `comandosCMD` e
-executam `_FechamentoArquivos.bat`. O sistema grava auditoria e aprende o padrao
-de arquivos do projeto.
+Os botoes de fechamento validam os projetos selecionados (aceita varios do
+mesmo tipo) e os colocam na fila de `app/closing_runner.py`. O BAT
+`comandosCMD\_FechamentoArquivos.bat` roda oculto, ate 2 por vez, com saida em
+`logs\fechamentos_bat`. A coluna `Fechamento` da tabela consulta a fila a cada
+segundo. O sistema grava auditoria e aprende o padrao de arquivos do projeto.
 
 ### Copia
 

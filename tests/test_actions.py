@@ -11,7 +11,6 @@ from app.actions import (
     _cleanup_source_after_copy,
     _copy_project_files,
     _finish_copy,
-    _finish_closing_start,
     _remove_source_item_with_retry,
     _write_action_audit,
     _build_copy_safety_checks,
@@ -19,6 +18,7 @@ from app.actions import (
     _find_destination_folders,
     _finish_manual_cleanup,
     _verify_critical_file_hashes,
+    fechamento_cloud,
     fechamento_local,
     limpar_pasta,
     validar_pos_fechamento,
@@ -264,13 +264,11 @@ class ActionAuditTests(unittest.TestCase):
         self.assertIn(" | tipo=Cloud | ", content)
         self.assertIn("projeto CLOUD nao pode usar fechamento local", content)
 
-    def test_closing_start_logs_pre_closing_version_context(self):
+    def test_closing_job_audits_start_and_finish_with_log(self):
         import app.logging_utils as logging_utils
         from tempfile import TemporaryDirectory
-
-        class FakeProgress:
-            def winfo_exists(self):
-                return False
+        from app.actions import _execute_closing_job
+        from app.closing_runner import ClosingJob
 
         with TemporaryDirectory() as temp_directory:
             original_log_file = logging_utils.LOG_FILE
@@ -280,24 +278,52 @@ class ActionAuditTests(unittest.TestCase):
                     display_file_version="999.999.999.999",
                     display_product_version="999.999.999.999",
                 )
-                process = SimpleNamespace(pid=23088)
-                with patch("app.actions.messagebox.showinfo") as showinfo:
-                    _finish_closing_start(
-                        FakeProgress(),
-                        project,
-                        "Fechamento Cloud",
-                        process,
-                        None,
-                        None,
-                        project.path / "comandosCMD" / "_FechamentoArquivos.bat",
-                    )
+                bat_path = project.path / "comandosCMD" / "_FechamentoArquivos.bat"
+                job = ClosingJob(
+                    key="k",
+                    project=project,
+                    title="Fechamento Local",
+                    bat_path=bat_path,
+                )
+                with (
+                    patch("app.actions._learn_project_pattern"),
+                    patch("app.actions.run_closing_bat", return_value=0) as run_bat,
+                ):
+                    return_code = _execute_closing_job(job)
                 content = logging_utils.LOG_FILE.read_text(encoding="utf-8")
             finally:
                 logging_utils.LOG_FILE = original_log_file
 
-        self.assertIn("motivo=versao antes do fechamento; pid=23088", content)
-        showinfo.assert_called_once()
-        self.assertIn("clique em Atualizar", showinfo.call_args.args[1])
+        self.assertEqual(return_code, 0)
+        self.assertEqual(run_bat.call_args.args[0], bat_path)
+        self.assertEqual(job.log_path.parent.name, "fechamentos_bat")
+        self.assertIn("Fechamento Local iniciado | usuario=", content)
+        self.assertIn("motivo=versao antes do fechamento; log=", content)
+        self.assertIn("fileversion=999.999.999.999", content)
+        self.assertIn("Fechamento Local concluido | usuario=", content)
+        self.assertIn("codigo=0; duracao=", content)
+
+    def test_closing_job_audits_bat_error_code(self):
+        from app.actions import _execute_closing_job
+        from app.closing_runner import ClosingJob
+
+        project = make_project()
+        job = ClosingJob(
+            key="k",
+            project=project,
+            title="Fechamento Local",
+            bat_path=project.path / "comandosCMD" / "_FechamentoArquivos.bat",
+        )
+        with (
+            patch("app.actions._learn_project_pattern"),
+            patch("app.actions.run_closing_bat", return_value=2),
+            patch("app.actions._write_action_audit") as write_audit,
+        ):
+            return_code = _execute_closing_job(job)
+
+        self.assertEqual(return_code, 2)
+        self.assertEqual(write_audit.call_args.args[1], "erro")
+        self.assertIn("codigo=2", write_audit.call_args.kwargs["reason"])
 
     def test_post_closing_validation_is_audited(self):
         import app.logging_utils as logging_utils
@@ -805,35 +831,6 @@ class ModalWorkerFailureTests(unittest.TestCase):
             action()
         return progress
 
-    def test_closing_audit_failure_closes_modal_and_shows_error(self):
-        from tempfile import TemporaryDirectory
-
-        def failing_audit(action, result, *args, **kwargs):
-            if result == "iniciado":
-                raise OSError("disco cheio")
-
-        with TemporaryDirectory() as temp_directory:
-            source = Path(temp_directory)
-            (source / "comandosCMD").mkdir()
-            (source / "comandosCMD" / "_FechamentoArquivos.bat").write_text(
-                "echo ok",
-                encoding="utf-8",
-            )
-            project = make_project(path=source)
-
-            with (
-                patch("app.actions._learn_project_pattern"),
-                patch("app.actions._write_action_audit", side_effect=failing_audit),
-                patch("app.actions.subprocess.Popen") as popen,
-                patch("app.actions.messagebox.showerror") as showerror,
-            ):
-                progress = self.run_with_fake_tk(lambda: fechamento_local(project))
-
-        popen.assert_not_called()
-        progress.destroy.assert_called_once()
-        showerror.assert_called_once()
-        self.assertIn("disco cheio", showerror.call_args.args[1])
-
     def test_copy_unexpected_error_closes_modal_and_shows_error(self):
         from unittest.mock import MagicMock
         from app.actions import _start_copy
@@ -877,6 +874,112 @@ class ModalWorkerFailureTests(unittest.TestCase):
         progress.destroy.assert_called_once()
         showerror.assert_called_once()
         self.assertIn("falha inesperada", showerror.call_args.args[1])
+
+
+class BackgroundClosingRequestTests(unittest.TestCase):
+    def make_closing_project(self, root, name):
+        path = Path(root) / name
+        (path / "comandosCMD").mkdir(parents=True)
+        (path / "comandosCMD" / "_FechamentoArquivos.bat").write_text(
+            "echo ok",
+            encoding="utf-8",
+        )
+        return make_project(folder_name=name, path=path)
+
+    def make_manager(self):
+        from app.closing_runner import ClosingManager
+
+        started = []
+        manager = ClosingManager(
+            lambda job: 0,
+            max_concurrent=2,
+            start_thread=lambda target, job: started.append(job),
+        )
+        return manager, started
+
+    def test_multiple_local_projects_are_queued_without_dialog(self):
+        from tempfile import TemporaryDirectory
+
+        manager, started = self.make_manager()
+        with TemporaryDirectory() as temp_directory:
+            projects = [
+                self.make_closing_project(temp_directory, f"379.48.2.30.74.150.{n}")
+                for n in (1, 2, 3)
+            ]
+            with (
+                patch("app.actions.CLOSING_MANAGER", manager),
+                patch("app.actions._write_action_audit") as write_audit,
+                patch("app.actions.messagebox") as messagebox,
+            ):
+                enqueued, blocked = fechamento_local(projects)
+
+        self.assertEqual(len(enqueued), 3)
+        self.assertEqual(blocked, [])
+        self.assertEqual(len(started), 2)
+        self.assertEqual(manager.progress_text(projects[2]), "Na fila")
+        self.assertEqual(manager.active_count(), 3)
+        messagebox.showwarning.assert_not_called()
+        messagebox.showerror.assert_not_called()
+        self.assertEqual(
+            [call.args[1] for call in write_audit.call_args_list],
+            ["na_fila", "na_fila", "na_fila"],
+        )
+
+    def test_blocked_projects_are_reported_in_one_warning(self):
+        from tempfile import TemporaryDirectory
+
+        manager, _started = self.make_manager()
+        with TemporaryDirectory() as temp_directory:
+            local = self.make_closing_project(temp_directory, "379.48.2.30.74.150.1")
+            cloud = self.make_closing_project(
+                temp_directory,
+                "379.48.2.30.74.150.2_CLOUD",
+            )
+            (Path(temp_directory) / "sem_bat").mkdir()
+            without_bat = make_project(
+                folder_name="379.48.2.30.74.150.3",
+                path=Path(temp_directory) / "sem_bat",
+            )
+            with (
+                patch("app.actions.CLOSING_MANAGER", manager),
+                patch("app.actions._write_action_audit"),
+                patch("app.actions.messagebox") as messagebox,
+            ):
+                enqueued, blocked = fechamento_local([local, cloud, without_bat])
+                again, blocked_again = fechamento_local([local])
+
+        self.assertEqual(enqueued, [local.folder_name])
+        self.assertEqual(
+            [name for name, _reason in blocked],
+            [cloud.folder_name, without_bat.folder_name],
+        )
+        self.assertIn("CLOUD", blocked[0][1])
+        self.assertIn("comandosCMD nao encontrada", blocked[1][1])
+        messagebox.showwarning.assert_called_once()
+        self.assertIn(cloud.folder_name, messagebox.showwarning.call_args.args[1])
+        self.assertEqual(again, [])
+        self.assertIn("ja esta na fila", blocked_again[0][1])
+        messagebox.showerror.assert_called_once()
+
+    def test_cloud_closing_accepts_only_cloud_projects(self):
+        from tempfile import TemporaryDirectory
+
+        manager, started = self.make_manager()
+        with TemporaryDirectory() as temp_directory:
+            cloud = self.make_closing_project(
+                temp_directory,
+                "379.48.2.30.74.150.2_CLOUD",
+            )
+            with (
+                patch("app.actions.CLOSING_MANAGER", manager),
+                patch("app.actions._write_action_audit"),
+                patch("app.actions.messagebox"),
+            ):
+                enqueued, blocked = fechamento_cloud(cloud)
+
+        self.assertEqual(enqueued, [cloud.folder_name])
+        self.assertEqual(blocked, [])
+        self.assertEqual(len(started), 1)
 
 
 if __name__ == "__main__":

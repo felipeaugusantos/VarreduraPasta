@@ -200,6 +200,19 @@ Executa o mesmo BAT:
 <Projeto>\comandosCMD\_FechamentoArquivos.bat
 ```
 
+### 8.2.1 Execucao em segundo plano e varios projetos
+
+- O BAT roda em segundo plano, sem janela de console; o sistema continua livre
+  para uso durante o fechamento.
+- E possivel selecionar varios projetos do mesmo tipo (Ctrl ou Shift + clique)
+  e clicar no fechamento correspondente. Ate 2 BATs rodam ao mesmo tempo; os
+  demais aguardam na fila.
+- A coluna `Fechamento` mostra `Na fila`, `Em andamento`, `Concluido` ou
+  `Erro (codigo N)`, com o tempo decorrido.
+- A saida de cada BAT e gravada em `logs\fechamentos_bat\<Projeto>_<data>.log`.
+- Um BAT que passar de 60 minutos e encerrado e marcado como erro.
+- Quando todos os fechamentos terminam, a tabela e atualizada automaticamente.
+
 ### 8.3 Copiar Local
 
 Permitido quando:

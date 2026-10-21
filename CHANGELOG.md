@@ -7,6 +7,16 @@ Semantico (`MAIOR.MENOR.CORRECAO`).
 
 ## [Nao lancado]
 
+### Adicionado
+- Fechamento Local/Cloud roda o BAT em segundo plano, sem janela de console e
+  sem bloquear o sistema. A saida de cada BAT fica em `logs\fechamentos_bat`.
+- Coluna `Fechamento` na tabela principal com a situacao (`Na fila`,
+  `Em andamento`, `Concluido`, `Erro`) e o tempo decorrido.
+- Selecao de varios projetos do mesmo tipo para fechamento em lote, com ate 2
+  BATs simultaneos e o restante em fila.
+- BAT que passar de 60 minutos e encerrado e registrado como erro.
+- Ao sair com fechamentos ativos, o sistema pede confirmacao.
+
 ### Corrigido
 - Limpeza da origem apos a copia remove somente os ZIPs copiados e que nao
   mudaram desde a copia. Itens nao copiados sao mantidos, listados em aviso e

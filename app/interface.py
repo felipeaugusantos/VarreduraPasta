@@ -10,7 +10,12 @@ from tkinter import filedialog, messagebox, ttk
 
 from app import __version__, actions, logging_utils, project_view
 from app.audit import filter_log_entries, list_log_files, parse_log_entries, read_log_file
-from app.config import CLOUD_MIN_AUTCOM_MB, COPY_TARGET_DIRECTORIES, SCAN_INTERVAL_MS
+from app.config import (
+    CLOSING_MAX_CONCURRENT,
+    CLOUD_MIN_AUTCOM_MB,
+    COPY_TARGET_DIRECTORIES,
+    SCAN_INTERVAL_MS,
+)
 from app.jenkins import (
     get_jenkins_jobs_status,
     normalize_jenkins_url,
@@ -41,6 +46,9 @@ from app.settings import (
 from app.svn_search import search_svn
 
 
+CLOSING_POLL_MS = 1000
+
+
 class VersionScannerApp(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -64,10 +72,13 @@ class VersionScannerApp(tk.Tk):
         self.jenkins_window = None
         self.jenkins_jobs_window = None
         self.svn_search_window = None
+        self.closing_finished_seen = 0
         self._build_menu()
         self._build_layout()
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.after(100, self.refresh)
         self.after(2000, self.check_scripts_daily)
+        self.after(CLOSING_POLL_MS, self._update_closing_column)
 
     def _set_window_icon(self):
         icon_path = resource_path(Path("assets") / "app-icon.ico")
@@ -187,6 +198,7 @@ class VersionScannerApp(tk.Tk):
             "autcom_size",
             "zip",
             "status",
+            "closing",
         )
         self.tree = ttk.Treeview(self, columns=columns, show="headings", height=16)
         headings = {
@@ -199,6 +211,7 @@ class VersionScannerApp(tk.Tk):
             "autcom_size": "Autcom MB",
             "zip": "Origem",
             "status": "Status",
+            "closing": "Fechamento",
         }
         widths = {
             "folder": 180,
@@ -210,6 +223,7 @@ class VersionScannerApp(tk.Tk):
             "autcom_size": 90,
             "zip": 80,
             "status": 150,
+            "closing": 160,
         }
         for column in columns:
             self.tree.heading(
@@ -255,14 +269,14 @@ class VersionScannerApp(tk.Tk):
         self.local_close_button = ttk.Button(
             button_bar,
             text="Fechamento Local",
-            command=lambda: self._run_action(actions.fechamento_local),
+            command=lambda: self._run_closing(actions.fechamento_local),
         )
         self.local_close_button.grid(row=0, column=0, padx=4)
 
         self.cloud_close_button = ttk.Button(
             button_bar,
             text="Fechamento Cloud",
-            command=lambda: self._run_action(actions.fechamento_cloud),
+            command=lambda: self._run_closing(actions.fechamento_cloud),
         )
         self.cloud_close_button.grid(row=0, column=1, padx=4)
 
@@ -450,6 +464,7 @@ class VersionScannerApp(tk.Tk):
                     size,
                     self._short_zip_status(project),
                     self._short_status(project),
+                    actions.CLOSING_MANAGER.progress_text(project),
                 ),
                 tags=(self._status_tag(project),),
             )
@@ -1892,8 +1907,12 @@ class VersionScannerApp(tk.Tk):
             "- Fechamento Local fica disponivel apenas para projeto sem _CLOUD.\n"
             "- Fechamento Cloud fica disponivel apenas para projeto com _CLOUD.\n"
             "- Ao clicar no fechamento, o sistema grava o padrao de arquivos e executa "
-            "comandosCMD\\_FechamentoArquivos.bat em um novo console.\n"
-            "- Depois que o BAT terminar, clique em Atualizar e em Validar Fechamento para "
+            "comandosCMD\\_FechamentoArquivos.bat em segundo plano, sem janela.\n"
+            "- E possivel selecionar varios projetos do mesmo tipo (Ctrl/Shift + clique); "
+            "os BATs rodam ate 2 por vez e os demais aguardam na fila.\n"
+            "- A coluna Fechamento mostra Na fila, Em andamento, Concluido ou Erro, com o "
+            "tempo decorrido. A saida de cada BAT fica em logs\\fechamentos_bat.\n"
+            "- Quando a fila termina, a tabela e atualizada; use Validar Fechamento para "
             "registrar a versao/status final na Auditoria.\n\n"
             "4. Copiar Local e Copiar Cloud\n"
             "- Limpar Pasta remove os arquivos da raiz do projeto preservando comandosCMD.\n"
@@ -1966,13 +1985,23 @@ class VersionScannerApp(tk.Tk):
             self.config_window.destroy()
         self.refresh()
 
+    def _selected_projects(self):
+        return [
+            self.displayed_projects[int(item_id)]
+            for item_id in self.tree.selection()
+            if int(item_id) < len(self.displayed_projects)
+        ]
+
     def _selected_project(self):
-        selection = self.tree.selection()
-        if not selection:
-            return None
-        return self.displayed_projects[int(selection[0])]
+        selected = self._selected_projects()
+        return selected[0] if len(selected) == 1 else None
 
     def _sync_buttons(self):
+        selected_projects = self._selected_projects()
+        if len(selected_projects) > 1:
+            self._sync_buttons_for_multiple(selected_projects)
+            return
+
         selected = self._selected_project()
         state = "normal" if selected else "disabled"
         for button in self.buttons:
@@ -2020,10 +2049,83 @@ class VersionScannerApp(tk.Tk):
         remaining = len(parts) - 4
         return f"{visible_parts} | +{remaining} pendência(s). Abra Detalhes para ver tudo."
 
+    def _sync_buttons_for_multiple(self, projects):
+        for button in self.buttons:
+            button.config(state="disabled")
+        cloud_count = sum(1 for project in projects if self._is_cloud_project(project))
+        local_count = len(projects) - cloud_count
+        if cloud_count == 0:
+            self.local_close_button.config(state="normal")
+        if local_count == 0:
+            self.cloud_close_button.config(state="normal")
+
+        hints = [
+            f"{len(projects)} projetos selecionados "
+            f"({local_count} Local, {cloud_count} Cloud)."
+        ]
+        if local_count and cloud_count:
+            hints.append(
+                "Para fechar varios projetos de uma vez, selecione somente Local "
+                "ou somente Cloud."
+            )
+        else:
+            hints.append(
+                "Com varios projetos, somente o fechamento fica disponivel. "
+                f"Os BATs rodam em segundo plano, ate {CLOSING_MAX_CONCURRENT} por vez; "
+                "acompanhe na coluna Fechamento."
+            )
+        self.selection_hint_label.config(text="\n".join(hints))
+
     def _run_action(self, action):
         selected = self._selected_project()
         if selected:
             action(selected)
+
+    def _run_closing(self, action):
+        selected = self._selected_projects()
+        if not selected:
+            return
+        enqueued, _blocked = action(selected)
+        if enqueued:
+            self.status_label.config(
+                text=f"{len(enqueued)} fechamento(s) adicionado(s) a fila."
+            )
+        self._update_closing_column(reschedule=False)
+
+    def _update_closing_column(self, reschedule=True):
+        manager = actions.CLOSING_MANAGER
+        for item_id in self.tree.get_children():
+            index = int(item_id)
+            if index < len(self.displayed_projects):
+                self.tree.set(
+                    item_id,
+                    "closing",
+                    manager.progress_text(self.displayed_projects[index]),
+                )
+
+        # Quando a fila esvazia, atualiza a varredura para mostrar as versoes finais.
+        if (
+            manager.finished_count != self.closing_finished_seen
+            and manager.active_count() == 0
+            and not self.is_scanning
+        ):
+            self.closing_finished_seen = manager.finished_count
+            self.refresh()
+
+        if reschedule:
+            self.after(CLOSING_POLL_MS, self._update_closing_column)
+
+    def _on_close(self):
+        active = actions.CLOSING_MANAGER.active_count()
+        if active and not messagebox.askyesno(
+            "Sair",
+            f"Ha {active} fechamento(s) na fila ou em andamento.\n\n"
+            "Se sair agora, os que estao na fila nao serao iniciados e os que estao "
+            "rodando continuam sem acompanhamento nem registro final na Auditoria.\n\n"
+            "Deseja sair mesmo assim?",
+        ):
+            return
+        self.destroy()
 
     def _is_cloud_project(self, project):
         return project.folder_name.upper().endswith("_CLOUD")

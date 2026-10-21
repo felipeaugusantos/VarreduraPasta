@@ -3,16 +3,22 @@ import json
 import os
 import queue
 import shutil
-import subprocess
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 from tkinter import Listbox, TclError, Toplevel, messagebox, ttk
 
 from app import logging_utils
 from app.autcom_test import resolve_test_layout, run_autcom_test
-from app.config import CLOUD_MIN_AUTCOM_MB, LOCAL_MAX_AUTCOM_MB
+from app.closing_runner import ClosingManager, format_elapsed, run_closing_bat
+from app.config import (
+    CLOSING_MAX_CONCURRENT,
+    CLOSING_TIMEOUT_SECONDS,
+    CLOUD_MIN_AUTCOM_MB,
+    LOCAL_MAX_AUTCOM_MB,
+)
 from app.pattern import save_project_pattern
 from app.scanner import validate_zip_names
 from app.settings import load_copy_target_directories
@@ -20,6 +26,7 @@ from app.settings import load_copy_target_directories
 POLL_INTERVAL_MS = 100
 CLEANUP_RETRY_ATTEMPTS = 5
 CLEANUP_RETRY_DELAY_SECONDS = 1
+_PATTERN_LOCK = threading.Lock()
 
 
 class CleanupError(OSError):
@@ -74,110 +81,6 @@ def _write_action_audit(
     )
 
 
-def _run_closing_bat(project, title):
-    if _block_on_zip_name_errors(project, title):
-        return
-
-    commands_path = project.path / "comandosCMD"
-    bat_path = commands_path / "_FechamentoArquivos.bat"
-    if not commands_path.exists():
-        _write_action_audit(
-            title,
-            "bloqueado",
-            project,
-            bat_path=bat_path,
-            reason=f"pasta comandosCMD nao encontrada: {commands_path}",
-        )
-        messagebox.showerror(
-            title,
-            f"Pasta comandosCMD nao encontrada:\n{commands_path}",
-        )
-        return
-    if not bat_path.exists():
-        _write_action_audit(
-            title,
-            "bloqueado",
-            project,
-            bat_path=bat_path,
-            reason=f"BAT nao encontrado: {bat_path}",
-        )
-        messagebox.showerror(
-            title,
-            f"BAT nao encontrado:\n{bat_path}",
-        )
-        return
-
-    progress = Toplevel()
-    progress.title(title)
-    progress.geometry("580x120")
-    progress.resizable(False, False)
-    progress.protocol("WM_DELETE_WINDOW", lambda: None)
-    progress.grab_set()
-    frame = ttk.Frame(progress, padding=12)
-    frame.pack(fill="both", expand=True)
-    ttk.Label(
-        frame,
-        text=f"Gravando padrão de arquivos para {project.folder_name}...",
-    ).pack(anchor="w")
-    progress_bar = ttk.Progressbar(frame, mode="indeterminate")
-    progress_bar.pack(fill="x", pady=(12, 0))
-    progress_bar.start(10)
-
-    result_queue = queue.Queue()
-
-    def worker():
-        learn_error = None
-        process = None
-        start_error = None
-        # Qualquer falha precisa chegar na fila; senao a janela modal nao fecha.
-        try:
-            try:
-                _learn_project_pattern(project, title, bat_path)
-            except Exception as error:
-                learn_error = error
-
-            if learn_error is not None:
-                _write_action_audit(
-                    title,
-                    "erro_padrao",
-                    project,
-                    bat_path=bat_path,
-                    reason=str(learn_error),
-                )
-
-            _write_action_audit(title, "iniciado", project, bat_path=bat_path)
-            process = subprocess.Popen(
-                ["cmd.exe", "/k", str(bat_path)],
-                cwd=commands_path,
-                creationflags=subprocess.CREATE_NEW_CONSOLE,
-            )
-        except Exception as error:
-            start_error = error
-
-        result_queue.put((process, learn_error, start_error))
-
-    def poll():
-        try:
-            process, learn_error, start_error = result_queue.get_nowait()
-        except queue.Empty:
-            if progress.winfo_exists():
-                progress.after(POLL_INTERVAL_MS, poll)
-            return
-
-        _finish_closing_start(
-            progress,
-            project,
-            title,
-            process,
-            learn_error,
-            start_error,
-            bat_path,
-        )
-
-    threading.Thread(target=worker, daemon=True).start()
-    progress.after(POLL_INTERVAL_MS, poll)
-
-
 def _safe_destroy(window):
     try:
         if window.winfo_exists():
@@ -217,75 +120,147 @@ def _learn_project_pattern(project, title, bat_path):
         )
 
 
-def _finish_closing_start(
-    progress,
-    project,
-    title,
-    process,
-    learn_error,
-    start_error,
-    bat_path,
-):
-    _safe_destroy(progress)
-    if start_error is not None:
+
+def _closing_block_reason(project, expect_cloud):
+    if _is_cloud_project(project) != expect_cloud:
+        if expect_cloud:
+            return "projeto local nao pode usar fechamento cloud"
+        return "projeto CLOUD nao pode usar fechamento local"
+    if CLOSING_MANAGER.is_active(project):
+        return "fechamento ja esta na fila ou em andamento"
+
+    zip_name_errors = validate_zip_names(project.path)
+    if zip_name_errors:
+        return (
+            f"{len(zip_name_errors)} ZIP(s) com nome incorreto: "
+            + "; ".join(zip_name_errors[:3])
+        )
+
+    commands_path = project.path / "comandosCMD"
+    bat_path = commands_path / "_FechamentoArquivos.bat"
+    if not commands_path.exists():
+        return f"pasta comandosCMD nao encontrada: {commands_path}"
+    if not bat_path.exists():
+        return f"BAT nao encontrado: {bat_path}"
+    return None
+
+
+def _start_closings(projects, title, expect_cloud):
+    """Valida os projetos e coloca os aptos na fila de fechamento.
+
+    Retorna (nomes enfileirados, [(nome, motivo)] bloqueados). So mostra
+    mensagem quando algum projeto foi bloqueado.
+    """
+    if not isinstance(projects, (list, tuple)):
+        projects = [projects]
+
+    enqueued = []
+    blocked = []
+    for project in projects:
+        bat_path = project.path / "comandosCMD" / "_FechamentoArquivos.bat"
+        reason = _closing_block_reason(project, expect_cloud)
+        if reason is None and not CLOSING_MANAGER.enqueue(project, title, bat_path):
+            reason = "fechamento ja esta na fila ou em andamento"
+        if reason is not None:
+            _write_action_audit(
+                title,
+                "bloqueado",
+                project,
+                bat_path=bat_path,
+                reason=reason,
+            )
+            blocked.append((project.folder_name, reason))
+            continue
+        _write_action_audit(title, "na_fila", project, bat_path=bat_path)
+        enqueued.append(project.folder_name)
+
+    if blocked:
+        details = "\n".join(f"- {name}: {reason}" for name, reason in blocked[:10])
+        if len(blocked) > 10:
+            details += f"\n... +{len(blocked) - 10} projeto(s)"
+        if enqueued:
+            messagebox.showwarning(
+                title,
+                f"{len(enqueued)} fechamento(s) adicionado(s) a fila.\n\n"
+                f"Projetos bloqueados:\n{details}",
+            )
+        else:
+            messagebox.showerror(
+                title,
+                f"Fechamento nao iniciado.\n\n{details}",
+            )
+    return enqueued, blocked
+
+
+def _closing_log_path(project, now=None):
+    now = now or datetime.now()
+    return (
+        logging_utils.current_log_file(now).parent
+        / "fechamentos_bat"
+        / f"{project.folder_name}_{now:%Y%m%d_%H%M%S}.log"
+    )
+
+
+def _execute_closing_job(job):
+    """Roda na thread do fechamento: aprende o padrao, executa o BAT e audita."""
+    project = job.project
+    started = time.monotonic()
+    with _PATTERN_LOCK:
+        try:
+            _learn_project_pattern(project, job.title, job.bat_path)
+        except Exception as error:
+            _write_action_audit(
+                job.title,
+                "erro_padrao",
+                project,
+                bat_path=job.bat_path,
+                reason=str(error),
+            )
+
+    job.log_path = _closing_log_path(project)
+    _write_action_audit(
+        job.title,
+        "iniciado",
+        project,
+        bat_path=job.bat_path,
+        reason=f"versao antes do fechamento; log={job.log_path}",
+    )
+    try:
+        return_code = run_closing_bat(
+            job.bat_path,
+            job.log_path,
+            CLOSING_TIMEOUT_SECONDS,
+        )
+    except Exception as error:
         _write_action_audit(
-            title,
+            job.title,
             "erro",
             project,
-            bat_path=bat_path,
-            reason=f"erro ao iniciar BAT: {start_error}",
+            bat_path=job.bat_path,
+            reason=f"{error}; log={job.log_path}",
         )
-        messagebox.showerror(title, f"Erro ao executar BAT:\n{start_error}")
-        return
+        raise
 
+    duration = format_elapsed(time.monotonic() - started)
     _write_action_audit(
-        title,
-        "processo_aberto",
+        job.title,
+        "concluido" if return_code == 0 else "erro",
         project,
-        bat_path=bat_path,
-        reason=f"versao antes do fechamento; pid={process.pid}",
+        bat_path=job.bat_path,
+        reason=f"codigo={return_code}; duracao={duration}; log={job.log_path}",
     )
-    messagebox.showinfo(
-        title,
-        "Fechamento iniciado.\n\n"
-        "As versoes registradas na Auditoria sao as versoes antes do BAT.\n"
-        "Apos o BAT concluir, clique em Atualizar e depois em Validar Fechamento "
-        "para registrar a versao final na Auditoria.",
-    )
+    return return_code
 
 
-def fechamento_local(project):
-    if _is_cloud_project(project):
-        _write_action_audit(
-            "Fechamento Local",
-            "bloqueado",
-            project,
-            reason="projeto CLOUD nao pode usar fechamento local",
-        )
-        messagebox.showerror(
-            "Fechamento Local",
-            "Projeto CLOUD nao pode executar fechamento local.",
-        )
-        return
-
-    _run_closing_bat(project, "Fechamento Local")
+CLOSING_MANAGER = ClosingManager(_execute_closing_job, max_concurrent=CLOSING_MAX_CONCURRENT)
 
 
-def fechamento_cloud(project):
-    if not _is_cloud_project(project):
-        _write_action_audit(
-            "Fechamento Cloud",
-            "bloqueado",
-            project,
-            reason="projeto local nao pode usar fechamento cloud",
-        )
-        messagebox.showerror(
-            "Fechamento Cloud",
-            "Projeto local nao pode executar fechamento cloud.",
-        )
-        return
+def fechamento_local(projects):
+    return _start_closings(projects, "Fechamento Local", expect_cloud=False)
 
-    _run_closing_bat(project, "Fechamento Cloud")
+
+def fechamento_cloud(projects):
+    return _start_closings(projects, "Fechamento Cloud", expect_cloud=True)
 
 
 def validar_pos_fechamento(project):

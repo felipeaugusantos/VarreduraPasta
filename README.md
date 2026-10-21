@@ -107,10 +107,13 @@ tamanhos fora do padrao observado. Consulte
 ## Acoes
 
 - `Fechamento Local` / `Fechamento Cloud`: executa
-  `comandosCMD\_FechamentoArquivos.bat` do projeto em um novo console e grava o
-  padrao de arquivos aprendido. Habilitado conforme o tipo do projeto
-  (Local sem `_CLOUD`; Cloud com `_CLOUD`).
-- `Validar Fechamento`: apos o BAT terminar, clique em `Atualizar` e use este
+  `comandosCMD\_FechamentoArquivos.bat` do projeto em segundo plano, sem
+  janela, e grava o padrao de arquivos aprendido. Habilitado conforme o tipo do
+  projeto (Local sem `_CLOUD`; Cloud com `_CLOUD`). Aceita varios projetos
+  selecionados do mesmo tipo: os BATs rodam ate 2 por vez e o restante fica na
+  fila. A coluna `Fechamento` mostra a situacao e o tempo de cada um; a saida do
+  BAT fica em `logs\fechamentos_bat`.
+- `Validar Fechamento`: quando a fila termina a tabela e atualizada; use este
   botao para registrar na Auditoria a versao/status final do projeto.
 - `Limpar Pasta`: remove os arquivos e subpastas da raiz do projeto selecionado,
   preservando sempre `comandosCMD`, apos confirmacao do operador. A limpeza roda
