@@ -5,7 +5,7 @@ Todas as alteracoes relevantes deste projeto sao documentadas neste arquivo.
 O formato e baseado em Keep a Changelog e o projeto segue Versionamento
 Semantico (`MAIOR.MENOR.CORRECAO`).
 
-## [Nao lancado]
+## [2.4.0] - 2026-10-21
 
 ### Adicionado
 - Fechamento Local/Cloud roda o BAT em segundo plano, sem janela de console e
