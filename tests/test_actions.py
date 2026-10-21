@@ -274,7 +274,11 @@ class ActionAuditTests(unittest.TestCase):
             original_log_file = logging_utils.LOG_FILE
             logging_utils.LOG_FILE = Path(temp_directory) / "fechamentos.log"
             try:
+                project_path = Path(temp_directory) / "379.48.2.30.74.150.99"
+                (project_path / "comandosCMD").mkdir(parents=True)
+                (project_path / "autcom.zip").write_bytes(b"zip")
                 project = make_project(
+                    path=project_path,
                     display_file_version="999.999.999.999",
                     display_product_version="999.999.999.999",
                 )
@@ -285,9 +289,10 @@ class ActionAuditTests(unittest.TestCase):
                     title="Fechamento Local",
                     bat_path=bat_path,
                 )
+                # O BAT real termina com codigo 1 quando conclui com sucesso.
                 with (
                     patch("app.actions._learn_project_pattern"),
-                    patch("app.actions.run_closing_bat", return_value=0) as run_bat,
+                    patch("app.actions.run_closing_bat", return_value=1) as run_bat,
                 ):
                     return_code = _execute_closing_job(job)
                 content = logging_utils.LOG_FILE.read_text(encoding="utf-8")
@@ -301,29 +306,38 @@ class ActionAuditTests(unittest.TestCase):
         self.assertIn("motivo=versao antes do fechamento; log=", content)
         self.assertIn("fileversion=999.999.999.999", content)
         self.assertIn("Fechamento Local concluido | usuario=", content)
-        self.assertIn("codigo=0; duracao=", content)
+        self.assertIn("codigo_bat=1; duracao=", content)
 
-    def test_closing_job_audits_bat_error_code(self):
+    def test_closing_job_fails_when_files_remain_even_with_code_zero(self):
+        from tempfile import TemporaryDirectory
         from app.actions import _execute_closing_job
         from app.closing_runner import ClosingJob
 
-        project = make_project()
-        job = ClosingJob(
-            key="k",
-            project=project,
-            title="Fechamento Local",
-            bat_path=project.path / "comandosCMD" / "_FechamentoArquivos.bat",
-        )
-        with (
-            patch("app.actions._learn_project_pattern"),
-            patch("app.actions.run_closing_bat", return_value=2),
-            patch("app.actions._write_action_audit") as write_audit,
-        ):
-            return_code = _execute_closing_job(job)
+        with TemporaryDirectory() as temp_directory:
+            project_path = Path(temp_directory)
+            (project_path / "Autcom.exe").write_bytes(b"exe")
+            (project_path / "libFuncoes.DLL").write_bytes(b"dll")
+            (project_path / "autcom.zip").write_bytes(b"zip")
+            project = make_project(path=project_path)
+            job = ClosingJob(
+                key="k",
+                project=project,
+                title="Fechamento Local",
+                bat_path=project_path / "comandosCMD" / "_FechamentoArquivos.bat",
+            )
+            # O BAT sai com 0 quando estoura o proprio limite de tempo.
+            with (
+                patch("app.actions._learn_project_pattern"),
+                patch("app.actions.run_closing_bat", return_value=0),
+                patch("app.actions._write_action_audit") as write_audit,
+            ):
+                with self.assertRaisesRegex(OSError, "2 arquivo"):
+                    _execute_closing_job(job)
 
-        self.assertEqual(return_code, 2)
         self.assertEqual(write_audit.call_args.args[1], "erro")
-        self.assertIn("codigo=2", write_audit.call_args.kwargs["reason"])
+        reason = write_audit.call_args.kwargs["reason"]
+        self.assertIn("Autcom.exe, libFuncoes.DLL", reason)
+        self.assertIn("codigo_bat=0", reason)
 
     def test_post_closing_validation_is_audited(self):
         import app.logging_utils as logging_utils
@@ -433,7 +447,10 @@ class CopyHashVerificationTests(unittest.TestCase):
         progress = FakeProgress()
         destination = Path(r"\\servidor\destino\379.48.2.30.74.150.99_LOCAL")
 
-        with patch("app.actions.messagebox.showinfo") as showinfo:
+        with (
+            patch("app.actions.messagebox.showinfo") as showinfo,
+            patch("app.actions._write_action_audit"),
+        ):
             _finish_copy(
                 progress,
                 make_project(),

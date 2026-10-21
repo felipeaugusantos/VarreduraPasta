@@ -18,6 +18,13 @@ Semantico (`MAIOR.MENOR.CORRECAO`).
 - Ao sair com fechamentos ativos, o sistema pede confirmacao.
 
 ### Corrigido
+- BAT de fechamento roda em console proprio oculto: o `timeout` do laco de
+  espera voltou a esperar 1 s (sem console ele falhava na hora, gerando laco
+  ocupado e lentidao no PC). O BAT roda com prioridade abaixo do normal.
+- Resultado do fechamento segue o criterio do BAT (nenhum `.exe`, `.dll` ou
+  `.bpl` pendente na pasta), pois o `_FechamentoArquivos.bat` sai com codigo 1
+  ao concluir. O codigo do BAT fica na Auditoria como `codigo_bat`.
+- Testes nao gravam mais registros na Auditoria real.
 - Limpeza da origem apos a copia remove somente os ZIPs copiados e que nao
   mudaram desde a copia. Itens nao copiados sao mantidos, listados em aviso e
   registrados na Auditoria (`mantidos_na_origem`).

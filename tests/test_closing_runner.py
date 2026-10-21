@@ -118,6 +118,50 @@ class RunClosingBatTests(unittest.TestCase):
         self.assertIn("executando em", content)
         self.assertIn("comandosCMD", content)
 
+    def test_bat_runs_hidden_with_below_normal_priority(self):
+        import subprocess
+        from unittest.mock import patch
+
+        with TemporaryDirectory() as temp_directory:
+            bat_path = Path(temp_directory) / "rapido.bat"
+            bat_path.write_text("@echo off\r\n", encoding="utf-8")
+            with patch(
+                "app.closing_runner.subprocess.Popen",
+                wraps=subprocess.Popen,
+            ) as popen:
+                run_closing_bat(bat_path, Path(temp_directory) / "rapido.log", timeout=60)
+
+        flags = popen.call_args.kwargs["creationflags"]
+        self.assertTrue(flags & subprocess.BELOW_NORMAL_PRIORITY_CLASS)
+        self.assertTrue(flags & subprocess.CREATE_NEW_CONSOLE)
+        self.assertEqual(popen.call_args.kwargs["startupinfo"].wShowWindow, 0)
+
+    def test_timeout_command_inside_bat_really_waits(self):
+        # Sem console proprio o timeout do Windows falha na hora e lacos de espera
+        # viram lacos ocupados (caso real: contador de 480 "segundos" em 236 s).
+        import time
+
+        timeout_exe = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "timeout.exe"
+        with TemporaryDirectory() as temp_directory:
+            bat_path = Path(temp_directory) / "espera.bat"
+            bat_path.write_text(
+                "@echo off\r\n"
+                f'"{timeout_exe}" /t 1 >nul\r\n'
+                f'"{timeout_exe}" /t 1 >nul\r\n'
+                "echo fim\r\n",
+                encoding="utf-8",
+            )
+            log_path = Path(temp_directory) / "espera.log"
+            start = time.monotonic()
+            return_code = run_closing_bat(bat_path, log_path, timeout=60)
+            elapsed = time.monotonic() - start
+            content = log_path.read_text(encoding="mbcs", errors="replace")
+
+        self.assertEqual(return_code, 0)
+        self.assertGreaterEqual(elapsed, 1.0)
+        self.assertNotIn("redirecionamento", content)
+        self.assertIn("fim", content)
+
     def test_timeout_stops_bat(self):
         with TemporaryDirectory() as temp_directory:
             bat_path = Path(temp_directory) / "lento.bat"

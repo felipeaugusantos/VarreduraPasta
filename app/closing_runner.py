@@ -7,6 +7,10 @@ from pathlib import Path
 
 
 CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+CREATE_NEW_CONSOLE = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
+# Os processos filhos do BAT (compactadores etc.) herdam a prioridade, mantendo o PC responsivo.
+BELOW_NORMAL_PRIORITY_CLASS = getattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0)
+SW_HIDE = 0
 
 STATUS_QUEUED = "Na fila"
 STATUS_RUNNING = "Em andamento"
@@ -47,27 +51,32 @@ def format_elapsed(seconds):
 
 
 def run_closing_bat(bat_path, log_path, timeout):
-    """Executa o BAT sem janela, gravando a saida no log. Retorna o codigo."""
+    """Executa o BAT em console oculto, gravando a saida no log. Retorna o codigo.
+
+    O BAT precisa de um console proprio: comandos como `timeout` falham na hora
+    quando a entrada nao e um console, transformando lacos de espera em lacos
+    ocupados. Por isso o redirecionamento para o log e feito pelo proprio cmd,
+    e nao por pipes do Python.
+    """
     bat_path = Path(bat_path)
     log_path = Path(log_path)
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    # O cmd grava na pagina de codigo do console; o log guarda os bytes como vieram.
-    with log_path.open("wb") as log:
-        process = subprocess.Popen(
-            ["cmd.exe", "/c", str(bat_path)],
-            cwd=bat_path.parent,
-            stdin=subprocess.DEVNULL,
-            stdout=log,
-            stderr=subprocess.STDOUT,
-            creationflags=CREATE_NO_WINDOW,
+    startupinfo = subprocess.STARTUPINFO()
+    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    startupinfo.wShowWindow = SW_HIDE
+    process = subprocess.Popen(
+        f'cmd.exe /s /c ""{bat_path}" > "{log_path}" 2>&1"',
+        cwd=bat_path.parent,
+        creationflags=CREATE_NEW_CONSOLE | BELOW_NORMAL_PRIORITY_CLASS,
+        startupinfo=startupinfo,
+    )
+    try:
+        return process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _kill_process_tree(process)
+        raise ClosingTimeoutError(
+            f"BAT excedeu {format_elapsed(timeout)} e foi encerrado."
         )
-        try:
-            return process.wait(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            _kill_process_tree(process)
-            raise ClosingTimeoutError(
-                f"BAT excedeu {format_elapsed(timeout)} e foi encerrado."
-            )
 
 
 def _kill_process_tree(process):

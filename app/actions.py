@@ -27,6 +27,7 @@ POLL_INTERVAL_MS = 100
 CLEANUP_RETRY_ATTEMPTS = 5
 CLEANUP_RETRY_DELAY_SECONDS = 1
 _PATTERN_LOCK = threading.Lock()
+CLOSING_PENDING_SUFFIXES = {".exe", ".dll", ".bpl"}
 
 
 class CleanupError(OSError):
@@ -241,15 +242,51 @@ def _execute_closing_job(job):
         )
         raise
 
+    # O _FechamentoArquivos.bat sai com codigo 1 quando conclui (exit apos um
+    # dir sem resultado) e com 0 quando estoura o proprio limite. Por isso o
+    # resultado segue o criterio do BAT: nenhum exe/dll/bpl pendente na pasta.
     duration = format_elapsed(time.monotonic() - started)
+    reason = f"codigo_bat={return_code}; duracao={duration}; log={job.log_path}"
+    try:
+        pending_files = _pending_closing_files(project.path)
+    except OSError as error:
+        _write_action_audit(
+            job.title,
+            "erro",
+            project,
+            bat_path=job.bat_path,
+            reason=f"nao foi possivel conferir a pasta: {error}; {reason}",
+        )
+        raise
+    if pending_files:
+        preview = ", ".join(pending_files[:5])
+        if len(pending_files) > 5:
+            preview += f" +{len(pending_files) - 5}"
+        _write_action_audit(
+            job.title,
+            "erro",
+            project,
+            bat_path=job.bat_path,
+            reason=f"{len(pending_files)} arquivo(s) nao compactado(s): {preview}; {reason}",
+        )
+        raise OSError(f"{len(pending_files)} arquivo(s) nao compactado(s): {preview}")
+
     _write_action_audit(
         job.title,
-        "concluido" if return_code == 0 else "erro",
+        "concluido",
         project,
         bat_path=job.bat_path,
-        reason=f"codigo={return_code}; duracao={duration}; log={job.log_path}",
+        reason=reason,
     )
-    return return_code
+    return 0
+
+
+def _pending_closing_files(project_path):
+    return sorted(
+        item.name
+        for item in Path(project_path).iterdir()
+        if item.is_file() and item.suffix.lower() in CLOSING_PENDING_SUFFIXES
+    )
 
 
 CLOSING_MANAGER = ClosingManager(_execute_closing_job, max_concurrent=CLOSING_MAX_CONCURRENT)

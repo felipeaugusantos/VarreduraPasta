@@ -2039,6 +2039,12 @@ class VersionScannerApp(tk.Tk):
             )
         if project.status != "OK":
             hints.append(f"Detalhe: {self._summarize_project_detail(project.status)}")
+        closing_job = actions.CLOSING_MANAGER.job_for(project)
+        if closing_job is not None and closing_job.log_path is not None:
+            hints.append(
+                f"Último fechamento: {actions.CLOSING_MANAGER.progress_text(project)}"
+                f" | Log do BAT: {closing_job.log_path}"
+            )
         return "\n".join(hints)
 
     def _summarize_project_detail(self, status):
