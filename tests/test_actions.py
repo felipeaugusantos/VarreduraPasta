@@ -476,18 +476,22 @@ class CopyHashVerificationTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            copied_files, hashes, cleaned_items, cleanup_error = _copy_project_files(
-                source,
-                destination,
-            )
+            (
+                copied_files,
+                hashes,
+                cleaned_items,
+                cleanup_error,
+                remaining_items,
+            ) = _copy_project_files(source, destination)
             destination_files = sorted(item.name for item in destination.iterdir())
             remaining_source = sorted(item.name for item in source.iterdir())
 
         self.assertEqual(copied_files, 1)
         self.assertIn("autcom.zip", hashes)
         self.assertEqual(destination_files, ["autcom.zip"])
-        self.assertEqual(remaining_source, ["comandosCMD"])
-        self.assertEqual(cleaned_items, 2)
+        self.assertEqual(remaining_source, ["Autcom.exe", "comandosCMD"])
+        self.assertEqual(cleaned_items, 1)
+        self.assertEqual(remaining_items, ["Autcom.exe"])
         self.assertIsNone(cleanup_error)
 
     def test_copy_project_files_fails_without_zip_and_keeps_source(self):
@@ -521,13 +525,16 @@ class CopyHashVerificationTests(unittest.TestCase):
             (source / "comandosCMD").mkdir()
 
             with patch(
-                "app.actions._cleanup_source_after_copy",
+                "app.actions._cleanup_copied_zip_files",
                 side_effect=OSError("arquivo travado"),
             ):
-                copied_files, hashes, cleaned_items, cleanup_error = _copy_project_files(
-                    source,
-                    destination,
-                )
+                (
+                    copied_files,
+                    hashes,
+                    cleaned_items,
+                    cleanup_error,
+                    remaining_items,
+                ) = _copy_project_files(source, destination)
             destination_files = sorted(item.name for item in destination.iterdir())
             remaining_source = sorted(item.name for item in source.iterdir())
 
@@ -538,6 +545,7 @@ class CopyHashVerificationTests(unittest.TestCase):
         self.assertIn("arquivo travado", str(cleanup_error))
         self.assertEqual(destination_files, ["autcom.zip"])
         self.assertEqual(remaining_source, ["autcom.zip", "comandosCMD"])
+        self.assertEqual(remaining_items, ["autcom.zip"])
 
     def test_finish_copy_audits_cleanup_error_separately(self):
         import app.logging_utils as logging_utils
@@ -685,6 +693,190 @@ class CopyHashVerificationTests(unittest.TestCase):
             project,
             reason="usuario cancelou",
         )
+
+
+class SourceCleanupAfterCopyTests(unittest.TestCase):
+    def test_zip_changed_after_copy_is_kept_in_source(self):
+        from tempfile import TemporaryDirectory
+        from app.actions import _verify_file_hashes as real_verify
+
+        with TemporaryDirectory() as temp_directory:
+            root = Path(temp_directory)
+            source = root / "origem"
+            destination = root / "destino"
+            source.mkdir()
+            destination.mkdir()
+            create_valid_zip(source / "autcom.zip")
+            create_valid_zip(source / "a.zip", "a.exe", b"a")
+            calls = {"count": 0}
+
+            def verify_then_change_source(*args, **kwargs):
+                result = real_verify(*args, **kwargs)
+                calls["count"] += 1
+                if calls["count"] == 2:
+                    create_valid_zip(source / "a.zip", "a.exe", b"nova versao")
+                return result
+
+            with patch(
+                "app.actions._verify_file_hashes",
+                side_effect=verify_then_change_source,
+            ):
+                (
+                    copied_files,
+                    _hashes,
+                    cleaned_items,
+                    cleanup_error,
+                    remaining_items,
+                ) = _copy_project_files(source, destination)
+            remaining_source = sorted(item.name for item in source.iterdir())
+
+        self.assertEqual(copied_files, 2)
+        self.assertEqual(cleaned_items, 1)
+        self.assertIsNone(cleanup_error)
+        self.assertEqual(remaining_source, ["a.zip"])
+        self.assertEqual(remaining_items, ["a.zip"])
+
+    def test_finish_copy_warns_about_items_kept_in_source(self):
+        class FakeProgress:
+            def winfo_exists(self):
+                return False
+
+        project = make_project()
+        with (
+            patch("app.actions.messagebox.showwarning") as showwarning,
+            patch("app.actions.messagebox.showinfo") as showinfo,
+            patch("app.actions._write_action_audit") as write_audit,
+        ):
+            _finish_copy(
+                FakeProgress(),
+                project,
+                Path("C:/destino/projeto"),
+                "Copiar Local",
+                None,
+                1,
+                {},
+                1,
+                None,
+                ["Autcom.exe", "leiame.txt"],
+            )
+
+        showinfo.assert_not_called()
+        showwarning.assert_called_once()
+        message = showwarning.call_args.args[1]
+        self.assertIn("- Autcom.exe", message)
+        self.assertIn("- leiame.txt", message)
+        self.assertIn("Limpar Pasta", message)
+        self.assertIn(
+            "mantidos_na_origem=Autcom.exe, leiame.txt",
+            write_audit.call_args.kwargs["reason"],
+        )
+
+
+class ModalWorkerFailureTests(unittest.TestCase):
+    """Falhas no worker devem fechar a janela modal e mostrar o erro."""
+
+    def run_with_fake_tk(self, action):
+        from unittest.mock import MagicMock
+
+        progress = MagicMock()
+        progress.winfo_exists.return_value = True
+        scheduled = {"count": 0}
+
+        def run_after(_delay, callback):
+            scheduled["count"] += 1
+            if scheduled["count"] > 20:
+                self.fail("janela modal ficou aguardando o worker indefinidamente")
+            callback()
+
+        progress.after.side_effect = run_after
+
+        class InlineThread:
+            def __init__(self, target, daemon=None):
+                self.target = target
+
+            def start(self):
+                self.target()
+
+        with (
+            patch("app.actions.Toplevel", return_value=progress),
+            patch("app.actions.ttk"),
+            patch("app.actions.threading.Thread", InlineThread),
+        ):
+            action()
+        return progress
+
+    def test_closing_audit_failure_closes_modal_and_shows_error(self):
+        from tempfile import TemporaryDirectory
+
+        def failing_audit(action, result, *args, **kwargs):
+            if result == "iniciado":
+                raise OSError("disco cheio")
+
+        with TemporaryDirectory() as temp_directory:
+            source = Path(temp_directory)
+            (source / "comandosCMD").mkdir()
+            (source / "comandosCMD" / "_FechamentoArquivos.bat").write_text(
+                "echo ok",
+                encoding="utf-8",
+            )
+            project = make_project(path=source)
+
+            with (
+                patch("app.actions._learn_project_pattern"),
+                patch("app.actions._write_action_audit", side_effect=failing_audit),
+                patch("app.actions.subprocess.Popen") as popen,
+                patch("app.actions.messagebox.showerror") as showerror,
+            ):
+                progress = self.run_with_fake_tk(lambda: fechamento_local(project))
+
+        popen.assert_not_called()
+        progress.destroy.assert_called_once()
+        showerror.assert_called_once()
+        self.assertIn("disco cheio", showerror.call_args.args[1])
+
+    def test_copy_unexpected_error_closes_modal_and_shows_error(self):
+        from unittest.mock import MagicMock
+        from app.actions import _start_copy
+
+        project = make_project()
+        with (
+            patch(
+                "app.actions._copy_project_files",
+                side_effect=ValueError("erro inesperado"),
+            ),
+            patch("app.actions._write_action_audit"),
+            patch("app.actions.messagebox.showerror") as showerror,
+        ):
+            progress = self.run_with_fake_tk(
+                lambda: _start_copy(
+                    MagicMock(),
+                    project,
+                    Path("C:/destino/projeto"),
+                    "Copiar Local",
+                )
+            )
+
+        progress.destroy.assert_called_once()
+        showerror.assert_called_once()
+        self.assertIn("erro inesperado", showerror.call_args.args[1])
+
+    def test_manual_cleanup_unexpected_error_closes_modal_and_shows_error(self):
+        from app.actions import _start_manual_cleanup
+
+        project = make_project()
+        with (
+            patch(
+                "app.actions._cleanup_source_after_copy",
+                side_effect=RuntimeError("falha inesperada"),
+            ),
+            patch("app.actions._write_action_audit"),
+            patch("app.actions.messagebox.showerror") as showerror,
+        ):
+            progress = self.run_with_fake_tk(lambda: _start_manual_cleanup(project))
+
+        progress.destroy.assert_called_once()
+        showerror.assert_called_once()
+        self.assertIn("falha inesperada", showerror.call_args.args[1])
 
 
 if __name__ == "__main__":

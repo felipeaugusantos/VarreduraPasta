@@ -5,6 +5,15 @@ Todas as alteracoes relevantes deste projeto sao documentadas neste arquivo.
 O formato e baseado em Keep a Changelog e o projeto segue Versionamento
 Semantico (`MAIOR.MENOR.CORRECAO`).
 
+## [Nao lancado]
+
+### Corrigido
+- Limpeza da origem apos a copia remove somente os ZIPs copiados e que nao
+  mudaram desde a copia. Itens nao copiados sao mantidos, listados em aviso e
+  registrados na Auditoria (`mantidos_na_origem`).
+- Falhas inesperadas durante fechamento, copia ou limpeza manual nao deixam
+  mais a janela de progresso travada; o erro e exibido ao operador.
+
 ## [2.3.1] - 2026-07-28
 
 ### Corrigido

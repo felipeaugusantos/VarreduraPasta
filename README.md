@@ -125,8 +125,8 @@ tamanhos fora do padrao observado. Consulte
 - A copia procura no destino de rede uma pasta com o mesmo nome do projeto,
   pede confirmacao mostrando origem e destino e envia somente os arquivos
   `.zip` da pasta do projeto.
-- Depois da copia concluida e verificada, a pasta de origem no Diretorio-base e
-  limpa automaticamente, preservando apenas `comandosCMD`.
+- Depois da copia concluida e verificada, somente os ZIPs copiados sao
+  removidos da origem; os demais itens sao mantidos e listados em um aviso.
 - Quando existe mais de uma pasta de destino com o mesmo nome do projeto, o
   sistema mostra uma tela de escolha antes da confirmacao da copia.
 - Fechamentos e copias sao bloqueados quando existem ZIPs com nome diferente do

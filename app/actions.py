@@ -129,28 +129,29 @@ def _run_closing_bat(project, title):
         learn_error = None
         process = None
         start_error = None
+        # Qualquer falha precisa chegar na fila; senao a janela modal nao fecha.
         try:
-            _learn_project_pattern(project, title, bat_path)
-        except Exception as error:
-            learn_error = error
+            try:
+                _learn_project_pattern(project, title, bat_path)
+            except Exception as error:
+                learn_error = error
 
-        if learn_error is not None:
-            _write_action_audit(
-                title,
-                "erro_padrao",
-                project,
-                bat_path=bat_path,
-                reason=str(learn_error),
-            )
+            if learn_error is not None:
+                _write_action_audit(
+                    title,
+                    "erro_padrao",
+                    project,
+                    bat_path=bat_path,
+                    reason=str(learn_error),
+                )
 
-        _write_action_audit(title, "iniciado", project, bat_path=bat_path)
-        try:
+            _write_action_audit(title, "iniciado", project, bat_path=bat_path)
             process = subprocess.Popen(
                 ["cmd.exe", "/k", str(bat_path)],
                 cwd=commands_path,
                 creationflags=subprocess.CREATE_NEW_CONSOLE,
             )
-        except OSError as error:
+        except Exception as error:
             start_error = error
 
         result_queue.put((process, learn_error, start_error))
@@ -370,7 +371,7 @@ def _start_manual_cleanup(project):
         except CleanupError as error:
             cleaned_items = error.cleaned_items
             cleanup_error = error
-        except OSError as error:
+        except Exception as error:
             cleanup_error = error
         result_queue.put((cleaned_items, cleanup_error))
 
@@ -1006,7 +1007,7 @@ def _show_copy_confirmation(project, destination, target_root, title):
         frame,
         text=(
             "A copia ira enviar somente arquivos .zip para o destino. "
-            "Apos a validacao, a origem sera limpa mantendo apenas comandosCMD."
+            "Apos a validacao, somente os ZIPs copiados serao removidos da origem."
         ),
     ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(14, 0))
 
@@ -1089,15 +1090,28 @@ def _start_copy(window, project, destination, title):
         hash_summary = {}
         cleaned_items = 0
         cleanup_error = None
+        remaining_items = []
         try:
-            copied_files, hash_summary, cleaned_items, cleanup_error = _copy_project_files(
-                project.path,
-                destination,
-            )
+            (
+                copied_files,
+                hash_summary,
+                cleaned_items,
+                cleanup_error,
+                remaining_items,
+            ) = _copy_project_files(project.path, destination)
             error = None
-        except OSError as copy_error:
+        except Exception as copy_error:
             error = copy_error
-        result_queue.put((error, copied_files, hash_summary, cleaned_items, cleanup_error))
+        result_queue.put(
+            (
+                error,
+                copied_files,
+                hash_summary,
+                cleaned_items,
+                cleanup_error,
+                remaining_items,
+            )
+        )
 
     def poll():
         try:
@@ -1107,6 +1121,7 @@ def _start_copy(window, project, destination, title):
                 hash_summary,
                 cleaned_items,
                 cleanup_error,
+                remaining_items,
             ) = result_queue.get_nowait()
         except queue.Empty:
             if progress.winfo_exists():
@@ -1123,6 +1138,7 @@ def _start_copy(window, project, destination, title):
             hash_summary,
             cleaned_items,
             cleanup_error,
+            remaining_items,
         )
 
     threading.Thread(target=worker, daemon=True).start()
@@ -1138,6 +1154,7 @@ def _copy_project_files(source, destination):
 
     copied_files = 0
     copied_paths = []
+    source_stamps = {}
     items = _iter_copyable_zip_files(source)
     if not items:
         raise OSError("Nenhum arquivo .zip encontrado para copiar.")
@@ -1154,6 +1171,7 @@ def _copy_project_files(source, destination):
             relative_path = item.relative_to(source)
             target = staging / relative_path
             target.parent.mkdir(parents=True, exist_ok=True)
+            source_stamps[relative_path] = _file_stamp(item)
             shutil.copy2(item, target)
             copied_paths.append(relative_path)
             copied_files += 1
@@ -1237,14 +1255,53 @@ def _copy_project_files(source, destination):
 
     cleanup_error = None
     try:
-        cleaned_items = _cleanup_source_after_copy(source)
+        cleaned_items = _cleanup_copied_zip_files(source, source_stamps)
     except CleanupError as error:
         cleaned_items = error.cleaned_items
         cleanup_error = error
     except OSError as error:
         cleaned_items = 0
         cleanup_error = CleanupError(str(error), cleaned_items)
-    return copied_files, hash_summary, cleaned_items, cleanup_error
+    remaining_items = _list_remaining_source_items(source)
+    return copied_files, hash_summary, cleaned_items, cleanup_error, remaining_items
+
+
+def _file_stamp(path):
+    stat = Path(path).stat()
+    return stat.st_size, stat.st_mtime_ns
+
+
+def _cleanup_copied_zip_files(source, source_stamps):
+    """Remove da origem apenas os ZIPs copiados que nao mudaram desde a copia."""
+    source = Path(source)
+    cleaned_items = 0
+    for relative_path, stamp in source_stamps.items():
+        item = source / relative_path
+        try:
+            if _file_stamp(item) != stamp:
+                continue
+        except FileNotFoundError:
+            continue
+        try:
+            _remove_source_item_with_retry(item)
+        except OSError as error:
+            raise CleanupError(
+                f"Erro ao limpar origem {item}: {error}",
+                cleaned_items,
+            ) from error
+        cleaned_items += 1
+    return cleaned_items
+
+
+def _list_remaining_source_items(source):
+    try:
+        return sorted(
+            item.name
+            for item in Path(source).iterdir()
+            if item.name.lower() != "comandoscmd"
+        )
+    except OSError:
+        return []
 
 
 def _iter_copyable_zip_files(source):
@@ -1383,6 +1440,7 @@ def _finish_copy(
     hash_summary,
     cleaned_items,
     cleanup_error,
+    remaining_items=(),
 ):
     clipboard_ok = False
     if error is None:
@@ -1402,8 +1460,10 @@ def _finish_copy(
 
     reason = (
         f"{copied_files} arquivo(s) copiado(s) e verificado(s); "
-        f"origem_limpa={cleaned_items} item(ns); preservado=comandosCMD"
+        f"origem_limpa={cleaned_items} ZIP(s) copiado(s); preservado=comandosCMD"
     )
+    if remaining_items:
+        reason = f"{reason}; mantidos_na_origem={', '.join(remaining_items)}"
     hash_text = _format_hash_summary(hash_summary)
     if hash_text:
         reason = f"{reason}; {hash_text}"
@@ -1434,6 +1494,20 @@ def _finish_copy(
         destination,
         reason=reason,
     )
+    if remaining_items:
+        messagebox.showwarning(
+            title,
+            "Copia concluida e verificada no destino.\n\n"
+            "Destino:\n"
+            f"{destination}\n\n"
+            f"{_clipboard_message(clipboard_ok)}\n\n"
+            "Os ZIPs copiados foram removidos da origem. Os itens abaixo nao "
+            "foram copiados e foram mantidos na origem:\n"
+            f"{_format_remaining_items(remaining_items)}\n\n"
+            "Confira-os e use Limpar Pasta se quiser remove-los.",
+        )
+        return
+
     messagebox.showinfo(
         title,
         "Copia concluida e verificada no destino.\n\n"
@@ -1442,6 +1516,13 @@ def _finish_copy(
         f"{_clipboard_message(clipboard_ok)}\n\n"
         "A pasta de origem foi limpa, mantendo apenas comandosCMD.",
     )
+
+
+def _format_remaining_items(remaining_items, limit=10):
+    lines = [f"- {name}" for name in remaining_items[:limit]]
+    if len(remaining_items) > limit:
+        lines.append(f"... e mais {len(remaining_items) - limit} item(ns)")
+    return "\n".join(lines)
 
 
 def _clipboard_message(clipboard_ok):

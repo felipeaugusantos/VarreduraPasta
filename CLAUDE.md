@@ -81,7 +81,9 @@ Nao distribuir `settings.json` junto do pacote. Dados persistentes ficam em
   `PastaTesteCopia_<parte5>_<parte6>`.
 - A copia envia somente arquivos `.zip`.
 - A copia nao envia `comandosCMD`.
-- A limpeza da origem preserva `comandosCMD`.
+- A limpeza pos-copia remove da origem somente os ZIPs copiados (e nao
+  alterados depois da copia); o resto e mantido e listado ao operador.
+- `Limpar Pasta` (manual) remove tudo da raiz, preservando `comandosCMD`.
 - `AutBan.exe`, `libAutban.dll` e `libAutban.exe` sao alternativas do grupo Autban.
 - `Auttin.exe`, `libAuttin.dll` e `libAuttin.exe` sao alternativas do grupo Auttin.
 - `libFuncoes.dll` e opcional.
@@ -124,8 +126,8 @@ de arquivos do projeto.
 ### Copia
 
 A copia procura o destino nas raizes configuradas, mostra origem/destino antes
-de continuar, copia ZIPs, valida a copia e limpa a pasta de origem preservando
-`comandosCMD`. Arquivos criticos como `autcom.zip` sao verificados com SHA-256.
+de continuar, copia ZIPs, valida a copia e remove da origem somente os ZIPs
+copiados. Arquivos criticos como `autcom.zip` sao verificados com SHA-256.
 
 ### Auditoria
 

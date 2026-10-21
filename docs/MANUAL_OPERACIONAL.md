@@ -267,8 +267,10 @@ Validacoes realizadas:
 
 Se houver qualquer bloqueio, revise o motivo apresentado na tela e na Auditoria.
 
-Quando a copia for concluida e verificada com sucesso, o sistema limpa a pasta
-de origem no Diretorio-base e preserva apenas `comandosCMD`. A pasta
+Quando a copia for concluida e verificada com sucesso, o sistema remove da
+pasta de origem somente os ZIPs copiados. Itens que nao foram copiados (e ZIPs
+alterados depois da copia) sao mantidos e listados em um aviso; use
+`Limpar Pasta` para remove-los, se for o caso. A pasta
 `comandosCMD` nao e copiada para o destino; somente arquivos `.zip` sao enviados.
 
 ## 10. Auditoria
