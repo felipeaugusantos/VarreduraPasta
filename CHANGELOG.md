@@ -5,7 +5,7 @@ Todas as alteracoes relevantes deste projeto sao documentadas neste arquivo.
 O formato e baseado em Keep a Changelog e o projeto segue Versionamento
 Semantico (`MAIOR.MENOR.CORRECAO`).
 
-## [Nao lancado]
+## [2.4.1] - 2026-10-21
 
 ### Alterado
 - Coluna `Fechamento` mostra o percentual ja compactado durante o fechamento
