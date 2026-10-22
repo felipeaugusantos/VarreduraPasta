@@ -45,6 +45,10 @@ dist\VarreduraSistema\VarreduraSistema.exe
 
 O script tambem gera o ZIP versionado e seu arquivo `.sha256`.
 
+O icone (`assets/app-icon.png` e `.ico`) e gerado por
+`.\.venv\Scripts\python.exe scripts\generate_icon.py` (usa o Pillow da .venv,
+so para gerar o arquivo; o sistema continua so com biblioteca padrao).
+
 Nao distribuir `settings.json` junto do pacote. Dados persistentes ficam em
 `%LOCALAPPDATA%\VarreduraSistema`; o pacote pode ser executado sem instalador.
 

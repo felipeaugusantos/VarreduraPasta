@@ -7,6 +7,12 @@ Semantico (`MAIOR.MENOR.CORRECAO`).
 
 ## [Nao lancado]
 
+### Alterado
+- Icone com cantos transparentes (o PNG original era RGB e mostrava um
+  quadrado branco na barra de tarefas escura) e versao simplificada (pasta +
+  lupa) em 16 e 24 px, onde o desenho completo ficava ilegivel. Gerado por
+  `scripts/generate_icon.py`.
+
 ### Adicionado
 - Copiar Local/Cloud sem destino encontrado oferece criar a pasta em
   `_VERSOES_INDIVIDUAIS`: subpasta da versao (ProductVersion com hifen na
