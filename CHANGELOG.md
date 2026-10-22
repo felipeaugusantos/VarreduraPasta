@@ -5,7 +5,7 @@ Todas as alteracoes relevantes deste projeto sao documentadas neste arquivo.
 O formato e baseado em Keep a Changelog e o projeto segue Versionamento
 Semantico (`MAIOR.MENOR.CORRECAO`).
 
-## [Nao lancado]
+## [2.5.0] - 2026-10-21
 
 ### Adicionado
 - Memoria de ZIPs por pasta: cada fechamento concluido registra o total de
