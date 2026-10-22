@@ -5,7 +5,7 @@ Todas as alteracoes relevantes deste projeto sao documentadas neste arquivo.
 O formato e baseado em Keep a Changelog e o projeto segue Versionamento
 Semantico (`MAIOR.MENOR.CORRECAO`).
 
-## [Nao lancado]
+## [2.6.0] - 2026-10-21
 
 ### Alterado
 - Redesenho da tela principal (somente biblioteca padrao, tema ttk `clam` em
