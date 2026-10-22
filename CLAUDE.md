@@ -152,7 +152,11 @@ Autcom e validacao ficam bloqueados (`_block_if_closing_active` em
 
 A copia procura o destino nas raizes configuradas, mostra origem/destino antes
 de continuar, copia ZIPs, valida a copia e remove da origem somente os ZIPs
-copiados. Arquivos criticos como `autcom.zip` sao verificados com SHA-256.
+copiados. Se nenhum destino existir, oferece criar (com confirmacao) em
+`_VERSOES_INDIVIDUAIS\<ProductVersion com hifen na ultima parte>\<projeto>`,
+com `_LOCAL` na copia Local (ex.: `02.30.74-111\379.48.2.30.74.111.191_LOCAL`);
+copias especificas (5 partes) nao tem regra e continuam so com o aviso
+(`new_destination_for` em `app/actions.py`). Arquivos criticos como `autcom.zip` sao verificados com SHA-256.
 
 ### Auditoria
 

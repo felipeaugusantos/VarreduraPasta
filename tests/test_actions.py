@@ -1324,5 +1324,118 @@ class SharedProjectLockTests(unittest.TestCase):
         self.assertEqual(_list_remaining_source_items(self.project_path), [])
 
 
+class CreateMissingDestinationTests(unittest.TestCase):
+    """Copiar sem destino em _VERSOES_INDIVIDUAIS: oferece criar a pasta."""
+
+    def setUp(self):
+        from tempfile import TemporaryDirectory
+
+        self._temp = TemporaryDirectory(ignore_cleanup_errors=True)
+        self.addCleanup(self._temp.cleanup)
+        self.individual = Path(self._temp.name) / "_VERSOES_INDIVIDUAIS"
+        self.individual.mkdir()
+        patcher = patch("app.actions.COPY_TARGET_DIRECTORY", self.individual)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def finish_search(self, project, title="Copiar Local", answer=True, roots=None):
+        from unittest.mock import MagicMock
+        from app.actions import _finish_copy_search
+
+        progress = MagicMock()
+        progress.winfo_exists.return_value = True
+        progress.after.side_effect = lambda _delay, callback: callback()
+
+        class InlineThread:
+            def __init__(self, target, daemon=None):
+                self.target = target
+
+            def start(self):
+                self.target()
+
+        with (
+            patch("app.actions.Toplevel", return_value=progress),
+            patch("app.actions.ttk"),
+            patch("app.actions.threading.Thread", InlineThread),
+            patch("app.actions.messagebox") as messagebox,
+            patch("app.actions._write_action_audit") as write_audit,
+            patch("app.actions._show_copy_confirmation") as confirmation,
+        ):
+            messagebox.askyesno.return_value = answer
+            _finish_copy_search(MagicMock(), project, roots or [self.individual], [], title)
+        return messagebox, write_audit, confirmation
+
+    def test_destination_rule_matches_real_folders(self):
+        from types import SimpleNamespace
+        from app.actions import new_destination_for
+
+        root = Path(r"\\citel-fileserve\Modem\_VERSOES_INDIVIDUAIS")
+
+        def dest(name, title):
+            return new_destination_for(SimpleNamespace(folder_name=name), title, root)
+
+        # Caso real do print: 379.48.2.30.74.111.191 (Local).
+        self.assertEqual(
+            dest("379.48.2.30.74.111.191", "Copiar Local"),
+            root / "02.30.74-111" / "379.48.2.30.74.111.191_LOCAL",
+        )
+        self.assertEqual(
+            dest("379.48.2.30.74.150.100.7_CLOUD", "Copiar Cloud"),
+            root / "02.30.74-150" / "379.48.2.30.74.150.100.7_CLOUD",
+        )
+        self.assertIsNone(dest("379.48.2.40.5", "Copiar Local"))
+        self.assertIsNone(dest("ConectaIntegracoes_1.0.0.2", "Copiar Local"))
+
+    def test_creates_version_and_project_folders_after_confirmation(self):
+        project = make_project(folder_name="379.48.2.30.74.150.100.7")
+
+        messagebox, write_audit, confirmation = self.finish_search(project)
+
+        expected = self.individual / "02.30.74-150" / "379.48.2.30.74.150.100.7_LOCAL"
+        self.assertTrue(expected.is_dir())
+        question = messagebox.askyesno.call_args.args[1]
+        self.assertIn(str(expected), question)
+        self.assertIn("Tambem sera criada a subpasta da versao", question)
+        self.assertEqual(write_audit.call_args.args[1], "destino_criado")
+        self.assertEqual(confirmation.call_args.args[1], expected)
+
+    def test_existing_version_folder_only_creates_project_folder(self):
+        (self.individual / "02.30.74-150").mkdir()
+        project = make_project(folder_name="379.48.2.30.74.150.100.7_CLOUD")
+
+        messagebox, _write_audit, confirmation = self.finish_search(project, title="Copiar Cloud")
+
+        expected = self.individual / "02.30.74-150" / "379.48.2.30.74.150.100.7_CLOUD"
+        self.assertTrue(expected.is_dir())
+        self.assertNotIn("subpasta", messagebox.askyesno.call_args.args[1])
+        confirmation.assert_called_once()
+
+    def test_nothing_is_created_when_operator_declines(self):
+        project = make_project(folder_name="379.48.2.30.74.150.100.7")
+
+        _messagebox, write_audit, confirmation = self.finish_search(project, answer=False)
+
+        self.assertEqual(list(self.individual.iterdir()), [])
+        confirmation.assert_not_called()
+        self.assertEqual(write_audit.call_args.args[1], "cancelado")
+
+    def test_specific_copy_keeps_not_found_message(self):
+        project = make_project(folder_name="379.48.2.40.5")
+
+        messagebox, _write_audit, confirmation = self.finish_search(project)
+
+        messagebox.askyesno.assert_not_called()
+        messagebox.showerror.assert_called_once()
+        confirmation.assert_not_called()
+
+    def test_no_offer_when_individual_root_is_unreachable(self):
+        project = make_project(folder_name="379.48.2.30.74.150.100.7")
+        other_root = Path(self._temp.name) / "379_Versoes"
+
+        messagebox, _write_audit, _confirmation = self.finish_search(project, roots=[other_root])
+
+        messagebox.askyesno.assert_not_called()
+        messagebox.showerror.assert_called_once()
+
 if __name__ == "__main__":
     unittest.main()

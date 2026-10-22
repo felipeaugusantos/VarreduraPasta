@@ -7,6 +7,13 @@ Semantico (`MAIOR.MENOR.CORRECAO`).
 
 ## [Nao lancado]
 
+### Adicionado
+- Copiar Local/Cloud sem destino encontrado oferece criar a pasta em
+  `_VERSOES_INDIVIDUAIS`: subpasta da versao (ProductVersion com hifen na
+  ultima parte, ex.: `02.30.74-150`, criada se faltar) e pasta do projeto
+  (`<projeto>_LOCAL` no Local). Mostra o caminho e so cria apos confirmacao;
+  auditado como `destino_criado`. Copias especificas mantem o aviso.
+
 ### Alterado
 - Jenkins - Status dos Jobs: situacao em portugues com simbolo e cor
   (Falhou, Em andamento, Instavel, Cancelado, Sucesso, Sem build), falhas e

@@ -24,11 +24,12 @@ from app.config import (
     CLOSING_MAX_CONCURRENT,
     CLOSING_TIMEOUT_SECONDS,
     CLOUD_MIN_AUTCOM_MB,
+    COPY_TARGET_DIRECTORY,
     LOCAL_MAX_AUTCOM_MB,
 )
-from app.pattern import save_project_pattern
+from app.pattern import is_specific_copy, save_project_pattern
 from app.project_lock import LOCK_FILE_NAME, ProjectLock, ProjectLockedError, describe_owner, read_owner
-from app.scanner import validate_zip_names
+from app.scanner import expected_versions_from_folder, validate_zip_names
 from app.settings import load_copy_target_directories
 
 POLL_INTERVAL_MS = 100
@@ -946,6 +947,10 @@ def _find_target_root_for_destination(destination, target_roots):
 def _finish_copy_search(progress, project, target_root, destinations, title):
     _safe_destroy(progress)
     if not destinations:
+        proposed = _proposed_new_destination(project, target_root, title)
+        if proposed is not None:
+            _offer_destination_creation(project, target_root, proposed, title)
+            return
         _write_action_audit(
             title,
             "bloqueado",
@@ -970,6 +975,82 @@ def _finish_copy_search(progress, project, target_root, destinations, title):
         return
 
     _show_copy_confirmation(project, destinations[0], target_root, title)
+
+
+def _proposed_new_destination(project, target_roots, title):
+    """Destino a criar, se _VERSOES_INDIVIDUAIS estiver entre as raizes acessiveis."""
+    individual_root = Path(COPY_TARGET_DIRECTORY)
+    available = {str(root).lower() for root in _as_path_list(target_roots)}
+    if str(individual_root).lower() not in available:
+        return None
+    return new_destination_for(project, title, individual_root)
+
+
+def _offer_destination_creation(project, target_root, destination, title):
+    version_folder = destination.parent
+    creates_version_folder = not version_folder.exists()
+    message = (
+        "Nao foi encontrada pasta de destino para este projeto.\n\n"
+        "Criar a pasta de destino?\n\n"
+        f"{destination}"
+    )
+    if creates_version_folder:
+        message += f"\n\nTambem sera criada a subpasta da versao:\n{version_folder}"
+    if not messagebox.askyesno(title, message):
+        _write_action_audit(
+            title,
+            "cancelado",
+            project,
+            destination,
+            reason="destino nao encontrado; operador nao criou a pasta",
+        )
+        return
+
+    progress = Toplevel()
+    progress.title(title)
+    theme.size_window(progress, 560, 110)
+    progress.resizable(False, False)
+    progress.protocol("WM_DELETE_WINDOW", lambda: None)
+    progress.grab_set()
+    frame = ttk.Frame(progress, padding=12)
+    frame.pack(fill="both", expand=True)
+    ttk.Label(frame, text=f"Criando pasta de destino...\n{destination}", wraplength=520).pack(anchor="w")
+    progress_bar = ttk.Progressbar(frame, mode="indeterminate")
+    progress_bar.pack(fill="x", pady=(12, 0))
+    progress_bar.start(10)
+    result_queue = queue.Queue()
+
+    def worker():
+        try:
+            _create_destination_folder(destination)
+            result_queue.put(None)
+        except Exception as error:
+            result_queue.put(error)
+
+    def poll():
+        try:
+            error = result_queue.get_nowait()
+        except queue.Empty:
+            if progress.winfo_exists():
+                progress.after(POLL_INTERVAL_MS, poll)
+            return
+        _safe_destroy(progress)
+        if error is not None:
+            _write_action_audit(
+                title,
+                "erro",
+                project,
+                destination,
+                reason=f"nao foi possivel criar a pasta de destino: {error}",
+            )
+            messagebox.showerror(title, f"Nao foi possivel criar a pasta de destino:\n{error}")
+            return
+        created = "pasta e subpasta da versao criadas" if creates_version_folder else "pasta criada"
+        _write_action_audit(title, "destino_criado", project, destination, reason=created)
+        _show_copy_confirmation(project, destination, target_root, title)
+
+    threading.Thread(target=worker, daemon=True).start()
+    progress.after(POLL_INTERVAL_MS, poll)
 
 
 def _show_destination_choice(project, target_root, destinations, title):
@@ -1036,6 +1117,36 @@ def _show_destination_choice(project, target_root, destinations, title):
 
 def _copy_action_mode(title):
     return "Cloud" if "cloud" in title.lower() else "Local"
+
+
+def new_destination_for(project, title, individual_root=None):
+    """Pasta a criar em _VERSOES_INDIVIDUAIS quando o destino nao existe.
+
+    Regra (confirmada pelo operador): subpasta = ProductVersion com hifen antes
+    da ultima parte (02.30.74.150 -> 02.30.74-150); pasta final = nome do
+    projeto, com _LOCAL na copia Local (o Cloud ja termina com _CLOUD).
+    Copias especificas (5 partes) nao tem regra conhecida: retorna None.
+    """
+    folder_name = project.folder_name
+    if is_specific_copy(folder_name):
+        return None
+    _file_version, product_version = expected_versions_from_folder(folder_name)
+    parts = (product_version or "").split(".")
+    if len(parts) != 4 or not all(parts):
+        return None
+    version_folder = f"{'.'.join(parts[:3])}-{parts[3]}"
+    if _copy_action_mode(title) == "Local":
+        final_name = f"{folder_name}_LOCAL"
+    else:
+        final_name = folder_name
+    return Path(individual_root or COPY_TARGET_DIRECTORY) / version_folder / final_name
+
+
+def _create_destination_folder(destination):
+    """Cria a pasta de destino (e a subpasta da versao, se faltar)."""
+    destination = Path(destination)
+    destination.mkdir(parents=True, exist_ok=True)
+    return destination
 
 
 def _is_relative_to(path, parent):
