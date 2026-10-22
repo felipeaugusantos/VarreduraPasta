@@ -5,7 +5,7 @@ Todas as alteracoes relevantes deste projeto sao documentadas neste arquivo.
 O formato e baseado em Keep a Changelog e o projeto segue Versionamento
 Semantico (`MAIOR.MENOR.CORRECAO`).
 
-## [Nao lancado]
+## [2.6.1] - 2026-10-22
 
 ### Corrigido
 - Copias especificas (nome com 5 partes, ex.: `379.48.2.40.5`) apareciam como
