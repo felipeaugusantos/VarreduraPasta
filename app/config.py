@@ -48,6 +48,12 @@ COPY_TARGET_DIRECTORIES = (
 SCRIPT_MONITOR_DIRECTORY = Path(
     r"\\citel-fileserve\Modem\WEBSERVICE_CITEL\Scripts"
 )
+# Pasta compartilhada (todos os operadores do TS gravam) com o registro de
+# scripts ja feitos/executados. Configuravel em Configuracoes.
+SCRIPT_CONTROL_DIRECTORY = Path(r"\\citel-fileserve\Modem\_CONTROLE_VARREDURA")
+SCRIPT_LEDGER_FILE_NAME = "scripts_banco_modelo.log"
+SCRIPT_CHECK_INTERVAL_MS = 30 * 60 * 1000
+SCRIPT_RETRY_INTERVAL_MS = 15 * 60 * 1000
 SVN_BASE_PATH = ""
 
 IGNORED_PROJECT_FOLDERS = {

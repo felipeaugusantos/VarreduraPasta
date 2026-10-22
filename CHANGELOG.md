@@ -5,6 +5,23 @@ Todas as alteracoes relevantes deste projeto sao documentadas neste arquivo.
 O formato e baseado em Keep a Changelog e o projeto segue Versionamento
 Semantico (`MAIOR.MENOR.CORRECAO`).
 
+## [Nao lancado]
+
+### Alterado
+- Scripts Banco Modelo com controle compartilhado entre operadores do TS:
+  registro `scripts_banco_modelo.log` na pasta de controle (padrao
+  `\\citel-fileserve\Modem\_CONTROLE_VARREDURA`, configuravel em
+  Configuracoes). Um script marcado como feito some da lista de todos.
+- Marcacao por script (selecao multipla), com confirmacao, aviso quando outro
+  operador ja marcou e Auditoria com os nomes dos scripts e o usuario.
+- Verificacao a cada 30 minutos; se a pasta estiver inacessivel, nova tentativa
+  em 15 minutos (antes esperava o dia seguinte).
+- Tela nova com data de cada script, abrir o script com duplo clique e
+  historico dos ultimos registros de todos os operadores.
+- Contador `Scripts pendentes` no cabecalho (clique abre a tela).
+- Abrir a tela nao grava mais "verificado" na Auditoria; a lista completa de
+  scripts conhecidos saiu do `settings.json` de cada operador.
+
 ## [2.6.1] - 2026-10-22
 
 ### Corrigido

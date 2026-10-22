@@ -1,27 +1,127 @@
+"""Monitoramento dos scripts do banco modelo com controle compartilhado.
+
+Varios operadores usam o sistema no TS, cada um com seu usuario do Windows
+(e seu %LOCALAPPDATA%). Por isso o que ja foi feito fica num registro
+compartilhado (SCRIPT_LEDGER_FILE_NAME na pasta de controle): cada evento e
+uma linha acrescentada, nunca reescrita, entao gravacoes simultaneas nao se
+apagam. Um script e pendente enquanto nao tiver evento de "base", "feito" ou
+"executado" no registro.
+"""
+
 import os
-from dataclasses import dataclass
-from datetime import date
+import time
+from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
-from app.config import SCRIPT_MONITOR_DIRECTORY
+from app.config import SCRIPT_LEDGER_FILE_NAME, SCRIPT_MONITOR_DIRECTORY
 from app.logging_utils import write_log
-from app.settings import load_script_monitor_state, save_script_monitor_state
+from app.settings import (
+    load_script_control_directory,
+    load_script_monitor_state,
+    save_script_monitor_state,
+)
+
+
+EVENT_START = "inicio"
+EVENT_BASELINE = "base"
+EVENT_DONE = "feito"
+EVENT_EXECUTED = "executado"
+DONE_EVENTS = {EVENT_BASELINE, EVENT_DONE, EVENT_EXECUTED}
+HISTORY_LIMIT = 15
+APPEND_RETRY_ATTEMPTS = 5
+APPEND_RETRY_DELAY_SECONDS = 0.3
+
+
+@dataclass(frozen=True)
+class LedgerEvent:
+    timestamp: str
+    user: str
+    script: str
+    event: str
+    detail: str = ""
+
+
+@dataclass(frozen=True)
+class PendingScript:
+    name: str
+    modified: str
 
 
 @dataclass
 class ScriptMonitorResult:
     directory: Path
-    checked: bool
-    first_run: bool
-    total_files: int
-    new_files: list[str]
-    pending_files: list[str]
-    error: str
-    last_check_date: str
+    control_directory: Path
+    total_files: int = 0
+    pending: list = field(default_factory=list)
+    new_pending: list = field(default_factory=list)
+    history: list = field(default_factory=list)
+    error: str = ""
+
+    @property
+    def pending_names(self):
+        return [script.name for script in self.pending]
 
 
-def _today_text(today=None):
-    return (today or date.today()).isoformat()
+def current_user():
+    return os.environ.get("USERNAME") or os.environ.get("USER") or "desconhecido"
+
+
+def ledger_path(control_directory=None):
+    return Path(control_directory or load_script_control_directory()) / SCRIPT_LEDGER_FILE_NAME
+
+
+def _clean(value):
+    return str(value).replace("|", "/").replace("\r", " ").replace("\n", " ").strip()
+
+
+def format_event(event):
+    return " | ".join(
+        _clean(value)
+        for value in (event.timestamp, event.user, event.script, event.event, event.detail)
+    )
+
+
+def parse_event(line):
+    parts = [part.strip() for part in line.rstrip("\r\n").split(" | ")]
+    if len(parts) < 4 or not parts[2]:
+        return None
+    detail = " | ".join(parts[4:]) if len(parts) > 4 else ""
+    return LedgerEvent(parts[0], parts[1], parts[2], parts[3], detail)
+
+
+def read_ledger(control_directory=None):
+    path = ledger_path(control_directory)
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except FileNotFoundError:
+        return []
+    return [event for event in map(parse_event, lines) if event is not None]
+
+
+def append_events(events, control_directory=None):
+    """Acrescenta eventos ao registro compartilhado (cria pasta/arquivo se preciso)."""
+    if not events:
+        return
+    path = ledger_path(control_directory)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    text = "".join(format_event(event) + "\n" for event in events)
+    last_error = None
+    for attempt in range(APPEND_RETRY_ATTEMPTS):
+        try:
+            with path.open("a", encoding="utf-8") as ledger:
+                ledger.write(text)
+            return
+        except PermissionError as error:
+            # Outro operador gravando no mesmo instante: tenta de novo.
+            last_error = error
+            if attempt < APPEND_RETRY_ATTEMPTS - 1:
+                time.sleep(APPEND_RETRY_DELAY_SECONDS)
+    raise last_error
+
+
+def done_scripts(events):
+    return {event.script.lower() for event in events if event.event in DONE_EVENTS}
 
 
 def _relative_file_list(directory):
@@ -33,118 +133,118 @@ def _relative_file_list(directory):
         try:
             relative_path = path.relative_to(directory)
         except ValueError:
-            relative_path = path.name
+            relative_path = Path(path.name)
         files.append(str(relative_path))
     return sorted(files, key=str.lower)
 
 
-def should_check_today(today=None):
+def _modified_text(directory, relative_name):
+    try:
+        modified = (Path(directory) / relative_name).stat().st_mtime
+    except OSError:
+        return ""
+    return datetime.fromtimestamp(modified).strftime("%d/%m/%Y %H:%M")
+
+
+def _now_text(now=None):
+    return (now or datetime.now()).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _baseline_events(current_files, now=None):
+    """Primeiro uso do registro: o que ja existia vira base, exceto o que este
+    operador ainda tinha como pendente na versao anterior (local)."""
     state = load_script_monitor_state()
-    return state.get("last_check_date") != _today_text(today)
+    still_pending = set()
+    if state.get("initialized"):
+        still_pending = {name.lower() for name in state.get("pending_files", [])}
+    timestamp = _now_text(now)
+    user = current_user()
+    # O marcador garante que o registro nunca fica vazio depois do primeiro uso,
+    # mesmo com a pasta de scripts vazia (senao o proximo script viraria base).
+    marker = LedgerEvent(timestamp, user, "-", EVENT_START, "inicio do controle compartilhado")
+    return [marker] + [
+        LedgerEvent(timestamp, user, name, EVENT_BASELINE, "existia antes do controle compartilhado")
+        for name in current_files
+        if name.lower() not in still_pending
+    ]
 
 
-def check_scripts(force=False, today=None, directory=SCRIPT_MONITOR_DIRECTORY):
-    today_text = _today_text(today)
-    state = load_script_monitor_state()
-    if not force and state.get("last_check_date") == today_text:
-        return ScriptMonitorResult(
-            directory=Path(directory),
-            checked=False,
-            first_run=False,
-            total_files=len(state.get("known_files", [])),
-            new_files=[],
-            pending_files=list(state.get("pending_files", [])),
-            error="",
-            last_check_date=state.get("last_check_date", ""),
-        )
+def check_scripts(directory=None, control_directory=None, now=None):
+    """Lista os scripts pendentes e os que surgiram desde o ultimo aviso deste operador."""
+    directory = Path(directory or SCRIPT_MONITOR_DIRECTORY)
+    control_directory = Path(control_directory or load_script_control_directory())
+    result = ScriptMonitorResult(directory=directory, control_directory=control_directory)
 
-    directory = Path(directory)
     if not directory.exists():
-        error = f"Pasta de scripts nao encontrada: {directory}"
-        _write_monitor_log("erro", directory, error)
-        return ScriptMonitorResult(
-            directory=directory,
-            checked=True,
-            first_run=False,
-            total_files=0,
-            new_files=[],
-            pending_files=list(state.get("pending_files", [])),
-            error=error,
-            last_check_date=state.get("last_check_date", ""),
-        )
+        result.error = f"Pasta de scripts nao encontrada: {directory}"
+        _write_monitor_log("erro", directory, result.error)
+        return result
 
     try:
         current_files = _relative_file_list(directory)
+        events = read_ledger(control_directory)
+        if not events:
+            baseline = _baseline_events(current_files, now)
+            append_events(baseline, control_directory)
+            events = baseline
     except OSError as error:
-        error_text = f"Erro ao verificar scripts: {error}"
-        _write_monitor_log("erro", directory, error_text)
-        return ScriptMonitorResult(
-            directory=directory,
-            checked=True,
-            first_run=False,
-            total_files=0,
-            new_files=[],
-            pending_files=list(state.get("pending_files", [])),
-            error=error_text,
-            last_check_date=state.get("last_check_date", ""),
-        )
+        result.error = f"Erro ao verificar scripts: {error}"
+        _write_monitor_log("erro", directory, result.error)
+        return result
 
-    known_files = set(state.get("known_files", []))
-    first_run = not state.get("initialized", False)
-    new_files = [] if first_run else [
-        file_name for file_name in current_files if file_name not in known_files
+    done = done_scripts(events)
+    result.total_files = len(current_files)
+    result.pending = [
+        PendingScript(name, _modified_text(directory, name))
+        for name in current_files
+        if name.lower() not in done
     ]
-    pending_files = sorted(
-        {
-            *state.get("pending_files", []),
-            *new_files,
-        },
-        key=str.lower,
-    )
-    save_script_monitor_state(today_text, current_files, pending_files)
+    meaningful = [event for event in events if event.event not in (EVENT_START, EVENT_BASELINE)]
+    result.history = list(reversed(meaningful[-HISTORY_LIMIT:]))
 
-    if new_files:
+    state = load_script_monitor_state()
+    already_notified = {name.lower() for name in state.get("pending_files", [])}
+    result.new_pending = [
+        name for name in result.pending_names if name.lower() not in already_notified
+    ]
+    # O estado local guarda so o que ja foi avisado a este operador.
+    save_script_monitor_state(_now_text(now)[:10], [], result.pending_names)
+
+    if result.new_pending:
         _write_monitor_log(
             "novo_script",
             directory,
-            f"{len(new_files)} script(s) novo(s): {', '.join(new_files[:10])}",
+            f"{len(result.new_pending)} script(s) novo(s): {', '.join(result.new_pending[:10])}",
         )
-    else:
-        reason = "baseline gravado" if first_run else "nenhum script novo"
-        _write_monitor_log("verificado", directory, reason)
+    return result
 
-    return ScriptMonitorResult(
-        directory=directory,
-        checked=True,
-        first_run=first_run,
-        total_files=len(current_files),
-        new_files=new_files,
-        pending_files=pending_files,
-        error="",
-        last_check_date=today_text,
+
+def mark_scripts_done(scripts, control_directory=None, now=None):
+    """Registra os scripts como feitos. Devolve (marcados, ja_feitos_por_outro)."""
+    control_directory = Path(control_directory or load_script_control_directory())
+    already_done = done_scripts(read_ledger(control_directory))
+    to_mark = [name for name in scripts if name.lower() not in already_done]
+    skipped = [name for name in scripts if name.lower() in already_done]
+
+    timestamp = _now_text(now)
+    user = current_user()
+    append_events(
+        [LedgerEvent(timestamp, user, name, EVENT_DONE, "marcado manualmente") for name in to_mark],
+        control_directory,
     )
-
-
-def load_pending_scripts():
-    return list(load_script_monitor_state().get("pending_files", []))
-
-
-def mark_pending_scripts_done():
-    state = load_script_monitor_state()
-    save_script_monitor_state(
-        state.get("last_check_date", ""),
-        state.get("known_files", []),
-        [],
-        initialized=state.get("initialized", False),
-    )
-    _write_monitor_log("pendencias_concluidas", SCRIPT_MONITOR_DIRECTORY, "scripts marcados como feito")
+    if to_mark:
+        _write_monitor_log(
+            "marcado_feito",
+            control_directory,
+            f"{len(to_mark)} script(s): {', '.join(to_mark)}",
+        )
+    return to_mark, skipped
 
 
 def _write_monitor_log(result, directory, reason):
-    user = os.environ.get("USERNAME") or os.environ.get("USER") or "desconhecido"
     write_log(
         "Monitoramento Scripts "
-        f"{result} | usuario={user} | projeto= | tipo= | origem={directory} | "
+        f"{result} | usuario={current_user()} | projeto= | tipo= | origem={directory} | "
         f"destino= | bat= | fileversion= | productversion= | autcom_mb= | "
         f"motivo={reason}"
     )

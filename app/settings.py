@@ -10,6 +10,7 @@ from app.config import (
     COPY_TARGET_DIRECTORIES,
     COPY_TARGET_DIRECTORY,
     IGNORED_PROJECT_FOLDERS,
+    SCRIPT_CONTROL_DIRECTORY,
     SVN_BASE_PATH,
 )
 from app.runtime import user_data_file
@@ -175,6 +176,23 @@ def load_svn_base_path():
 def save_svn_base_path(svn_base_path):
     data = _load_settings()
     data["svn_base_path"] = str(svn_base_path or "").strip()
+    _save_settings(data)
+
+
+def load_script_control_directory():
+    data = _load_settings()
+    value = str(data.get("script_control_directory") or "").strip()
+    return Path(value) if value else SCRIPT_CONTROL_DIRECTORY
+
+
+@_synchronized
+def save_script_control_directory(directory):
+    data = _load_settings()
+    value = str(directory or "").strip()
+    if value:
+        data["script_control_directory"] = str(Path(value))
+    else:
+        data.pop("script_control_directory", None)
     _save_settings(data)
 
 

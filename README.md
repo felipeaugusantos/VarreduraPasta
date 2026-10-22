@@ -74,9 +74,13 @@ As configuracoes ficam em
 - A primeira varredura apos abrir o sistema pode levar mais tempo quando houver
   ZIPs grandes. As varreduras seguintes na mesma execucao tendem a ser mais
   rapidas por uso de cache em memoria.
-- O monitoramento de scripts verifica a pasta uma vez ao dia ao abrir o sistema
-  e tambem permite verificacao manual pelo menu. Scripts novos ficam pendentes
-  ate o operador clicar em `Marcar como feito`.
+- O monitoramento de scripts verifica a pasta a cada 30 minutos (e tenta de
+  novo em 15 minutos se a rede falhar). O controle do que ja foi feito e
+  compartilhado entre os operadores, em
+  `\\citel-fileserve\Modem\_CONTROLE_VARREDURA` (configuravel em
+  Configuracoes): um script marcado como feito por um operador some da lista de
+  todos. Selecione os scripts e use `Marcar selecionados como feito`; o
+  historico mostra quem marcou cada um. O cabecalho mostra `Scripts pendentes`.
 - A Consulta SVN aceita Enter, mostra a faixa pesquisada e pode ser cancelada.
   Marque `Buscar todas as ocorrencias` quando quiser continuar depois do
   primeiro bloco com resultados.

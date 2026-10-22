@@ -15,6 +15,9 @@ from app.config import (
     CLOUD_MIN_AUTCOM_MB,
     COPY_TARGET_DIRECTORIES,
     SCAN_INTERVAL_MS,
+    SCRIPT_CHECK_INTERVAL_MS,
+    SCRIPT_MONITOR_DIRECTORY,
+    SCRIPT_RETRY_INTERVAL_MS,
 )
 from app.jenkins import (
     get_jenkins_jobs_status,
@@ -25,22 +28,19 @@ from app.learning import insights_for_project, learn_from_projects
 from app.pattern import generate_pattern_from_projects, save_pattern
 from app.runtime import executable_generation_text, resource_path
 from app.scanner import enrich_project_file_versions, scan_projects
-from app.script_monitor import (
-    check_scripts,
-    load_pending_scripts,
-    mark_pending_scripts_done,
-    should_check_today,
-)
+from app.script_monitor import ScriptMonitorResult, check_scripts, mark_scripts_done
 from app.settings import (
     load_additional_copy_target_directories,
     load_base_directory,
     load_ignored_project_folders,
     load_jenkins_config,
+    load_script_control_directory,
     load_svn_base_path,
     save_base_directory,
     save_copy_target_directories,
     save_ignored_project_folders,
     save_jenkins_config,
+    save_script_control_directory,
     save_svn_base_path,
 )
 from app.svn_search import search_svn
@@ -73,11 +73,13 @@ class VersionScannerApp(tk.Tk):
         self.jenkins_jobs_window = None
         self.svn_search_window = None
         self.closing_finished_seen = 0
+        self.pending_scripts_count = None
+        self.script_monitor_window = None
         self._build_menu()
         self._build_layout()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.after(100, self.refresh)
-        self.after(2000, self.check_scripts_daily)
+        self.after(2000, self.check_scripts_periodically)
         self.after(CLOSING_POLL_MS, self._update_closing_column)
 
     def _set_window_icon(self):
@@ -212,6 +214,7 @@ class VersionScannerApp(tk.Tk):
             ("pending", "Com pendência", "error"),
             ("closing", "Em fechamento", "closing"),
             ("zip_alert", "Alerta de ZIPs", "zip"),
+            ("scripts", "Scripts pendentes  ›", "warn"),
         )
         for column, (key, caption, color) in enumerate(definitions):
             cards.columnconfigure(column, weight=1, uniform="cards")
@@ -227,8 +230,13 @@ class VersionScannerApp(tk.Tk):
             body.pack(side="left", fill="both", expand=True)
             value = ttk.Label(body, text="0", style=f"CardValue{color.title()}.TLabel")
             value.pack(anchor="w")
-            ttk.Label(body, text=caption, style="CardMuted.TLabel").pack(anchor="w")
+            caption_label = ttk.Label(body, text=caption, style="CardMuted.TLabel")
+            caption_label.pack(anchor="w")
             self.counter_labels[key] = value
+            if key == "scripts":
+                for widget in (card, body, value, caption_label):
+                    widget.configure(cursor="hand2")
+                    widget.bind("<Button-1>", lambda _event: self.open_script_monitor_window())
 
     def _build_filter_bar(self):
         filter_bar = ttk.Frame(self, padding=(16, 10, 16, 8))
@@ -603,6 +611,8 @@ class VersionScannerApp(tk.Tk):
         counts["zip_alert"] = sum(
             1 for project in self.projects if self._zip_record_below_max(project)
         )
+        # "—" ate a primeira verificacao concluir (ou se a pasta estiver fora).
+        counts["scripts"] = "—" if self.pending_scripts_count is None else self.pending_scripts_count
         for key, label in self.counter_labels.items():
             label.config(text=str(counts[key]))
 
@@ -681,6 +691,7 @@ class VersionScannerApp(tk.Tk):
         settings_base_var = tk.StringVar(value=self.base_directory_var.get())
         settings_copy_var = tk.StringVar()
         settings_svn_var = tk.StringVar(value=load_svn_base_path())
+        settings_control_var = tk.StringVar(value=str(load_script_control_directory()))
 
         ttk.Label(frame, text="Diretório-base:").grid(row=0, column=0, sticky="w")
         ttk.Entry(frame, textvariable=settings_base_var).grid(
@@ -715,8 +726,32 @@ class VersionScannerApp(tk.Tk):
             command=lambda: self.choose_base_directory(settings_svn_var),
         ).grid(row=1, column=2, sticky="e", pady=(12, 0))
 
-        ttk.Label(frame, text="Destinos padrão:").grid(
+        ttk.Label(frame, text="Controle de scripts:").grid(
             row=2,
+            column=0,
+            sticky="w",
+            pady=(12, 0),
+        )
+        ttk.Entry(frame, textvariable=settings_control_var).grid(
+            row=2,
+            column=1,
+            sticky="ew",
+            padx=(8, 8),
+            pady=(12, 0),
+        )
+        ttk.Button(
+            frame,
+            text="Procurar",
+            command=lambda: self.choose_base_directory(settings_control_var),
+        ).grid(row=2, column=2, sticky="e", pady=(12, 0))
+        ttk.Label(
+            frame,
+            text="Pasta compartilhada onde todos os operadores gravam os scripts já feitos.",
+            style="Muted.TLabel",
+        ).grid(row=3, column=1, columnspan=2, sticky="w", padx=(8, 0), pady=(2, 0))
+
+        ttk.Label(frame, text="Destinos padrão:").grid(
+            row=4,
             column=0,
             sticky="nw",
             pady=(12, 0),
@@ -725,16 +760,16 @@ class VersionScannerApp(tk.Tk):
             frame,
             text="\n".join(str(path) for path in COPY_TARGET_DIRECTORIES),
             wraplength=620,
-        ).grid(row=2, column=1, columnspan=2, sticky="w", pady=(12, 0))
+        ).grid(row=4, column=1, columnspan=2, sticky="w", pady=(12, 0))
 
         ttk.Label(frame, text="Destino adicional:").grid(
-            row=3,
+            row=5,
             column=0,
             sticky="w",
             pady=(12, 0),
         )
         ttk.Entry(frame, textvariable=settings_copy_var).grid(
-            row=3,
+            row=5,
             column=1,
             sticky="ew",
             padx=(8, 8),
@@ -745,21 +780,21 @@ class VersionScannerApp(tk.Tk):
             frame,
             text="Procurar",
             command=lambda: self.choose_base_directory(settings_copy_var),
-        ).grid(row=3, column=2, sticky="e", pady=(12, 0))
+        ).grid(row=5, column=2, sticky="e", pady=(12, 0))
 
         ttk.Label(frame, text="Destinos extras:").grid(
-            row=4,
+            row=6,
             column=0,
             sticky="nw",
             pady=(8, 0),
         )
         target_list = tk.Listbox(frame, height=5)
-        target_list.grid(row=4, column=1, sticky="ew", padx=(8, 8), pady=(8, 0))
+        target_list.grid(row=6, column=1, sticky="ew", padx=(8, 8), pady=(8, 0))
         for target in load_additional_copy_target_directories():
             target_list.insert(tk.END, str(target))
 
         target_buttons = ttk.Frame(frame)
-        target_buttons.grid(row=4, column=2, sticky="n", pady=(8, 0))
+        target_buttons.grid(row=6, column=2, sticky="n", pady=(8, 0))
 
         def add_target():
             value = settings_copy_var.get().strip()
@@ -790,7 +825,7 @@ class VersionScannerApp(tk.Tk):
         )
 
         button_bar = ttk.Frame(frame)
-        button_bar.grid(row=5, column=0, columnspan=3, sticky="e", pady=(16, 0))
+        button_bar.grid(row=7, column=0, columnspan=3, sticky="e", pady=(16, 0))
         ttk.Button(
             button_bar,
             text="Salvar",
@@ -798,6 +833,7 @@ class VersionScannerApp(tk.Tk):
                 settings_base_var.get(),
                 [target_list.get(index) for index in range(target_list.size())],
                 settings_svn_var.get(),
+                settings_control_var.get(),
             ),
         ).grid(row=0, column=0, padx=(0, 8))
         ttk.Button(
@@ -1449,16 +1485,27 @@ class VersionScannerApp(tk.Tk):
         refresh_logs()
         audit_window.after(2000, auto_refresh_logs)
 
-    def check_scripts_daily(self):
-        if should_check_today():
-            self._run_script_monitor_check(show_without_news=False)
-        self.after(24 * 60 * 60 * 1000, self.check_scripts_daily)
+    def check_scripts_periodically(self):
+        """Verifica a pasta de scripts a cada 30 min (15 min se a rede falhar)."""
+
+        def schedule_next(result):
+            delay = SCRIPT_RETRY_INTERVAL_MS if result.error else SCRIPT_CHECK_INTERVAL_MS
+            self.after(delay, self.check_scripts_periodically)
+
+        self._run_script_monitor_check(show_without_news=False, on_result=schedule_next)
 
     def _run_script_monitor_check(self, show_without_news=True, on_result=None):
         result_queue = queue.Queue()
 
         def worker():
-            result = check_scripts(force=show_without_news)
+            try:
+                result = check_scripts()
+            except Exception as error:
+                result = ScriptMonitorResult(
+                    directory=SCRIPT_MONITOR_DIRECTORY,
+                    control_directory=load_script_control_directory(),
+                    error=f"Erro ao verificar scripts: {error}",
+                )
             result_queue.put(result)
 
         def poll():
@@ -1471,147 +1518,203 @@ class VersionScannerApp(tk.Tk):
             finish(result)
 
         def finish(result):
+            if not result.error:
+                self.pending_scripts_count = len(result.pending)
+                self._update_counters()
             if on_result:
                 on_result(result)
             if result.error:
                 if show_without_news:
-                    messagebox.showerror("Monitoramento de Scripts", result.error)
+                    messagebox.showerror("Scripts Banco Modelo", result.error)
                 return
-            if result.new_files:
-                preview = "\n".join(result.new_files[:20])
-                if len(result.new_files) > 20:
-                    preview += f"\n... +{len(result.new_files) - 20} script(s)"
+            if result.new_pending:
+                preview = "\n".join(result.new_pending[:20])
+                if len(result.new_pending) > 20:
+                    preview += f"\n... +{len(result.new_pending) - 20} script(s)"
                 messagebox.showwarning(
-                    "Monitoramento de Scripts",
-                    "Novos scripts encontrados para rodar no banco modelo:\n\n"
+                    "Scripts Banco Modelo",
+                    "Novos scripts para rodar no banco modelo:\n\n"
                     f"{preview}\n\n"
-                    f"Caminho:\n{result.directory}",
-                )
-                return
-            if show_without_news:
-                messagebox.showinfo(
-                    "Monitoramento de Scripts",
-                    "Nenhum script novo encontrado.\n\n"
-                    f"Total monitorado: {result.total_files}\n"
-                    f"Caminho:\n{result.directory}",
+                    "Abra Monitoramento > Scripts Banco Modelo para marcar cada um "
+                    "como feito.",
                 )
 
         threading.Thread(target=worker, daemon=True).start()
         self.after(100, poll)
 
     def open_script_monitor_window(self):
+        if self.script_monitor_window and self.script_monitor_window.winfo_exists():
+            self.script_monitor_window.focus()
+            return
+
         monitor_window = tk.Toplevel(self)
-        monitor_window.title("Monitoramento de Scripts")
-        theme.size_window(monitor_window, 860, 420)
+        self.script_monitor_window = monitor_window
+        monitor_window.title("Scripts Banco Modelo")
+        theme.size_window(monitor_window, 960, 620)
         monitor_window.transient(self)
 
-        frame = ttk.Frame(monitor_window, padding=12)
+        frame = ttk.Frame(monitor_window, padding=14)
         frame.pack(fill="both", expand=True)
-        frame.rowconfigure(2, weight=1)
         frame.columnconfigure(1, weight=1)
+        frame.rowconfigure(3, weight=3)
+        frame.rowconfigure(6, weight=2)
 
-        status_var = tk.StringVar(value="Pronto para verificar.")
-        path_var = tk.StringVar(value="")
+        path_var = tk.StringVar(value=str(SCRIPT_MONITOR_DIRECTORY))
+        control_var = tk.StringVar(value=str(load_script_control_directory()))
+        status_var = tk.StringVar(value="Verificando scripts...")
 
-        ttk.Label(frame, text="Pasta monitorada:").grid(row=0, column=0, sticky="w")
-        ttk.Label(frame, textvariable=path_var, wraplength=600).grid(
-            row=0,
-            column=1,
-            columnspan=2,
-            sticky="w",
-            padx=(8, 0),
+        ttk.Label(frame, text="Pasta de scripts", style="Muted.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(frame, textvariable=path_var).grid(row=0, column=1, sticky="w", padx=(10, 0))
+        ttk.Label(frame, text="Controle compartilhado", style="Muted.TLabel").grid(
+            row=1, column=0, sticky="w", pady=(4, 0)
         )
-        ttk.Label(frame, textvariable=status_var).grid(
-            row=1,
-            column=0,
-            columnspan=3,
-            sticky="w",
-            pady=(10, 8),
+        ttk.Label(frame, textvariable=control_var).grid(row=1, column=1, sticky="w", padx=(10, 0), pady=(4, 0))
+        ttk.Label(frame, textvariable=status_var, font=self.fonts["section"]).grid(
+            row=2, column=0, columnspan=2, sticky="w", pady=(12, 6)
         )
 
-        list_frame = ttk.Frame(frame)
-        list_frame.grid(row=2, column=0, columnspan=3, sticky="nsew")
-        list_frame.rowconfigure(0, weight=1)
-        list_frame.columnconfigure(0, weight=1)
-        script_list = tk.Listbox(list_frame)
-        y_scroll = ttk.Scrollbar(list_frame, orient="vertical", command=script_list.yview)
-        script_list.configure(yscrollcommand=y_scroll.set)
-        script_list.grid(row=0, column=0, sticky="nsew")
-        y_scroll.grid(row=0, column=1, sticky="ns")
+        def build_table(row, columns, headings, widths, height, selectmode):
+            table_frame = ttk.Frame(frame)
+            table_frame.grid(row=row, column=0, columnspan=2, sticky="nsew")
+            table_frame.columnconfigure(0, weight=1)
+            table_frame.rowconfigure(0, weight=1)
+            table = ttk.Treeview(
+                table_frame, columns=columns, show="headings", height=height, selectmode=selectmode
+            )
+            for column in columns:
+                anchor = "w" if column in ("script", "detail") else "center"
+                table.heading(column, text=headings[column], anchor=anchor)
+                table.column(column, width=widths[column], anchor=anchor, stretch=column in ("script", "detail"))
+            scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=table.yview)
+            table.configure(yscrollcommand=scrollbar.set)
+            table.grid(row=0, column=0, sticky="nsew")
+            scrollbar.grid(row=0, column=1, sticky="ns")
+            return table
+
+        pending_table = build_table(
+            3,
+            ("script", "modified"),
+            {"script": "Script pendente", "modified": "Data do arquivo"},
+            {"script": 680, "modified": 150},
+            10,
+            "extended",
+        )
+        ttk.Label(
+            frame,
+            text="Selecione um ou mais scripts (Ctrl/Shift) para marcar como feito. "
+            "Duplo clique abre o script.",
+            style="Muted.TLabel",
+        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(4, 0))
+
+        ttk.Label(frame, text="Últimos registros (todos os operadores)", font=self.fonts["section"]).grid(
+            row=5, column=0, columnspan=2, sticky="w", pady=(14, 6)
+        )
+        history_table = build_table(
+            6,
+            ("when", "user", "script", "event"),
+            {"when": "Data/hora", "user": "Operador", "script": "Script", "event": "Registro"},
+            {"when": 150, "user": 130, "script": 470, "event": 120},
+            6,
+            "none",
+        )
 
         def update_result(result):
+            if not monitor_window.winfo_exists():
+                return
             path_var.set(str(result.directory))
-            script_list.delete(0, tk.END)
+            control_var.set(str(result.control_directory))
+            pending_table.delete(*pending_table.get_children())
+            history_table.delete(*history_table.get_children())
             if result.error:
                 status_var.set(result.error)
                 return
-            pending_files = result.pending_files or load_pending_scripts()
-            if pending_files:
-                status_var.set(
-                    f"{len(pending_files)} script(s) pendente(s) para marcar como feito."
+            for script in result.pending:
+                pending_table.insert("", "end", iid=script.name, values=(script.name, script.modified))
+            for event in result.history:
+                history_table.insert(
+                    "", "end", values=(event.timestamp, event.user, event.script, event.event)
                 )
-                for file_name in pending_files:
-                    script_list.insert(tk.END, file_name)
-                return
-            status_var.set(
-                f"Nenhum script novo. Total monitorado: {result.total_files}."
-            )
+            if result.pending:
+                status_var.set(f"{len(result.pending)} script(s) pendente(s) de {result.total_files} na pasta.")
+            else:
+                status_var.set(f"Nenhum script pendente. {result.total_files} script(s) na pasta.")
 
         def verify_now():
             status_var.set("Verificando scripts...")
-            self._run_script_monitor_check(
-                show_without_news=True,
-                on_result=update_result,
-            )
+            self._run_script_monitor_check(show_without_news=True, on_result=update_result)
 
-        def mark_done():
-            if not load_pending_scripts():
+        def mark_selected_done():
+            selected = list(pending_table.selection())
+            if not selected:
                 messagebox.showinfo(
-                    "Monitoramento de Scripts",
-                    "Nao existe script pendente para marcar como feito.",
+                    "Scripts Banco Modelo",
+                    "Selecione na lista os scripts que ja foram rodados no banco modelo.",
+                    parent=monitor_window,
                 )
                 return
-            mark_pending_scripts_done()
-            script_list.delete(0, tk.END)
-            status_var.set("Scripts pendentes marcados como feito.")
-            messagebox.showinfo(
-                "Monitoramento de Scripts",
-                "Scripts marcados como feito.",
-            )
+            preview = "\n".join(selected[:15])
+            if len(selected) > 15:
+                preview += f"\n... +{len(selected) - 15} script(s)"
+            if not messagebox.askyesno(
+                "Scripts Banco Modelo",
+                f"Marcar {len(selected)} script(s) como feito para todos os operadores?\n\n{preview}",
+                parent=monitor_window,
+            ):
+                return
+            try:
+                marked, skipped = mark_scripts_done(selected)
+            except OSError as error:
+                messagebox.showerror(
+                    "Scripts Banco Modelo",
+                    f"Nao foi possivel gravar no controle compartilhado:\n{error}",
+                    parent=monitor_window,
+                )
+                return
+            if skipped:
+                messagebox.showinfo(
+                    "Scripts Banco Modelo",
+                    "Estes scripts ja tinham sido marcados por outro operador:\n\n"
+                    + "\n".join(skipped[:15]),
+                    parent=monitor_window,
+                )
+            verify_now()
+
+        def open_selected_script(_event=None):
+            selected = pending_table.selection()
+            if not selected:
+                return
+            script_path = Path(path_var.get()) / selected[0]
+            if script_path.exists():
+                os.startfile(script_path)
 
         def open_folder():
             directory = Path(path_var.get())
             if not directory.exists():
                 messagebox.showerror(
-                    "Monitoramento de Scripts",
+                    "Scripts Banco Modelo",
                     f"Pasta nao encontrada:\n{directory}",
+                    parent=monitor_window,
                 )
                 return
             os.startfile(directory)
 
-        button_bar = ttk.Frame(frame)
-        button_bar.grid(row=3, column=0, columnspan=3, sticky="e", pady=(12, 0))
-        ttk.Button(button_bar, text="Verificar agora", command=verify_now).grid(
-            row=0,
-            column=0,
-            padx=(0, 8),
-        )
-        ttk.Button(button_bar, text="Abrir Pasta", command=open_folder).grid(
-            row=0,
-            column=1,
-            padx=(0, 8),
-        )
-        ttk.Button(button_bar, text="Marcar como feito", command=mark_done).grid(
-            row=0,
-            column=2,
-            padx=(0, 8),
-        )
-        ttk.Button(button_bar, text="Fechar", command=monitor_window.destroy).grid(
-            row=0,
-            column=3,
-        )
+        pending_table.bind("<Double-1>", open_selected_script)
 
-        verify_now()
+        button_bar = ttk.Frame(frame)
+        button_bar.grid(row=7, column=0, columnspan=2, sticky="e", pady=(14, 0))
+        ttk.Button(
+            button_bar,
+            text="Marcar selecionados como feito",
+            style="Primary.TButton",
+            command=mark_selected_done,
+        ).grid(row=0, column=0, padx=(0, 8))
+        ttk.Button(button_bar, text="Abrir script", command=open_selected_script).grid(row=0, column=1, padx=(0, 8))
+        ttk.Button(button_bar, text="Abrir pasta", command=open_folder).grid(row=0, column=2, padx=(0, 8))
+        ttk.Button(button_bar, text="Verificar agora", command=verify_now).grid(row=0, column=3, padx=(0, 8))
+        ttk.Button(button_bar, text="Fechar", command=monitor_window.destroy).grid(row=0, column=4)
+
+        # Abrir a tela so consulta; nao grava "verificado" na Auditoria.
+        self._run_script_monitor_check(show_without_news=False, on_result=update_result)
 
     def open_svn_search_window(self):
         if self.svn_search_window and self.svn_search_window.winfo_exists():
@@ -2133,11 +2236,18 @@ class VersionScannerApp(tk.Tk):
         if selected_directory:
             target_var.set(selected_directory)
 
-    def save_settings(self, base_directory, copy_target_directories, svn_base_path=""):
+    def save_settings(
+        self,
+        base_directory,
+        copy_target_directories,
+        svn_base_path="",
+        script_control_directory="",
+    ):
         self.base_directory_var.set(base_directory.strip())
         save_base_directory(self.base_directory_var.get())
         save_copy_target_directories(copy_target_directories)
         save_svn_base_path(svn_base_path)
+        save_script_control_directory(script_control_directory)
         if self.config_window and self.config_window.winfo_exists():
             self.config_window.destroy()
         self.refresh()

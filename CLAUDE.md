@@ -153,9 +153,15 @@ mostra os registros em tabela e permite filtros.
 
 ### Monitoramento de scripts
 
-`Monitoramento > Scripts Banco Modelo` verifica uma vez ao dia se existem novos
-scripts na pasta configurada. Scripts novos ficam pendentes ate o operador clicar
-em `Marcar como feito`.
+`Monitoramento > Scripts Banco Modelo` verifica a pasta de scripts a cada 30
+minutos (15 minutos se der erro). O que ja foi feito fica num registro
+compartilhado (`scripts_banco_modelo.log` na pasta de controle, padrao
+`\\citel-fileserve\Modem\_CONTROLE_VARREDURA`, configuravel), porque cada
+operador do TS tem seu proprio `%LOCALAPPDATA%`. Cada evento e uma linha
+acrescentada (`data | usuario | script | evento | detalhe`), nunca reescrita.
+Pendente = script da pasta sem evento `base`, `feito` ou `executado`. O operador
+marca scripts selecionados como feito; vale para todos. O cabecalho mostra o
+contador `Scripts pendentes`. Logica em `app/script_monitor.py` (sem Tkinter).
 
 ### Consulta SVN
 
