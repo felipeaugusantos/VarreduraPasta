@@ -308,3 +308,83 @@ class SpecificCopyTests(unittest.TestCase):
 
         result = {p.folder_name: p for p in scan_projects(self.base)}["379.48.2.30.74.74.92"]
         self.assertIn("libTintaSuvinil.dll", result.status)
+
+
+class UnreadableZipTests(unittest.TestCase):
+    """Um ZIP que o Python nao abre nao pode esvaziar a tabela inteira."""
+
+    def setUp(self):
+        from unittest.mock import patch
+        from app import pattern
+
+        self._temp = TemporaryDirectory(ignore_cleanup_errors=True)
+        self.addCleanup(self._temp.cleanup)
+        self.base = Path(self._temp.name) / "VERSOES_FECHADAS"
+        for name in ("379.48.2.30.74.150.100.7", "379.48.2.30.74.150.100.8"):
+            (self.base / name).mkdir(parents=True)
+            with ZipFile(self.base / name / "Autcom.zip", "w") as archive:
+                archive.writestr("Autcom.exe", b"MZ")
+        patchers = [
+            patch.object(pattern, "PATTERN_FILE", Path(self._temp.name) / "pattern.json"),
+            patch("app.scanner.read_exe_versions", lambda _path: ("48.02.30.74", "02.30.74.150")),
+        ]
+        for patcher in patchers:
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def scan(self):
+        from app.scanner import scan_projects
+
+        return {project.folder_name: project for project in scan_projects(self.base)}
+
+    def scan_with_member_error(self, error):
+        from unittest.mock import patch
+        import zipfile
+
+        original_open = zipfile.ZipFile.open
+
+        def open_member(archive, name, *args, **kwargs):
+            if "100.8" in str(archive.filename):
+                raise error
+            return original_open(archive, name, *args, **kwargs)
+
+        with patch.object(zipfile.ZipFile, "open", open_member):
+            return self.scan()
+
+    def test_unsupported_compression_affects_only_that_project(self):
+        results = self.scan_with_member_error(
+            NotImplementedError("That compression method is not supported")
+        )
+
+        self.assertEqual(len(results), 2)
+        self.assertNotIn("ilegivel", results["379.48.2.30.74.150.100.7"].status)
+        self.assertIn(
+            "Autcom: ZIP ilegivel (formato nao suportado ou protegido por senha)",
+            results["379.48.2.30.74.150.100.8"].status,
+        )
+
+    def test_zip_still_being_written_is_reported_as_incomplete(self):
+        import zlib
+
+        results = self.scan_with_member_error(zlib.error("Error -3 while decompressing data"))
+
+        self.assertIn("ZIP incompleto ou corrompido", results["379.48.2.30.74.150.100.8"].status)
+
+    def test_unexpected_error_in_one_project_keeps_the_others(self):
+        from unittest.mock import patch
+        from app import scanner
+
+        original = scanner._analyze_project
+
+        def analyze(project_path):
+            if project_path.name.endswith("100.8"):
+                raise KeyError("campo inesperado")
+            return original(project_path)
+
+        with patch.object(scanner, "_analyze_project", analyze):
+            results = self.scan()
+
+        self.assertEqual(len(results), 2)
+        failed = results["379.48.2.30.74.150.100.8"]
+        self.assertIn("Erro ao analisar o projeto: KeyError", failed.status)
+        self.assertFalse(failed.local_copy_allowed)

@@ -16,6 +16,14 @@ Semantico (`MAIOR.MENOR.CORRECAO`).
   consulta automatica aparece so na tela, sem janela de aviso.
 
 ### Corrigido
+- Um unico ZIP ilegivel (formato nao suportado como Deflate64, senha, ou ainda
+  sendo gravado pelo BAT) derrubava a varredura inteira e esvaziava a tabela.
+  Agora vira pendencia "ZIP ilegivel"/"ZIP incompleto" so daquele projeto, e um
+  erro inesperado em um projeto nao interrompe os demais.
+- Dois operadores do TS podiam mexer no mesmo projeto ao mesmo tempo (ex.:
+  copiar durante o fechamento do outro). Nova trava compartilhada por projeto
+  (`.varredura.lock`) em fechamento, copia, limpeza manual e teste do Autcom;
+  a tabela mostra "Em uso: <acao> (<operador>)" e bloqueia as acoes.
 - Auditoria do Jenkins mostrava apenas "Jenkins" na coluna Acao; agora mostra a
   acao (ex.: `Jenkins teste_conexao`) e o resultado. Consultas de status nao
   sao mais gravadas na Auditoria.

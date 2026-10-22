@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import shutil
 from tempfile import TemporaryDirectory
+import zlib
 from zipfile import BadZipFile, ZipFile
 
 from app.config import (
@@ -14,6 +15,18 @@ from app.config import (
 from app.pattern import is_specific_copy, load_project_file_groups, load_required_file_groups
 from app.settings import load_ignored_project_folders
 from app.version_reader import read_exe_versions
+
+
+# Erros que o zipfile levanta para ZIPs que ele nao consegue ler: formato de
+# compressao nao suportado (ex.: Deflate64 do 7-Zip), senha, ou arquivo ainda
+# sendo gravado pelo BAT. Nao podem derrubar a varredura dos demais projetos.
+ZIP_UNREADABLE_ERRORS = (NotImplementedError, RuntimeError, EOFError, zlib.error, ValueError)
+
+
+def describe_zip_error(error):
+    if isinstance(error, (NotImplementedError, RuntimeError)):
+        return "ZIP ilegivel (formato nao suportado ou protegido por senha)"
+    return "ZIP incompleto ou corrompido"
 
 
 _ZIP_VERSION_CACHE = {}
@@ -120,6 +133,9 @@ def validate_zip_names(project_path):
         except BadZipFile:
             errors.append(f"{zip_path.name}: ZIP invalido ou corrompido")
             continue
+        except ZIP_UNREADABLE_ERRORS as error:
+            errors.append(f"{zip_path.name}: {describe_zip_error(error)}")
+            continue
         except OSError as error:
             errors.append(f"{zip_path.name}: erro ao ler ZIP ({error})")
             continue
@@ -198,7 +214,7 @@ def _discover_project_files(project_path, zip_index):
                             status="OK",
                         )
                     )
-        except (BadZipFile, OSError):
+        except (BadZipFile, OSError, *ZIP_UNREADABLE_ERRORS):
             continue
 
     return discovered
@@ -306,6 +322,8 @@ def _read_version_from_zip(zip_path, file_name, read_version=True):
                     result = (None, None, size_mb, None)
     except BadZipFile:
         result = (None, None, None, "Zip invalido")
+    except ZIP_UNREADABLE_ERRORS as error:
+        result = (None, None, None, describe_zip_error(error))
     except OSError as error:
         result = (None, None, None, f"Erro ao ler zip: {error}")
 
@@ -463,74 +481,105 @@ def scan_projects(base_directory=BASE_DIRECTORY):
     for project_path in sorted(path for path in base_path.iterdir() if path.is_dir()):
         if project_path.name.lower() in ignored_project_folders:
             continue
-        if not _project_has_candidate_files(project_path):
-            continue
-
-        required_file_groups = _required_groups_for_project(project_path.name)
-        expected_file, expected_product = expected_versions_from_folder(project_path.name)
-        zip_index = _build_zip_index(project_path)
-        zip_name_errors = validate_zip_names(project_path)
-        discovered_files = _discover_project_files(project_path, zip_index)
-        file_checks = [
-            _check_file_group(project_path, group, zip_index)
-            for group in required_file_groups
-        ]
-        autcom_check = next((check for check in file_checks if _is_autcom_check(check)), None)
-        if autcom_check is None:
-            autcom_check = FileCheck(
-                group_name="Autcom",
-                accepted_files=("Autcom.exe",),
-                validate_version=True,
-                found_name=None,
-                source="Ausente",
-                zip_path=None,
-                file_version=None,
-                product_version=None,
-                size_mb=None,
-                status="Ausente",
-            )
-        missing_files = [
-            " ou ".join(check.accepted_files)
-            for check in file_checks
-            if check.status == "Ausente"
-        ]
-
-        results.append(
-            ProjectResult(
-                folder_name=project_path.name,
-                path=project_path,
-                expected_file_version=expected_file or "",
-                expected_product_version=expected_product or "",
-                autcom_size_mb=autcom_check.size_mb if autcom_check.source == "Pasta" else None,
-                file_version=autcom_check.file_version if autcom_check.source == "Pasta" else None,
-                product_version=autcom_check.product_version if autcom_check.source == "Pasta" else None,
-                display_file_version=autcom_check.file_version,
-                display_product_version=autcom_check.product_version,
-                display_autcom_size_mb=autcom_check.size_mb,
-                zip_file_version=autcom_check.file_version if autcom_check.source == "Zip" else None,
-                zip_product_version=autcom_check.product_version if autcom_check.source == "Zip" else None,
-                missing_files=missing_files,
-                zip_status=_autcom_zip_status(autcom_check),
-                status=_build_status(
-                    expected_file,
-                    expected_product,
-                    file_checks,
-                    zip_name_errors,
-                ),
-                zip_name_errors=zip_name_errors,
-                local_copy_allowed=(
-                    autcom_check.size_mb is not None
-                    and autcom_check.size_mb < LOCAL_MAX_AUTCOM_MB
-                ),
-                cloud_copy_allowed=(
-                    autcom_check.size_mb is not None
-                    and autcom_check.size_mb >= CLOUD_MIN_AUTCOM_MB
-                ),
-                file_checks=file_checks,
-                discovered_files=discovered_files,
-            )
-        )
+        try:
+            if not _project_has_candidate_files(project_path):
+                continue
+            results.append(_analyze_project(project_path))
+        except Exception as error:
+            # Um projeto com problema nao pode esvaziar a tabela inteira.
+            results.append(_failed_project_result(project_path, error))
     return results
+
+
+def _failed_project_result(project_path, error):
+    expected_file, expected_product = expected_versions_from_folder(project_path.name)
+    return ProjectResult(
+        folder_name=project_path.name,
+        path=project_path,
+        expected_file_version=expected_file or "",
+        expected_product_version=expected_product or "",
+        autcom_size_mb=None,
+        file_version=None,
+        product_version=None,
+        display_file_version=None,
+        display_product_version=None,
+        display_autcom_size_mb=None,
+        zip_file_version=None,
+        zip_product_version=None,
+        missing_files=[],
+        zip_status="Erro",
+        status=f"Erro ao analisar o projeto: {type(error).__name__}: {error}",
+        zip_name_errors=[],
+        local_copy_allowed=False,
+        cloud_copy_allowed=False,
+        file_checks=[],
+        discovered_files=[],
+    )
+
+
+def _analyze_project(project_path):
+    required_file_groups = _required_groups_for_project(project_path.name)
+    expected_file, expected_product = expected_versions_from_folder(project_path.name)
+    zip_index = _build_zip_index(project_path)
+    zip_name_errors = validate_zip_names(project_path)
+    discovered_files = _discover_project_files(project_path, zip_index)
+    file_checks = [
+        _check_file_group(project_path, group, zip_index)
+        for group in required_file_groups
+    ]
+    autcom_check = next((check for check in file_checks if _is_autcom_check(check)), None)
+    if autcom_check is None:
+        autcom_check = FileCheck(
+            group_name="Autcom",
+            accepted_files=("Autcom.exe",),
+            validate_version=True,
+            found_name=None,
+            source="Ausente",
+            zip_path=None,
+            file_version=None,
+            product_version=None,
+            size_mb=None,
+            status="Ausente",
+        )
+    missing_files = [
+        " ou ".join(check.accepted_files)
+        for check in file_checks
+        if check.status == "Ausente"
+    ]
+
+    return ProjectResult(
+        folder_name=project_path.name,
+        path=project_path,
+        expected_file_version=expected_file or "",
+        expected_product_version=expected_product or "",
+        autcom_size_mb=autcom_check.size_mb if autcom_check.source == "Pasta" else None,
+        file_version=autcom_check.file_version if autcom_check.source == "Pasta" else None,
+        product_version=autcom_check.product_version if autcom_check.source == "Pasta" else None,
+        display_file_version=autcom_check.file_version,
+        display_product_version=autcom_check.product_version,
+        display_autcom_size_mb=autcom_check.size_mb,
+        zip_file_version=autcom_check.file_version if autcom_check.source == "Zip" else None,
+        zip_product_version=autcom_check.product_version if autcom_check.source == "Zip" else None,
+        missing_files=missing_files,
+        zip_status=_autcom_zip_status(autcom_check),
+        status=_build_status(
+            expected_file,
+            expected_product,
+            file_checks,
+            zip_name_errors,
+        ),
+        zip_name_errors=zip_name_errors,
+        local_copy_allowed=(
+            autcom_check.size_mb is not None
+            and autcom_check.size_mb < LOCAL_MAX_AUTCOM_MB
+        ),
+        cloud_copy_allowed=(
+            autcom_check.size_mb is not None
+            and autcom_check.size_mb >= CLOUD_MIN_AUTCOM_MB
+        ),
+        file_checks=file_checks,
+        discovered_files=discovered_files,
+    )
 
 
 def _read_check_versions(project, check):

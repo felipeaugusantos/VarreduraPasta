@@ -67,7 +67,7 @@ def generate_pattern_from_project(project_path):
                         for info in archive.infolist()
                         if _is_supported_file(Path(info.filename).name)
                     ]
-            except BadZipFile:
+            except (BadZipFile, NotImplementedError, RuntimeError, EOFError, ValueError):
                 members = []
             zips.append({"zip": item.name, "files": sorted(set(members))})
 

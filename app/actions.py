@@ -27,6 +27,7 @@ from app.config import (
     LOCAL_MAX_AUTCOM_MB,
 )
 from app.pattern import save_project_pattern
+from app.project_lock import LOCK_FILE_NAME, ProjectLock, ProjectLockedError, describe_owner, read_owner
 from app.scanner import validate_zip_names
 from app.settings import load_copy_target_directories
 
@@ -34,6 +35,8 @@ POLL_INTERVAL_MS = 100
 CLEANUP_RETRY_ATTEMPTS = 5
 CLEANUP_RETRY_DELAY_SECONDS = 1
 _PATTERN_LOCK = threading.Lock()
+# Travas compartilhadas dos fechamentos na fila/em andamento (chave: pasta do projeto).
+_CLOSING_LOCKS = {}
 
 
 class CleanupError(OSError):
@@ -166,8 +169,14 @@ def _start_closings(projects, title, expect_cloud):
     for project in projects:
         bat_path = project.path / "comandosCMD" / "_FechamentoArquivos.bat"
         reason = _closing_block_reason(project, expect_cloud)
+        lock = None
+        if reason is None:
+            lock, reason = _acquire_project_lock(project, title)
         if reason is None and not CLOSING_MANAGER.enqueue(project, title, bat_path):
             reason = "fechamento ja esta na fila ou em andamento"
+            lock.release()
+        elif reason is None:
+            _CLOSING_LOCKS[_lock_key(project)] = lock
         if reason is not None:
             _write_action_audit(
                 title,
@@ -209,7 +218,17 @@ def _closing_log_path(project, now=None):
 
 
 def _execute_closing_job(job):
-    """Roda na thread do fechamento: aprende o padrao, executa o BAT e audita."""
+    """Roda na thread do fechamento; solta a trava do projeto ao terminar."""
+    try:
+        return _run_closing_job(job)
+    finally:
+        lock = _CLOSING_LOCKS.pop(_lock_key(job.project), None)
+        if lock is not None:
+            lock.release()
+
+
+def _run_closing_job(job):
+    """Aprende o padrao, executa o BAT e audita."""
     project = job.project
     started = time.monotonic()
     with _PATTERN_LOCK:
@@ -338,6 +357,40 @@ def fechamento_cloud(projects):
     return _start_closings(projects, "Fechamento Cloud", expect_cloud=True)
 
 
+def _lock_key(project):
+    return str(project.path).lower()
+
+
+def _acquire_project_lock(project, action):
+    """Trava compartilhada do projeto. Retorna (trava, None) ou (None, motivo)."""
+    try:
+        return ProjectLock(project.path, action).acquire(), None
+    except ProjectLockedError as error:
+        return None, f"projeto em uso: {error}"
+    except OSError as error:
+        return None, f"nao foi possivel travar o projeto: {error}"
+
+
+def _block_if_locked_by_other(project, title):
+    """Avisa cedo (antes de confirmacoes) se outro operador esta usando o projeto."""
+    owner = read_owner(project.path)
+    if owner is None:
+        return False
+    _write_action_audit(
+        title,
+        "bloqueado",
+        project,
+        reason=f"projeto em uso: {describe_owner(owner)}",
+    )
+    messagebox.showerror(
+        title,
+        "Este projeto esta em uso.\n\n"
+        f"{describe_owner(owner)}.\n\n"
+        "Aguarde terminar para continuar.",
+    )
+    return True
+
+
 def _block_if_closing_active(project, title):
     """Impede acoes no projeto enquanto o BAT ainda esta gerando os ZIPs."""
     if not CLOSING_MANAGER.is_active(project):
@@ -381,6 +434,8 @@ def validar_pos_fechamento(project):
 def limpar_pasta(project):
     if _block_if_closing_active(project, "Limpar Pasta"):
         return
+    if _block_if_locked_by_other(project, "Limpar Pasta"):
+        return
     if not project.path.exists():
         _write_action_audit(
             "Limpar Pasta",
@@ -415,6 +470,11 @@ def limpar_pasta(project):
 
 
 def _start_manual_cleanup(project):
+    lock, lock_reason = _acquire_project_lock(project, "Limpar Pasta")
+    if lock_reason:
+        _write_action_audit("Limpar Pasta", "bloqueado", project, reason=lock_reason)
+        messagebox.showerror("Limpar Pasta", f"Limpeza nao iniciada: {lock_reason}.")
+        return
     progress = Toplevel()
     progress.title("Limpar Pasta")
     theme.size_window(progress, 560, 120)
@@ -447,6 +507,8 @@ def _start_manual_cleanup(project):
             cleanup_error = error
         except Exception as error:
             cleanup_error = error
+        finally:
+            lock.release()
         result_queue.put((cleaned_items, cleanup_error))
 
     def poll():
@@ -509,6 +571,8 @@ def _finish_manual_cleanup(progress, project, cleaned_items, cleanup_error):
 def copiar_local(project):
     if _block_if_closing_active(project, "Copiar Local"):
         return
+    if _block_if_locked_by_other(project, "Copiar Local"):
+        return
     if _is_cloud_project(project):
         _write_action_audit(
             "Copiar Local",
@@ -540,6 +604,8 @@ def copiar_local(project):
 
 def copiar_cloud(project):
     if _block_if_closing_active(project, "Copiar Cloud"):
+        return
+    if _block_if_locked_by_other(project, "Copiar Cloud"):
         return
     if not _is_cloud_project(project):
         _write_action_audit(
@@ -574,6 +640,8 @@ def copiar_cloud(project):
 def testar_autcom(project):
     title = "Testar Abertura do Autcom"
     if _block_if_closing_active(project, title):
+        return
+    if _block_if_locked_by_other(project, title):
         return
     if project.status != "OK":
         _write_action_audit(
@@ -616,6 +684,12 @@ def testar_autcom(project):
         )
         return
 
+    lock, lock_reason = _acquire_project_lock(project, title)
+    if lock_reason:
+        _write_action_audit(title, "bloqueado", project, reason=lock_reason)
+        messagebox.showerror(title, f"Teste nao iniciado: {lock_reason}.")
+        return
+
     progress = Toplevel()
     progress.title(title)
     theme.size_window(progress, 600, 140)
@@ -647,6 +721,8 @@ def testar_autcom(project):
             result_queue.put(("done", result))
         except Exception as error:
             result_queue.put(("error", error))
+        finally:
+            lock.release()
 
     def poll():
         try:
@@ -1153,6 +1229,12 @@ def _start_copy(window, project, destination, title):
     # Revalida: o fechamento pode ter sido iniciado enquanto a confirmacao estava aberta.
     if _block_if_closing_active(project, title):
         return
+    # Trava compartilhada: outro operador pode ter comecado algo nesta pasta.
+    lock, lock_reason = _acquire_project_lock(project, title)
+    if lock_reason:
+        _write_action_audit(title, "bloqueado", project, destination, reason=lock_reason)
+        messagebox.showerror(title, f"Copia nao iniciada: {lock_reason}.")
+        return
     _write_action_audit(title, "iniciado", project, destination)
     progress = Toplevel()
     progress.title(title)
@@ -1186,6 +1268,8 @@ def _start_copy(window, project, destination, title):
             error = None
         except Exception as copy_error:
             error = copy_error
+        finally:
+            lock.release()
         result_queue.put(
             (
                 error,
@@ -1382,7 +1466,7 @@ def _list_remaining_source_items(source):
         return sorted(
             item.name
             for item in Path(source).iterdir()
-            if item.name.lower() != "comandoscmd"
+            if item.name.lower() not in ("comandoscmd", LOCK_FILE_NAME)
         )
     except OSError:
         return []
@@ -1401,7 +1485,7 @@ def _cleanup_source_after_copy(source):
     source = Path(source)
     cleaned_items = 0
     for item in source.iterdir():
-        if item.name.lower() == "comandoscmd":
+        if item.name.lower() in ("comandoscmd", LOCK_FILE_NAME):
             continue
         try:
             _remove_source_item_with_retry(item)

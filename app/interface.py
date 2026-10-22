@@ -28,6 +28,7 @@ from app.jenkins import (
 )
 from app.learning import insights_for_project, learn_from_projects
 from app.pattern import generate_pattern_from_projects, save_pattern
+from app.project_lock import describe_owner, read_owner
 from app.runtime import executable_generation_text, resource_path
 from app.scanner import enrich_project_file_versions, scan_projects
 from app.script_monitor import ScriptMonitorResult, check_scripts, mark_scripts_done
@@ -646,10 +647,22 @@ class VersionScannerApp(tk.Tk):
             return "zip_below"
         return self._status_tag(project)
 
+    def _other_operator_lock(self, project):
+        """Trava de outro sistema (outro operador do TS) neste projeto, se houver."""
+        if actions.CLOSING_MANAGER.is_active(project):
+            return None
+        try:
+            return read_owner(project.path)
+        except OSError:
+            return None
+
     def _closing_text(self, project):
         text = actions.CLOSING_MANAGER.progress_text(project)
         if actions.CLOSING_MANAGER.is_active(project):
             return text
+        owner = self._other_operator_lock(project)
+        if owner is not None:
+            return f"Em uso: {owner.get('action', '')} ({owner.get('user', '')})"
         record = self._zip_record_below_max(project)
         if record is None:
             return text
@@ -2329,7 +2342,7 @@ class VersionScannerApp(tk.Tk):
             self.autcom_test_button.config(
                 state="normal" if selected.status == "OK" else "disabled"
             )
-            if actions.CLOSING_MANAGER.is_active(selected):
+            if actions.CLOSING_MANAGER.is_active(selected) or self._other_operator_lock(selected):
                 for button in self._buttons_blocked_while_closing():
                     button.config(state="disabled")
             self.selection_hint_label.config(text=self._selection_hint(selected))
@@ -2406,6 +2419,12 @@ class VersionScannerApp(tk.Tk):
 
     def _selection_hint(self, project):
         hints = []
+        owner = self._other_operator_lock(project)
+        if owner is not None:
+            hints.append(
+                f"Projeto em uso: {describe_owner(owner)}. Fechamento, cópia, "
+                "limpeza, teste e validação ficam bloqueados até terminar."
+            )
         if actions.CLOSING_MANAGER.is_active(project):
             hints.append(
                 "Fechamento em andamento: Copiar, Limpar Pasta, Testar Autcom e "

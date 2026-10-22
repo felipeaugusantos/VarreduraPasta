@@ -935,10 +935,13 @@ class ModalWorkerFailureTests(unittest.TestCase):
         return progress
 
     def test_copy_unexpected_error_closes_modal_and_shows_error(self):
+        from tempfile import TemporaryDirectory
         from unittest.mock import MagicMock
         from app.actions import _start_copy
 
-        project = make_project()
+        temp = TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        project = make_project(path=Path(temp.name))
         with (
             patch(
                 "app.actions._copy_project_files",
@@ -961,9 +964,12 @@ class ModalWorkerFailureTests(unittest.TestCase):
         self.assertIn("erro inesperado", showerror.call_args.args[1])
 
     def test_manual_cleanup_unexpected_error_closes_modal_and_shows_error(self):
+        from tempfile import TemporaryDirectory
         from app.actions import _start_manual_cleanup
 
-        project = make_project()
+        temp = TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        project = make_project(path=Path(temp.name))
         with (
             patch(
                 "app.actions._cleanup_source_after_copy",
@@ -1205,6 +1211,117 @@ class ActionsBlockedWhileClosingTests(unittest.TestCase):
         copy_files.assert_not_called()
         messagebox.showerror.assert_called_once()
         self.assertEqual(write_audit.call_args.args[1], "bloqueado")
+
+
+
+class SharedProjectLockTests(unittest.TestCase):
+    """Trava entre operadores do TS: cada um roda o proprio sistema."""
+
+    def setUp(self):
+        from tempfile import TemporaryDirectory
+
+        self._temp = TemporaryDirectory(ignore_cleanup_errors=True)
+        self.addCleanup(self._temp.cleanup)
+        self.project_path = Path(self._temp.name) / "379.48.2.30.74.150.100.7"
+        (self.project_path / "comandosCMD").mkdir(parents=True)
+        (self.project_path / "comandosCMD" / "_FechamentoArquivos.bat").write_text("echo ok", encoding="utf-8")
+        self.project = make_project(folder_name=self.project_path.name, path=self.project_path)
+
+    def lock_by_other_operator(self, action="Fechamento Local"):
+        from app.project_lock import ProjectLock
+
+        with patch.dict("os.environ", {"USERNAME": "joao.silva"}):
+            lock = ProjectLock(self.project_path, action).acquire()
+        self.addCleanup(lock.release)
+        return lock
+
+    def test_copy_is_blocked_while_other_operator_closes_project(self):
+        from app.actions import copiar_local
+
+        self.lock_by_other_operator("Fechamento Local")
+        with (
+            patch("app.actions._write_action_audit") as write_audit,
+            patch("app.actions.messagebox") as messagebox,
+            patch("app.actions._prepare_copy") as prepare_copy,
+        ):
+            copiar_local(self.project)
+
+        prepare_copy.assert_not_called()
+        self.assertIn("joao.silva", messagebox.showerror.call_args.args[1])
+        self.assertIn("projeto em uso", write_audit.call_args.kwargs["reason"])
+
+    def test_copy_rechecks_lock_right_before_copying(self):
+        from unittest.mock import MagicMock
+        from app.actions import _start_copy
+
+        self.lock_by_other_operator("Copiar Local")
+        with (
+            patch("app.actions._write_action_audit"),
+            patch("app.actions.messagebox") as messagebox,
+            patch("app.actions.Toplevel") as toplevel,
+            patch("app.actions._copy_project_files") as copy_files,
+        ):
+            _start_copy(MagicMock(), self.project, Path("C:/destino/p"), "Copiar Local")
+
+        toplevel.assert_not_called()
+        copy_files.assert_not_called()
+        self.assertIn("Copiar Local em andamento por joao.silva", messagebox.showerror.call_args.args[1])
+
+    def test_closing_is_blocked_when_other_operator_uses_project(self):
+        from app.closing_runner import ClosingManager
+
+        self.lock_by_other_operator("Copiar Local")
+        manager = ClosingManager(lambda job: 0, start_thread=lambda target, job: None)
+        with (
+            patch("app.actions.CLOSING_MANAGER", manager),
+            patch("app.actions._write_action_audit"),
+            patch("app.actions.messagebox"),
+        ):
+            enqueued, blocked = fechamento_local(self.project)
+
+        self.assertEqual(enqueued, [])
+        self.assertIn("Copiar Local em andamento por joao.silva", blocked[0][1])
+        self.assertFalse(manager.is_active(self.project))
+
+    def test_closing_holds_lock_while_queued_and_releases_when_done(self):
+        from app import actions
+        from app.closing_runner import ClosingManager
+        from app.project_lock import ProjectLockedError, read_owner
+
+        started = []
+        manager = ClosingManager(
+            actions._execute_closing_job,
+            start_thread=lambda target, job: started.append((target, job)),
+        )
+        with (
+            patch("app.actions.CLOSING_MANAGER", manager),
+            patch("app.actions._write_action_audit"),
+            patch("app.actions.messagebox"),
+            patch("app.actions._run_closing_job", return_value=0),
+            patch.dict("os.environ", {"USERNAME": "felipe.santos"}),
+        ):
+            fechamento_local(self.project)
+            owner = read_owner(self.project_path)
+            with self.assertRaises(ProjectLockedError):
+                self.lock_by_other_operator("Copiar Local")
+            target, job = started[0]
+            target(job)
+
+        self.assertEqual((owner["user"], owner["action"]), ("felipe.santos", "Fechamento Local"))
+        self.assertIsNone(read_owner(self.project_path))
+
+    def test_cleanup_keeps_lock_file_and_does_not_list_it(self):
+        from app.actions import _list_remaining_source_items
+        from app.project_lock import LOCK_FILE_NAME
+
+        (self.project_path / "Autcom.exe").write_bytes(b"exe")
+        (self.project_path / LOCK_FILE_NAME).write_text("{}", encoding="utf-8")
+
+        _cleanup_source_after_copy(self.project_path)
+
+        remaining = sorted(item.name for item in self.project_path.iterdir())
+        self.assertEqual(remaining, [LOCK_FILE_NAME, "comandosCMD"])
+        self.assertEqual(_list_remaining_source_items(self.project_path), [])
 
 
 if __name__ == "__main__":

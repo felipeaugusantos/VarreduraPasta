@@ -60,6 +60,7 @@ Nao distribuir `settings.json` junto do pacote. Dados persistentes ficam em
 | `app/actions.py` | Fechamento, copia, limpeza de pasta e validacoes operacionais. |
 | `app/closing_runner.py` | Fila de fechamentos em segundo plano (sem Tkinter). |
 | `app/zip_memory.py` | Maior total de ZIPs ja gerado por pasta (`zip_memory.json`). |
+| `app/project_lock.py` | Trava por projeto entre operadores do TS (`.varredura.lock` na pasta). |
 | `app/autcom_test.py` | Preparo da pasta de teste e validacao da abertura do Autcom. |
 | `app/pattern.py` | Padrao de arquivos por projeto. |
 | `app/settings.py` | Persistencia em `settings.json`. |
@@ -100,6 +101,13 @@ Nao distribuir `settings.json` junto do pacote. Dados persistentes ficam em
   mesma pasta (nome completo) deixa a linha amarela (`zip_below`).
 - Os testes usam uma pasta de dados temporaria (`tests/__init__.py`); nunca
   devem gravar em `%LOCALAPPDATA%\VarreduraSistema`.
+- Fechamento, copia, limpeza manual e teste do Autcom criam a trava
+  `.varredura.lock` na pasta do projeto (criacao atomica, renovada a cada 30 s,
+  expira apos 3 min sem renovacao). Outro operador do TS ve "Em uso" na coluna
+  Fechamento e fica bloqueado. A limpeza nunca apaga o arquivo de trava.
+- Um ZIP ilegivel (formato nao suportado, senha, gravacao em andamento) vira
+  pendencia so daquele projeto; erro inesperado num projeto nao interrompe a
+  varredura dos demais (`_failed_project_result` em `app/scanner.py`).
 
 ## Caminhos de rede conhecidos
 
