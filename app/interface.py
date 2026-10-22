@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from app import __version__, actions, logging_utils, project_view, zip_memory
+from app import __version__, actions, logging_utils, project_view, theme, zip_memory
 from app.audit import filter_log_entries, list_log_files, parse_log_entries, read_log_file
 from app.config import (
     CLOSING_MAX_CONCURRENT,
@@ -53,8 +53,8 @@ class VersionScannerApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title(f"Sistema de Acompanhamento de Copia v{__version__}")
-        self.geometry("1280x720")
-        self.minsize(980, 560)
+        self.geometry("1380x820")
+        self.minsize(1180, 680)
         self._set_window_icon()
 
         self.projects = []
@@ -145,198 +145,16 @@ class VersionScannerApp(tk.Tk):
         self.config(menu=menu_bar)
 
     def _build_layout(self):
+        self.fonts = theme.apply_theme(self)
         self.columnconfigure(0, weight=1)
-        self.rowconfigure(2, weight=1)
+        self.rowconfigure(3, weight=1)
 
-        header = ttk.Frame(self, padding=(12, 10))
-        header.grid(row=0, column=0, sticky="ew")
-        header.columnconfigure(1, weight=1)
-
-        ttk.Label(header, text="Diretório-base:").grid(row=0, column=0, sticky="w")
-        ttk.Label(header, textvariable=self.base_directory_var).grid(
-            row=0,
-            column=1,
-            sticky="w",
-            padx=(8, 8),
-        )
-        self.refresh_button = ttk.Button(header, text="Atualizar", command=self.refresh)
-        self.refresh_button.grid(row=0, column=2, sticky="e")
-
-        filter_bar = ttk.Frame(self, padding=(12, 0, 12, 8))
-        filter_bar.grid(row=1, column=0, sticky="ew")
-        filter_bar.columnconfigure(3, weight=1)
-
-        ttk.Label(filter_bar, text="Filtro:").grid(row=0, column=0, sticky="w")
-        filter_combo = ttk.Combobox(
-            filter_bar,
-            textvariable=self.filter_var,
-            state="readonly",
-            width=16,
-            values=("Todos", "Somente OK", "Com erro", "Local", "Cloud"),
-        )
-        filter_combo.grid(row=0, column=1, sticky="w", padx=(8, 18))
-        filter_combo.bind("<<ComboboxSelected>>", lambda _event: self._render_projects())
-
-        ttk.Label(filter_bar, text="Buscar:").grid(row=0, column=2, sticky="w")
-        search_entry = ttk.Entry(filter_bar, textvariable=self.search_var)
-        search_entry.grid(row=0, column=3, sticky="ew", padx=(8, 8))
-        ttk.Button(
-            filter_bar,
-            text="Limpar",
-            command=self._clear_search,
-            width=10,
-        ).grid(row=0, column=4, sticky="e")
-        self.search_var.trace_add("write", lambda *_args: self._render_projects())
-
-        columns = (
-            "folder",
-            "type",
-            "file_version",
-            "product_version",
-            "expected_file",
-            "expected_product",
-            "autcom_size",
-            "zip",
-            "status",
-            "closing",
-        )
-        self.tree = ttk.Treeview(self, columns=columns, show="headings", height=16)
-        headings = {
-            "folder": "Projeto",
-            "type": "Tipo",
-            "file_version": "FileVersion",
-            "product_version": "ProductVersion",
-            "expected_file": "File esperado",
-            "expected_product": "Product esperado",
-            "autcom_size": "Autcom MB",
-            "zip": "Origem",
-            "status": "Status",
-            "closing": "Fechamento",
-        }
-        widths = {
-            "folder": 180,
-            "type": 70,
-            "file_version": 110,
-            "product_version": 120,
-            "expected_file": 110,
-            "expected_product": 120,
-            "autcom_size": 90,
-            "zip": 80,
-            "status": 150,
-            "closing": 230,
-        }
-        for column in columns:
-            self.tree.heading(
-                column,
-                text=headings[column],
-                anchor="center",
-                command=lambda current_column=column: self._sort_by_column(current_column),
-            )
-            self.tree.column(column, width=widths[column], anchor="center")
-
-        self.tree.tag_configure("ok", background="#e9f7ef")
-        self.tree.tag_configure("warning", background="#fff8d9")
-        self.tree.tag_configure("error", background="#fdecec")
-        # Fechamento gerou menos ZIPs que o maior total ja registrado para a pasta.
-        self.tree.tag_configure("zip_below", background="#ffe066")
-
-        self.tree.grid(row=2, column=0, sticky="nsew", padx=12)
-        self.tree.bind("<<TreeviewSelect>>", lambda _event: self._sync_buttons())
-        self.tree.bind("<Double-1>", lambda _event: self.open_selected_project_folder())
-
-        footer = ttk.Frame(self, padding=12)
-        footer.grid(row=3, column=0, sticky="ew")
-        footer.columnconfigure(0, weight=1)
-
-        self.status_label = ttk.Label(footer, text="")
-        self.status_label.grid(row=0, column=0, sticky="w")
-
-        self.selection_hint_label = ttk.Label(
-            footer,
-            text="",
-            wraplength=940,
-            justify="left",
-        )
-        self.selection_hint_label.grid(
-            row=1,
-            column=0,
-            columnspan=2,
-            sticky="ew",
-            pady=(6, 0),
-        )
-
-        button_bar = ttk.Frame(footer)
-        button_bar.grid(row=0, column=1, sticky="e")
-
-        self.local_close_button = ttk.Button(
-            button_bar,
-            text="Fechamento Local",
-            command=lambda: self._run_closing(actions.fechamento_local),
-        )
-        self.local_close_button.grid(row=0, column=0, padx=4)
-
-        self.cloud_close_button = ttk.Button(
-            button_bar,
-            text="Fechamento Cloud",
-            command=lambda: self._run_closing(actions.fechamento_cloud),
-        )
-        self.cloud_close_button.grid(row=0, column=1, padx=4)
-
-        self.validate_close_button = ttk.Button(
-            button_bar,
-            text="Validar Fechamento",
-            command=lambda: self._run_action(actions.validar_pos_fechamento),
-        )
-        self.validate_close_button.grid(row=0, column=2, padx=(4, 12))
-
-        self.clean_folder_button = ttk.Button(
-            button_bar,
-            text="Limpar Pasta",
-            command=lambda: self._run_action(actions.limpar_pasta),
-        )
-        self.clean_folder_button.grid(row=0, column=3, padx=(4, 12))
-
-        self.local_copy_button = ttk.Button(
-            button_bar,
-            text="Copiar Local",
-            command=lambda: self._run_action(actions.copiar_local),
-        )
-        self.local_copy_button.grid(row=0, column=4, padx=4)
-
-        self.cloud_copy_button = ttk.Button(
-            button_bar,
-            text="Copiar Cloud",
-            command=lambda: self._run_action(actions.copiar_cloud),
-        )
-        self.cloud_copy_button.grid(row=0, column=5, padx=4)
-
-        self.autcom_test_button = ttk.Button(
-            button_bar,
-            text="Testar Autcom",
-            command=lambda: self._run_action(actions.testar_autcom),
-        )
-        self.autcom_test_button.grid(
-            row=1,
-            column=4,
-            columnspan=2,
-            sticky="ew",
-            padx=4,
-            pady=(8, 0),
-        )
-
-        self.details_button = ttk.Button(
-            button_bar,
-            text="Detalhes",
-            command=self.open_project_details,
-        )
-        self.details_button.grid(row=0, column=6, padx=(12, 4))
-
-        self.open_folder_button = ttk.Button(
-            button_bar,
-            text="Abrir Pasta",
-            command=self.open_selected_project_folder,
-        )
-        self.open_folder_button.grid(row=0, column=7, padx=4)
+        self._build_header()
+        self._build_counter_cards()
+        self._build_filter_bar()
+        self._build_content()
+        self._build_action_groups()
+        self._build_status_bar()
 
         self.buttons = (
             self.local_close_button,
@@ -350,6 +168,304 @@ class VersionScannerApp(tk.Tk):
             self.open_folder_button,
         )
         self._sync_buttons()
+
+    def _build_header(self):
+        header = ttk.Frame(self, style="Header.TFrame", padding=(20, 14))
+        header.grid(row=0, column=0, sticky="ew")
+        header.columnconfigure(0, weight=1)
+
+        title_box = ttk.Frame(header, style="Header.TFrame")
+        title_box.grid(row=0, column=0, sticky="w")
+        ttk.Label(
+            title_box,
+            text="Acompanhamento de Cópia",
+            style="HeaderTitle.TLabel",
+        ).pack(anchor="w")
+        subtitle = ttk.Frame(title_box, style="Header.TFrame")
+        subtitle.pack(anchor="w", pady=(2, 0))
+        ttk.Label(
+            subtitle,
+            text=f"Versão {__version__}   •   Diretório-base:",
+            style="HeaderMuted.TLabel",
+        ).pack(side="left")
+        ttk.Label(
+            subtitle,
+            textvariable=self.base_directory_var,
+            style="HeaderMuted.TLabel",
+        ).pack(side="left", padx=(4, 0))
+
+        self.refresh_button = ttk.Button(
+            header,
+            text="⟳  Atualizar",
+            style="Primary.TButton",
+            command=self.refresh,
+        )
+        self.refresh_button.grid(row=0, column=1, sticky="e")
+
+    def _build_counter_cards(self):
+        cards = ttk.Frame(self, padding=(16, 14, 16, 4))
+        cards.grid(row=1, column=0, sticky="ew")
+        self.counter_labels = {}
+        definitions = (
+            ("total", "Projetos analisados", "primary"),
+            ("ok", "OK", "ok"),
+            ("pending", "Com pendência", "error"),
+            ("closing", "Em fechamento", "closing"),
+            ("zip_alert", "Alerta de ZIPs", "zip"),
+        )
+        for column, (key, caption, color) in enumerate(definitions):
+            cards.columnconfigure(column, weight=1, uniform="cards")
+            card = tk.Frame(
+                cards,
+                background=theme.COLORS["surface"],
+                highlightthickness=1,
+                highlightbackground=theme.COLORS["border"],
+            )
+            card.grid(row=0, column=column, sticky="ew", padx=(0 if column == 0 else 10, 0))
+            tk.Frame(card, background=theme.COLORS[color], width=4).pack(side="left", fill="y")
+            body = ttk.Frame(card, style="CardBody.TFrame", padding=(14, 8, 14, 10))
+            body.pack(side="left", fill="both", expand=True)
+            value = ttk.Label(body, text="0", style=f"CardValue{color.title()}.TLabel")
+            value.pack(anchor="w")
+            ttk.Label(body, text=caption, style="CardMuted.TLabel").pack(anchor="w")
+            self.counter_labels[key] = value
+
+    def _build_filter_bar(self):
+        filter_bar = ttk.Frame(self, padding=(16, 10, 16, 8))
+        filter_bar.grid(row=2, column=0, sticky="ew")
+        filter_bar.columnconfigure(3, weight=1)
+
+        ttk.Label(filter_bar, text="Filtro", style="Muted.TLabel").grid(row=0, column=0, sticky="w")
+        filter_combo = ttk.Combobox(
+            filter_bar,
+            textvariable=self.filter_var,
+            state="readonly",
+            width=16,
+            values=("Todos", "Somente OK", "Com erro", "Local", "Cloud"),
+        )
+        filter_combo.grid(row=0, column=1, sticky="w", padx=(8, 20))
+        filter_combo.bind("<<ComboboxSelected>>", lambda _event: self._render_projects())
+
+        ttk.Label(filter_bar, text="Buscar", style="Muted.TLabel").grid(row=0, column=2, sticky="w")
+        search_entry = ttk.Entry(filter_bar, textvariable=self.search_var)
+        search_entry.grid(row=0, column=3, sticky="ew", padx=(8, 8))
+        ttk.Button(
+            filter_bar,
+            text="Limpar",
+            command=self._clear_search,
+        ).grid(row=0, column=4, sticky="e")
+        self.search_var.trace_add("write", lambda *_args: self._render_projects())
+
+    def _build_content(self):
+        content = ttk.Frame(self, padding=(16, 0, 16, 0))
+        content.grid(row=3, column=0, sticky="nsew")
+        content.columnconfigure(0, weight=1)
+        content.rowconfigure(0, weight=1)
+
+        table_frame = ttk.Frame(content)
+        table_frame.grid(row=0, column=0, sticky="nsew")
+        table_frame.columnconfigure(0, weight=1)
+        table_frame.rowconfigure(0, weight=1)
+
+        columns = (
+            "folder",
+            "type",
+            "file_version",
+            "product_version",
+            "autcom_size",
+            "zip",
+            "status",
+            "closing",
+        )
+        self.tree = ttk.Treeview(table_frame, columns=columns, show="headings", height=14)
+        headings = {
+            "folder": "Projeto",
+            "type": "Tipo",
+            "file_version": "FileVersion",
+            "product_version": "ProductVersion",
+            "autcom_size": "Autcom MB",
+            "zip": "Origem",
+            "status": "Status",
+            "closing": "Fechamento",
+        }
+        widths = {
+            "folder": 215,
+            "type": 60,
+            "file_version": 105,
+            "product_version": 115,
+            "autcom_size": 95,
+            "zip": 95,
+            "status": 150,
+            "closing": 165,
+        }
+        for column in columns:
+            anchor = "w" if column == "folder" else "center"
+            self.tree.heading(
+                column,
+                text=headings[column],
+                anchor=anchor,
+                command=lambda current_column=column: self._sort_by_column(current_column),
+            )
+            self.tree.column(column, width=widths[column], minwidth=60, anchor=anchor)
+
+        self.tree.tag_configure("ok", background=theme.COLORS["surface"])
+        self.tree.tag_configure("warning", background=theme.COLORS["row_warning"])
+        self.tree.tag_configure("error", background=theme.COLORS["row_error"])
+        # Fechamento gerou menos ZIPs que o maior total ja registrado para a pasta.
+        self.tree.tag_configure("zip_below", background=theme.COLORS["row_zip_below"])
+
+        scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=scrollbar.set)
+        self.tree.grid(row=0, column=0, sticky="nsew")
+        scrollbar.grid(row=0, column=1, sticky="ns")
+        self.tree.bind("<<TreeviewSelect>>", lambda _event: self._sync_buttons())
+        self.tree.bind("<Double-1>", lambda _event: self.open_selected_project_folder())
+
+        self._build_details_panel(content)
+
+    def _build_details_panel(self, parent):
+        panel = tk.Frame(
+            parent,
+            background=theme.COLORS["surface"],
+            highlightthickness=1,
+            highlightbackground=theme.COLORS["border"],
+            width=330,
+        )
+        panel.grid(row=0, column=1, sticky="ns", padx=(14, 0))
+        panel.grid_propagate(False)
+        panel.pack_propagate(False)
+
+        body = ttk.Frame(panel, style="CardBody.TFrame", padding=(16, 14))
+        body.pack(fill="both", expand=True)
+
+        self.detail_title = ttk.Label(
+            body,
+            style="PanelTitle.TLabel",
+            wraplength=290,
+            justify="left",
+        )
+        self.detail_title.pack(anchor="w")
+        self.detail_badge = ttk.Label(body, style="CardMuted.TLabel", wraplength=290, justify="left")
+        self.detail_badge.pack(anchor="w", pady=(2, 10))
+        ttk.Separator(body).pack(fill="x")
+
+        fields = ttk.Frame(body, style="CardBody.TFrame")
+        fields.pack(fill="x", pady=(10, 10))
+        fields.columnconfigure(1, weight=1)
+        self.detail_values = {}
+        self.detail_expected = {}
+        for row, (key, caption) in enumerate(
+            (
+                ("file_version", "FileVersion"),
+                ("product_version", "ProductVersion"),
+                ("autcom", "Autcom"),
+                ("origin", "Origem"),
+                ("closing", "Fechamento"),
+            )
+        ):
+            ttk.Label(fields, text=caption, style="CardMuted.TLabel").grid(
+                row=row * 2, column=0, sticky="nw", pady=(4, 0)
+            )
+            value = ttk.Label(fields, style="Card.TLabel")
+            value.grid(row=row * 2, column=1, sticky="w", padx=(12, 0), pady=(4, 0))
+            self.detail_values[key] = value
+            if key in ("file_version", "product_version"):
+                expected = ttk.Label(fields, style="CardMuted.TLabel")
+                expected.grid(row=row * 2 + 1, column=1, sticky="w", padx=(12, 0))
+                self.detail_expected[key] = expected
+
+        ttk.Separator(body).pack(fill="x")
+        ttk.Label(body, text="Observações", style="PanelSection.TLabel").pack(anchor="w", pady=(10, 4))
+        self.selection_hint_label = ttk.Label(
+            body,
+            style="Card.TLabel",
+            wraplength=290,
+            justify="left",
+        )
+        self.selection_hint_label.pack(anchor="w", fill="x")
+
+    def _build_action_groups(self):
+        bar = ttk.Frame(self, padding=(16, 12, 16, 10))
+        bar.grid(row=4, column=0, sticky="ew")
+
+        def group(column, title):
+            frame = ttk.LabelFrame(bar, text=f" {title} ", style="Group.TLabelframe", padding=(10, 6, 10, 10))
+            frame.grid(row=0, column=column, sticky="w", padx=(0 if column == 0 else 14, 0))
+            return frame
+
+        closing = group(0, "Fechamento")
+        self.local_close_button = ttk.Button(
+            closing,
+            text="Fechamento Local",
+            style="Primary.TButton",
+            command=lambda: self._run_closing(actions.fechamento_local),
+        )
+        self.cloud_close_button = ttk.Button(
+            closing,
+            text="Fechamento Cloud",
+            style="Primary.TButton",
+            command=lambda: self._run_closing(actions.fechamento_cloud),
+        )
+        self.validate_close_button = ttk.Button(
+            closing,
+            text="Validar Fechamento",
+            command=lambda: self._run_action(actions.validar_pos_fechamento),
+        )
+
+        copy = group(1, "Cópia")
+        self.local_copy_button = ttk.Button(
+            copy,
+            text="Copiar Local",
+            command=lambda: self._run_action(actions.copiar_local),
+        )
+        self.cloud_copy_button = ttk.Button(
+            copy,
+            text="Copiar Cloud",
+            command=lambda: self._run_action(actions.copiar_cloud),
+        )
+        self.clean_folder_button = ttk.Button(
+            copy,
+            text="Limpar Pasta",
+            command=lambda: self._run_action(actions.limpar_pasta),
+        )
+
+        project = group(2, "Projeto")
+        self.autcom_test_button = ttk.Button(
+            project,
+            text="Testar Autcom",
+            command=lambda: self._run_action(actions.testar_autcom),
+        )
+        self.details_button = ttk.Button(
+            project,
+            text="Detalhes",
+            command=self.open_project_details,
+        )
+        self.open_folder_button = ttk.Button(
+            project,
+            text="Abrir Pasta",
+            command=self.open_selected_project_folder,
+        )
+
+        for frame in (closing, copy, project):
+            for index, button in enumerate(frame.winfo_children()):
+                button.grid(row=0, column=index, padx=(0 if index == 0 else 6, 0))
+
+    def _build_status_bar(self):
+        status_bar = tk.Frame(
+            self,
+            background=theme.COLORS["surface"],
+            highlightthickness=1,
+            highlightbackground=theme.COLORS["border"],
+        )
+        status_bar.grid(row=5, column=0, sticky="ew")
+        self.status_label = ttk.Label(status_bar, text="", style="Status.TLabel", padding=(16, 6))
+        self.status_label.pack(side="left")
+        ttk.Label(
+            status_bar,
+            text=f"Fechamentos simultâneos: até {CLOSING_MAX_CONCURRENT}",
+            style="Status.TLabel",
+            padding=(16, 6),
+        ).pack(side="right")
 
     def refresh(self):
         if self.refresh_job is not None:
@@ -459,20 +575,36 @@ class VersionScannerApp(tk.Tk):
                 values=(
                     project.folder_name,
                     self._project_type(project),
-                    project.display_file_version or "",
-                    project.display_product_version or "",
-                    project.expected_file_version,
-                    project.expected_product_version,
+                    project_view.version_display(
+                        project.display_file_version,
+                        project.expected_file_version,
+                    ),
+                    project_view.version_display(
+                        project.display_product_version,
+                        project.expected_product_version,
+                    ),
                     size,
                     self._short_zip_status(project),
-                    self._short_status(project),
+                    project_view.status_display(project),
                     self._closing_text(project),
                 ),
                 tags=(self._row_tag(project),),
             )
 
         self.status_label.config(text=self._summary_text(filtered_projects))
+        self._update_counters()
         self._sync_buttons()
+
+    def _update_counters(self):
+        if self.is_scanning:
+            return
+        counts = project_view.dashboard_counts(self.projects)
+        counts["closing"] = actions.CLOSING_MANAGER.active_count()
+        counts["zip_alert"] = sum(
+            1 for project in self.projects if self._zip_record_below_max(project)
+        )
+        for key, label in self.counter_labels.items():
+            label.config(text=str(counts[key]))
 
     def _clear_search(self):
         self.search_var.set("")
@@ -2049,8 +2181,65 @@ class VersionScannerApp(tk.Tk):
                 for button in self._buttons_blocked_while_closing():
                     button.config(state="disabled")
             self.selection_hint_label.config(text=self._selection_hint(selected))
+            self._show_project_details(selected)
         else:
             self.selection_hint_label.config(text="")
+            self._show_empty_details(
+                "Nenhum projeto selecionado",
+                "Selecione um projeto na tabela para ver os detalhes. "
+                "Use Ctrl ou Shift para selecionar vários e fechar em lote.",
+            )
+
+    def _show_empty_details(self, title, subtitle):
+        self.detail_title.config(text=title)
+        self.detail_badge.config(text=subtitle, style="CardMuted.TLabel")
+        for key, label in self.detail_values.items():
+            label.config(text="—", style="Card.TLabel")
+        for label in self.detail_expected.values():
+            label.grid_remove()
+
+    def _show_project_details(self, project):
+        category = project_view.status_category(project)
+        badge_style = {
+            "ok": "CardOk.TLabel",
+            "missing": "CardError.TLabel",
+            "version": "CardError.TLabel",
+            "zip": "CardError.TLabel",
+        }.get(category, "CardWarn.TLabel")
+        self.detail_title.config(text=project.folder_name)
+        self.detail_badge.config(
+            text=f"{self._project_type(project)}   •   {project_view.status_display(project)}",
+            style=badge_style,
+        )
+        for key, found, expected in (
+            ("file_version", project.display_file_version, project.expected_file_version),
+            ("product_version", project.display_product_version, project.expected_product_version),
+        ):
+            mismatch = bool(found and expected and found != expected)
+            self.detail_values[key].config(
+                text=found or "—",
+                style="CardError.TLabel" if mismatch else "Card.TLabel",
+            )
+            if mismatch:
+                self.detail_expected[key].config(text=f"esperado {expected}")
+                self.detail_expected[key].grid()
+            else:
+                self.detail_expected[key].grid_remove()
+
+        size = project.display_autcom_size_mb
+        self.detail_values["autcom"].config(
+            text="—" if size is None else f"{size:.2f} MB",
+            style="Card.TLabel",
+        )
+        self.detail_values["origin"].config(text=self._short_zip_status(project), style="Card.TLabel")
+        closing_text = self._closing_text(project) or "—"
+        if self._row_tag(project) == "zip_below":
+            closing_style = "CardZip.TLabel"
+        elif actions.CLOSING_MANAGER.is_active(project):
+            closing_style = "CardClosing.TLabel"
+        else:
+            closing_style = "Card.TLabel"
+        self.detail_values["closing"].config(text=closing_text, style=closing_style)
 
     def _buttons_blocked_while_closing(self):
         return (
@@ -2064,7 +2253,7 @@ class VersionScannerApp(tk.Tk):
         )
 
     def _selection_hint(self, project):
-        hints = [f"Projeto {self._project_type(project)} selecionado: {project.folder_name}."]
+        hints = []
         if actions.CLOSING_MANAGER.is_active(project):
             hints.append(
                 "Fechamento em andamento: Copiar, Limpar Pasta, Testar Autcom e "
@@ -2083,7 +2272,7 @@ class VersionScannerApp(tk.Tk):
                 f"Autcom precisa ter pelo menos {CLOUD_MIN_AUTCOM_MB} MB."
             )
         if project.status != "OK":
-            hints.append(f"Detalhe: {self._summarize_project_detail(project.status)}")
+            hints.append(f"Pendência: {self._summarize_project_detail(project.status)}")
         zip_record = self._zip_record_below_max(project)
         if zip_record is not None and not actions.CLOSING_MANAGER.is_active(project):
             hints.append(
@@ -2093,11 +2282,8 @@ class VersionScannerApp(tk.Tk):
             )
         closing_job = actions.CLOSING_MANAGER.job_for(project)
         if closing_job is not None and closing_job.log_path is not None:
-            hints.append(
-                f"Último fechamento: {actions.CLOSING_MANAGER.progress_text(project)}"
-                f" | Log do BAT: {closing_job.log_path}"
-            )
-        return "\n".join(hints)
+            hints.append(f"Log do último fechamento: {closing_job.log_path}")
+        return "\n\n".join(f"• {hint}" for hint in hints)
 
     def _summarize_project_detail(self, status):
         parts = [part.strip() for part in status.split(";") if part.strip()]
@@ -2117,10 +2303,11 @@ class VersionScannerApp(tk.Tk):
         if local_count == 0:
             self.cloud_close_button.config(state="normal")
 
-        hints = [
-            f"{len(projects)} projetos selecionados "
-            f"({local_count} Local, {cloud_count} Cloud)."
-        ]
+        self._show_empty_details(
+            f"{len(projects)} projetos selecionados",
+            f"{local_count} Local   •   {cloud_count} Cloud",
+        )
+        hints = []
         if local_count and cloud_count:
             hints.append(
                 "Para fechar varios projetos de uma vez, selecione somente Local "
@@ -2132,7 +2319,7 @@ class VersionScannerApp(tk.Tk):
                 f"Os BATs rodam em segundo plano, ate {CLOSING_MAX_CONCURRENT} por vez; "
                 "acompanhe na coluna Fechamento."
             )
-        self.selection_hint_label.config(text="\n".join(hints))
+        self.selection_hint_label.config(text="\n\n".join(f"• {hint}" for hint in hints))
 
     def _run_action(self, action):
         selected = self._selected_project()
@@ -2169,6 +2356,7 @@ class VersionScannerApp(tk.Tk):
             self.refresh()
 
         # Libera ou bloqueia os botoes conforme o fechamento do projeto selecionado.
+        self._update_counters()
         self._sync_buttons()
 
         if reschedule:

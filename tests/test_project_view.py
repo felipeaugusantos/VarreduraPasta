@@ -37,5 +37,34 @@ class ProjectViewTests(unittest.TestCase):
         self.assertIn("10:30:00", summary)
 
 
+class DisplayHelpersTests(unittest.TestCase):
+    def test_status_display_has_symbol_per_category(self):
+        self.assertEqual(project_view.status_display(project()), "● OK")
+        self.assertEqual(
+            project_view.status_display(project(status="Ausente: libAutban.dll")),
+            "✖ Arquivo ausente",
+        )
+        self.assertEqual(
+            project_view.status_display(project(status="FileVersion esperado x; encontrado y")),
+            "▲ Versão incorreta",
+        )
+        self.assertEqual(
+            project_view.status_display(project(status="ZIP invalido: libNfe.zip")),
+            "▲ Pendência ZIP",
+        )
+
+    def test_version_display_marks_only_mismatch(self):
+        self.assertEqual(project_view.version_display("48.02.30.74", "48.02.30.74"), "48.02.30.74")
+        self.assertEqual(project_view.version_display("48.02.30.73", "48.02.30.74"), "✗ 48.02.30.73")
+        self.assertEqual(project_view.version_display("48.02.30.73", ""), "48.02.30.73")
+        self.assertEqual(project_view.version_display(None, "48.02.30.74"), "")
+
+    def test_dashboard_counts(self):
+        counts = project_view.dashboard_counts(
+            [project(), project(), project(status="Ausente: x")]
+        )
+        self.assertEqual(counts, {"total": 3, "ok": 2, "pending": 1})
+
+
 if __name__ == "__main__":
     unittest.main()

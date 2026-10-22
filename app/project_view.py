@@ -71,3 +71,25 @@ def summary_text(projects, analyzed_total, now=None):
 def sort_value(project, column):
     values = {"folder": project.folder_name.lower(), "type": project_type(project), "file_version": project.display_file_version or "", "product_version": project.display_product_version or "", "expected_file": project.expected_file_version or "", "expected_product": project.expected_product_version or "", "autcom_size": project.display_autcom_size_mb or 0, "zip": short_zip_status(project), "status": short_status(project)}
     return values.get(column, "")
+
+
+STATUS_SYMBOLS = {"ok": "●", "missing": "✖", "version": "▲", "zip": "▲", "other": "▲"}
+
+
+def status_display(project):
+    """Status curto com simbolo, legivel mesmo com a linha selecionada."""
+    return f"{STATUS_SYMBOLS[status_category(project)]} {short_status(project)}"
+
+
+def version_display(found, expected):
+    """Marca com ✗ a versao encontrada quando difere da esperada."""
+    found = found or ""
+    if found and expected and found != expected:
+        return f"✗ {found}"
+    return found
+
+
+def dashboard_counts(projects):
+    total = len(projects)
+    ok = sum(1 for project in projects if project.status == "OK")
+    return {"total": total, "ok": ok, "pending": total - ok}

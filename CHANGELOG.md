@@ -5,6 +5,18 @@ Todas as alteracoes relevantes deste projeto sao documentadas neste arquivo.
 O formato e baseado em Keep a Changelog e o projeto segue Versionamento
 Semantico (`MAIOR.MENOR.CORRECAO`).
 
+## [Nao lancado]
+
+### Alterado
+- Redesenho da tela principal (somente biblioteca padrao, tema ttk `clam` em
+  `app/theme.py`): cabecalho com versao e diretorio-base, contadores (analisados,
+  OK, com pendencia, em fechamento, alerta de ZIPs), tabela com linhas mais
+  altas e status com simbolos, painel de detalhes do projeto selecionado (versao
+  errada em vermelho com a esperada abaixo), botoes agrupados em Fechamento,
+  Copia e Projeto, e barra de status sem corte.
+- Colunas "File esperado" e "Product esperado" sairam da tabela; a versao
+  divergente e marcada com `✗` e o esperado aparece no painel.
+
 ## [2.5.0] - 2026-10-21
 
 ### Adicionado
