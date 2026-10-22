@@ -41,6 +41,7 @@ class ClosingJob:
     message: str = ""
     log_path: Path = None
     percent: int = None
+    zip_record: object = None
 
 
 def project_key(project):

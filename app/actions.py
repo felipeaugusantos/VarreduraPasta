@@ -10,7 +10,7 @@ from pathlib import Path
 from uuid import uuid4
 from tkinter import Listbox, TclError, Toplevel, messagebox, ttk
 
-from app import logging_utils
+from app import logging_utils, zip_memory
 from app.autcom_test import resolve_test_layout, run_autcom_test
 from app.closing_runner import (
     PENDING_SUFFIXES,
@@ -293,9 +293,25 @@ def _execute_closing_job(job):
         )
         raise OSError(f"{len(pending_files)} arquivo(s) nao compactado(s): {preview}")
 
+    # Memoria por pasta: alerta quando este fechamento gera menos ZIPs que o
+    # maior total ja registrado para a mesma pasta.
+    try:
+        job.zip_record = zip_memory.record_closing(
+            project.folder_name,
+            zip_memory.count_zip_files(project.path),
+        )
+        reason = (
+            f"zips={job.zip_record.last_zips}; "
+            f"maior_registrado={job.zip_record.max_zips}; {reason}"
+        )
+    except (OSError, ValueError) as error:
+        reason = f"memoria_zips_falhou={error}; {reason}"
+
     _write_action_audit(
         job.title,
-        "concluido",
+        "concluido_abaixo_maximo"
+        if job.zip_record is not None and job.zip_record.below_max
+        else "concluido",
         project,
         bat_path=job.bat_path,
         reason=reason,

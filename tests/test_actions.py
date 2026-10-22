@@ -346,6 +346,53 @@ class ActionAuditTests(unittest.TestCase):
         self.assertEqual(return_code, 0)
         self.assertEqual(seen, [0, 20, 30, 99])
 
+    def test_closing_job_records_zip_total_and_flags_fewer_zips(self):
+        from tempfile import TemporaryDirectory
+        from app import zip_memory
+        from app.actions import _execute_closing_job
+        from app.closing_runner import ClosingJob
+
+        with TemporaryDirectory() as temp_directory:
+            root = Path(temp_directory)
+            project_path = root / "379.48.2.30.74.150.100.7"
+            project_path.mkdir()
+            project = make_project(folder_name=project_path.name, path=project_path)
+
+            def run_closing(zip_names):
+                for item in project_path.glob("*.zip"):
+                    item.unlink()
+                for name in zip_names:
+                    (project_path / name).write_bytes(b"zip")
+                job = ClosingJob(
+                    key="k",
+                    project=project,
+                    title="Fechamento Local",
+                    bat_path=project_path / "comandosCMD" / "_FechamentoArquivos.bat",
+                )
+                with (
+                    patch("app.actions._learn_project_pattern"),
+                    patch("app.actions.run_closing_bat", return_value=1),
+                    patch("app.actions._write_action_audit") as write_audit,
+                ):
+                    _execute_closing_job(job)
+                return job, write_audit.call_args
+
+            with patch.object(zip_memory, "MEMORY_FILE", root / "zip_memory.json"):
+                zip_memory.reset_cache()
+                try:
+                    first, first_audit = run_closing(["a.zip", "b.zip", "c.zip"])
+                    second, second_audit = run_closing(["a.zip", "b.zip"])
+                finally:
+                    zip_memory.reset_cache()
+
+        self.assertFalse(first.zip_record.below_max)
+        self.assertEqual(first_audit.args[1], "concluido")
+        self.assertIn("zips=3; maior_registrado=3", first_audit.kwargs["reason"])
+
+        self.assertTrue(second.zip_record.below_max)
+        self.assertEqual(second_audit.args[1], "concluido_abaixo_maximo")
+        self.assertIn("zips=2; maior_registrado=3", second_audit.kwargs["reason"])
+
     def test_closing_job_fails_when_files_remain_even_with_code_zero(self):
         from tempfile import TemporaryDirectory
         from app.actions import _execute_closing_job

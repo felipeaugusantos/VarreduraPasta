@@ -58,6 +58,7 @@ Nao distribuir `settings.json` junto do pacote. Dados persistentes ficam em
 | `app/version_reader.py` | Leitura de `FileVersion`/`ProductVersion` via WinAPI. |
 | `app/actions.py` | Fechamento, copia, limpeza de pasta e validacoes operacionais. |
 | `app/closing_runner.py` | Fila de fechamentos em segundo plano (sem Tkinter). |
+| `app/zip_memory.py` | Maior total de ZIPs ja gerado por pasta (`zip_memory.json`). |
 | `app/autcom_test.py` | Preparo da pasta de teste e validacao da abertura do Autcom. |
 | `app/pattern.py` | Padrao de arquivos por projeto. |
 | `app/settings.py` | Persistencia em `settings.json`. |
@@ -89,6 +90,10 @@ Nao distribuir `settings.json` junto do pacote. Dados persistentes ficam em
 - `Auttin.exe`, `libAuttin.dll` e `libAuttin.exe` sao alternativas do grupo Auttin.
 - `libFuncoes.dll` e opcional.
 - Pastas de teste podem ser ignoradas pela tela de configuracao.
+- Fechamento concluido com menos ZIPs que o maior total ja registrado para a
+  mesma pasta (nome completo) deixa a linha amarela (`zip_below`).
+- Os testes usam uma pasta de dados temporaria (`tests/__init__.py`); nunca
+  devem gravar em `%LOCALAPPDATA%\VarreduraSistema`.
 
 ## Caminhos de rede conhecidos
 

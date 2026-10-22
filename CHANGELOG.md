@@ -5,6 +5,18 @@ Todas as alteracoes relevantes deste projeto sao documentadas neste arquivo.
 O formato e baseado em Keep a Changelog e o projeto segue Versionamento
 Semantico (`MAIOR.MENOR.CORRECAO`).
 
+## [Nao lancado]
+
+### Adicionado
+- Memoria de ZIPs por pasta: cada fechamento concluido registra o total de
+  ZIPs gerados e o maior total ja visto (`zip_memory.json`). Se um fechamento
+  gerar menos ZIPs que o maximo, a linha fica amarela, a coluna mostra
+  `(149/150 ZIPs)` e a dica alerta. Auditado como `concluido_abaixo_maximo`.
+
+### Corrigido
+- Testes passam a usar uma pasta de dados temporaria e nao gravam mais em
+  `%LOCALAPPDATA%\VarreduraSistema`.
+
 ## [2.4.1] - 2026-10-21
 
 ### Alterado

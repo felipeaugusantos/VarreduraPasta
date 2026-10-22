@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from app import __version__, actions, logging_utils, project_view
+from app import __version__, actions, logging_utils, project_view, zip_memory
 from app.audit import filter_log_entries, list_log_files, parse_log_entries, read_log_file
 from app.config import (
     CLOSING_MAX_CONCURRENT,
@@ -223,7 +223,7 @@ class VersionScannerApp(tk.Tk):
             "autcom_size": 90,
             "zip": 80,
             "status": 150,
-            "closing": 160,
+            "closing": 230,
         }
         for column in columns:
             self.tree.heading(
@@ -237,6 +237,8 @@ class VersionScannerApp(tk.Tk):
         self.tree.tag_configure("ok", background="#e9f7ef")
         self.tree.tag_configure("warning", background="#fff8d9")
         self.tree.tag_configure("error", background="#fdecec")
+        # Fechamento gerou menos ZIPs que o maior total ja registrado para a pasta.
+        self.tree.tag_configure("zip_below", background="#ffe066")
 
         self.tree.grid(row=2, column=0, sticky="nsew", padx=12)
         self.tree.bind("<<TreeviewSelect>>", lambda _event: self._sync_buttons())
@@ -464,9 +466,9 @@ class VersionScannerApp(tk.Tk):
                     size,
                     self._short_zip_status(project),
                     self._short_status(project),
-                    actions.CLOSING_MANAGER.progress_text(project),
+                    self._closing_text(project),
                 ),
-                tags=(self._status_tag(project),),
+                tags=(self._row_tag(project),),
             )
 
         self.status_label.config(text=self._summary_text(filtered_projects))
@@ -489,6 +491,25 @@ class VersionScannerApp(tk.Tk):
 
     def _status_tag(self, project):
         return project_view.status_tag(project)
+
+    def _zip_record_below_max(self, project):
+        record = zip_memory.get_record(project.folder_name)
+        return record if record is not None and record.below_max else None
+
+    def _row_tag(self, project):
+        if not actions.CLOSING_MANAGER.is_active(project) and self._zip_record_below_max(project):
+            return "zip_below"
+        return self._status_tag(project)
+
+    def _closing_text(self, project):
+        text = actions.CLOSING_MANAGER.progress_text(project)
+        if actions.CLOSING_MANAGER.is_active(project):
+            return text
+        record = self._zip_record_below_max(project)
+        if record is None:
+            return text
+        zips_text = f"{record.last_zips}/{record.max_zips} ZIPs"
+        return f"{text} ({zips_text})" if text else zips_text
 
     def _short_zip_status(self, project):
         return project_view.short_zip_status(project)
@@ -1913,6 +1934,9 @@ class VersionScannerApp(tk.Tk):
             "- A coluna Fechamento mostra Na fila, Em andamento com o percentual ja "
             "compactado (pelo tamanho dos arquivos), Concluido com o tempo total, ou Erro. "
             "A saida de cada BAT fica em logs\\fechamentos_bat.\n"
+            "- O sistema guarda, por pasta, o maior total de ZIPs ja gerado. Se um "
+            "fechamento gerar menos ZIPs, a linha fica amarela e a coluna mostra, por "
+            "exemplo, (149/150 ZIPs).\n"
             "- Quando a fila termina, a tabela e atualizada; use Validar Fechamento para "
             "registrar a versao/status final na Auditoria.\n\n"
             "4. Copiar Local e Copiar Cloud\n"
@@ -2060,6 +2084,13 @@ class VersionScannerApp(tk.Tk):
             )
         if project.status != "OK":
             hints.append(f"Detalhe: {self._summarize_project_detail(project.status)}")
+        zip_record = self._zip_record_below_max(project)
+        if zip_record is not None and not actions.CLOSING_MANAGER.is_active(project):
+            hints.append(
+                f"Atenção: o último fechamento gerou {zip_record.last_zips} ZIP(s), "
+                f"mas esta pasta já gerou {zip_record.max_zips}. "
+                "Confira se falta algum arquivo."
+            )
         closing_job = actions.CLOSING_MANAGER.job_for(project)
         if closing_job is not None and closing_job.log_path is not None:
             hints.append(
@@ -2124,11 +2155,9 @@ class VersionScannerApp(tk.Tk):
         for item_id in self.tree.get_children():
             index = int(item_id)
             if index < len(self.displayed_projects):
-                self.tree.set(
-                    item_id,
-                    "closing",
-                    manager.progress_text(self.displayed_projects[index]),
-                )
+                project = self.displayed_projects[index]
+                self.tree.set(item_id, "closing", self._closing_text(project))
+                self.tree.item(item_id, tags=(self._row_tag(project),))
 
         # Quando a fila esvazia, atualiza a varredura para mostrar as versoes finais.
         if (

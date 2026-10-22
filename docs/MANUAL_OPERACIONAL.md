@@ -216,6 +216,12 @@ Executa o mesmo BAT:
   ate o fechamento concluir.
 - A saida de cada BAT e gravada em `logs\fechamentos_bat\<Projeto>_<data>.log`.
 - Um BAT que passar de 60 minutos e encerrado e marcado como erro.
+- O sistema guarda, para cada pasta (nome completo), o maior total de ZIPs ja
+  gerado por um fechamento concluido. Se um fechamento gerar menos ZIPs que esse
+  maximo, a linha fica amarela, a coluna mostra `Concluido 04:30 (149/150 ZIPs)`
+  e a dica pede para conferir se falta algum arquivo. O alerta continua apos
+  reiniciar o sistema e some quando um fechamento voltar a atingir o maximo.
+  A memoria fica em `%LOCALAPPDATA%\VarreduraSistema\zip_memory.json`.
 - Quando todos os fechamentos terminam, a tabela e atualizada automaticamente.
 - Enquanto o fechamento de um projeto estiver `Na fila` ou `Em andamento`,
   `Copiar Local`, `Copiar Cloud`, `Limpar Pasta`, `Testar Autcom` e
