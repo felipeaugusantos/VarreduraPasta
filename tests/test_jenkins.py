@@ -156,5 +156,85 @@ class JenkinsTests(unittest.TestCase):
         self.assertEqual(jobs, [])
 
 
+
+class JobDisplayTests(unittest.TestCase):
+    def test_states_and_progress_from_api(self):
+        from app.jenkins import _format_job_status
+
+        def job(**last_build):
+            return {"name": "J", "url": "u", "lastBuild": last_build}
+
+        now = 1_000_000
+        building = _format_job_status(
+            job(building=True, result=None, timestamp=now - 90_000, estimatedDuration=200_000),
+            now_ms=now,
+        )
+        self.assertEqual((building["state"], building["percent"]), ("building", 45))
+        self.assertEqual(_format_job_status(job(result="FAILURE"))["state"], "failure")
+        self.assertEqual(_format_job_status(job(result="UNSTABLE"))["state"], "unstable")
+        self.assertEqual(_format_job_status(job(result="ABORTED"))["state"], "aborted")
+        self.assertEqual(_format_job_status(job(result="SUCCESS"))["state"], "success")
+        self.assertEqual(_format_job_status({"name": "J", "lastBuild": None})["state"], "never")
+
+    def test_progress_is_capped_and_needs_estimate(self):
+        from app.jenkins import build_progress_percent
+
+        self.assertEqual(build_progress_percent(0, 100, 50), None)
+        self.assertEqual(build_progress_percent(1_000, 0, 5_000), None)
+        self.assertEqual(build_progress_percent(1_000, 1_000, 10_000), 99)
+        self.assertEqual(build_progress_percent(1_000, 1_000, 1_250), 25)
+
+    def test_labels_are_in_portuguese_with_symbol(self):
+        from app.jenkins import job_label
+
+        self.assertEqual(job_label({"state": "failure"}), "✖ Falhou")
+        self.assertEqual(job_label({"state": "success"}), "● Sucesso")
+        self.assertEqual(job_label({"state": "building", "percent": 45}), "⟳ Em andamento 45%")
+        self.assertEqual(job_label({"state": "building", "percent": None}), "⟳ Em andamento")
+
+    def test_failures_and_running_builds_come_first(self):
+        from app.jenkins import sort_jobs_for_display
+
+        jobs = [
+            {"name": "b_ok", "state": "success"},
+            {"name": "a_sem", "state": "never"},
+            {"name": "z_falha", "state": "failure"},
+            {"name": "c_rodando", "state": "building"},
+            {"name": "d_instavel", "state": "unstable"},
+        ]
+        self.assertEqual(
+            [job["name"] for job in sort_jobs_for_display(jobs)],
+            ["z_falha", "c_rodando", "d_instavel", "b_ok", "a_sem"],
+        )
+
+    def test_api_query_requests_estimated_duration(self):
+        captured = {}
+
+        def fake_urlopen(request, timeout):
+            captured["url"] = request.full_url
+            return FakeResponse(b'{"jobs": []}')
+
+        with patch("app.jenkins.urlopen", fake_urlopen):
+            get_jenkins_jobs_status("localhost:8080", "", "", timeout=1)
+
+        self.assertIn("estimatedDuration", captured["url"])
+
+
+class JenkinsAuditTests(unittest.TestCase):
+    def test_audit_line_keeps_action_visible_in_audit_screen(self):
+        from app.audit import parse_log_line
+        from app.interface import VersionScannerApp
+
+        with patch("app.interface.logging_utils.write_log") as write_log,              patch.dict("os.environ", {"USERNAME": "felipe.santos"}):
+            VersionScannerApp._write_jenkins_audit(
+                None, "teste_conexao", "online", "http://localhost:8080", "Jenkins online (master)."
+            )
+
+        entry = parse_log_line(f"[2026-10-22 09:10:11] {write_log.call_args.args[0]}")
+        self.assertEqual(entry["acao"], "Jenkins teste_conexao")
+        self.assertEqual(entry["resultado"], "online")
+        self.assertEqual(entry["usuario"], "felipe.santos")
+        self.assertEqual(entry["destino"], "http://localhost:8080")
+
 if __name__ == "__main__":
     unittest.main()

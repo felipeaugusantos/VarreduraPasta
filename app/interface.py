@@ -21,7 +21,9 @@ from app.config import (
 )
 from app.jenkins import (
     get_jenkins_jobs_status,
+    job_label,
     normalize_jenkins_url,
+    sort_jobs_for_display,
     test_jenkins_connection,
 )
 from app.learning import insights_for_project, learn_from_projects
@@ -47,6 +49,7 @@ from app.svn_search import search_svn
 
 
 CLOSING_POLL_MS = 1000
+JENKINS_REFRESH_MS = 15 * 1000
 
 
 class VersionScannerApp(tk.Tk):
@@ -1004,33 +1007,40 @@ class VersionScannerApp(tk.Tk):
             self.jenkins_jobs_window.focus()
             return
 
-        self.jenkins_jobs_window = tk.Toplevel(self)
-        self.jenkins_jobs_window.title("Jenkins - Status dos Jobs")
-        theme.size_window(self.jenkins_jobs_window, 980, 460)
-        self.jenkins_jobs_window.transient(self)
+        window = tk.Toplevel(self)
+        self.jenkins_jobs_window = window
+        window.title("Jenkins - Status dos Jobs")
+        theme.size_window(window, 980, 460)
+        window.transient(self)
 
-        frame = ttk.Frame(self.jenkins_jobs_window, padding=12)
+        frame = ttk.Frame(window, padding=12)
         frame.pack(fill="both", expand=True)
         frame.rowconfigure(1, weight=1)
         frame.columnconfigure(0, weight=1)
 
-        status_var = tk.StringVar(value="Clique em Atualizar para consultar o Jenkins.")
+        status_var = tk.StringVar(value="Consultando jobs do Jenkins...")
         ttk.Label(frame, textvariable=status_var).grid(row=0, column=0, sticky="w")
 
-        columns = ("job", "build", "status", "duracao", "data", "url")
+        columns = ("job", "status", "build", "duracao", "data", "url")
+        headings = {
+            "job": "Job",
+            "status": "Situação",
+            "build": "Build",
+            "duracao": "Duração",
+            "data": "Data",
+            "url": "URL",
+        }
+        widths = {"job": 210, "status": 190, "build": 70, "duracao": 100, "data": 150, "url": 230}
         tree = ttk.Treeview(frame, columns=columns, show="headings", height=14)
-        tree.heading("job", text="Job")
-        tree.heading("build", text="Build")
-        tree.heading("status", text="Status")
-        tree.heading("duracao", text="Duracao")
-        tree.heading("data", text="Data")
-        tree.heading("url", text="URL")
-        tree.column("job", width=220, anchor="center")
-        tree.column("build", width=80, anchor="center")
-        tree.column("status", width=130, anchor="center")
-        tree.column("duracao", width=110, anchor="center")
-        tree.column("data", width=150, anchor="center")
-        tree.column("url", width=260, anchor="w")
+        for column in columns:
+            anchor = "w" if column in ("job", "status", "url") else "center"
+            tree.heading(column, text=headings[column], anchor=anchor)
+            tree.column(column, width=widths[column], anchor=anchor)
+        tree.tag_configure("failure", background=theme.COLORS["row_error"])
+        tree.tag_configure("unstable", background=theme.COLORS["row_warning"])
+        tree.tag_configure("building", background=theme.COLORS["row_info"])
+        tree.tag_configure("aborted", foreground=theme.COLORS["muted"])
+        tree.tag_configure("never", foreground=theme.COLORS["muted"])
         tree.grid(row=1, column=0, sticky="nsew", pady=(8, 0))
 
         scrollbar = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
@@ -1046,12 +1056,12 @@ class VersionScannerApp(tk.Tk):
         def open_selected_build():
             selection = tree.selection()
             if not selection:
-                messagebox.showwarning("Jenkins", "Selecione um job para abrir.")
+                messagebox.showwarning("Jenkins", "Selecione um job para abrir.", parent=window)
                 return
             values = tree.item(selection[0], "values")
             build_url = values[5] if len(values) >= 6 else ""
             if not build_url:
-                messagebox.showwarning("Jenkins", "Este job nao possui build para abrir.")
+                messagebox.showwarning("Jenkins", "Este job nao possui build para abrir.", parent=window)
                 return
             self._write_jenkins_audit("abrir_build", "solicitado", build_url, values[0])
             webbrowser.open(build_url)
@@ -1064,75 +1074,107 @@ class VersionScannerApp(tk.Tk):
         ttk.Button(
             button_bar,
             text="Fechar",
-            command=self.jenkins_jobs_window.destroy,
+            command=window.destroy,
         ).grid(row=0, column=2)
 
-        def refresh_jobs():
+        state = {"running": False}
+
+        def render(jobs):
+            selected = set(tree.selection())
+            tree.delete(*tree.get_children())
+            for job in sort_jobs_for_display(jobs):
+                iid = job["name"] or str(id(job))
+                tree.insert(
+                    "",
+                    "end",
+                    iid=iid,
+                    values=(
+                        job["name"],
+                        job_label(job),
+                        job["number"],
+                        job["duration"],
+                        job["timestamp"],
+                        job["url"],
+                    ),
+                    tags=(job.get("state", "unknown"),),
+                )
+                if iid in selected:
+                    tree.selection_add(iid)
+
+        def summary(jobs):
+            failures = sum(1 for job in jobs if job.get("state") == "failure")
+            building = sum(1 for job in jobs if job.get("state") == "building")
+            parts = [f"{len(jobs)} job(s)"]
+            if failures:
+                parts.append(f"{failures} com falha")
+            if building:
+                parts.append(f"{building} em andamento")
+            parts.append(
+                f"atualizado às {datetime.now():%H:%M:%S} "
+                f"(automático a cada {JENKINS_REFRESH_MS // 1000} s)"
+            )
+            return "   •   ".join(parts)
+
+        def refresh_jobs(manual=True):
+            if state["running"] or not window.winfo_exists():
+                return
+            state["running"] = True
             config = load_jenkins_config()
             result_queue = queue.Queue()
             refresh_button.config(state="disabled")
-            status_var.set("Consultando jobs do Jenkins...")
+            if manual:
+                status_var.set("Consultando jobs do Jenkins...")
 
             def worker():
-                result_queue.put(
-                    get_jenkins_jobs_status(
+                try:
+                    result = get_jenkins_jobs_status(
                         config["url"],
                         config["username"],
                         config["password"],
                     )
-                )
+                except Exception as error:
+                    result = (False, f"Nao foi possivel consultar o Jenkins: {error}", [])
+                result_queue.put(result)
 
             def poll():
+                if not window.winfo_exists():
+                    return
                 try:
                     ok, message, jobs = result_queue.get_nowait()
                 except queue.Empty:
-                    if self.jenkins_jobs_window and self.jenkins_jobs_window.winfo_exists():
-                        self.jenkins_jobs_window.after(100, poll)
+                    window.after(100, poll)
                     return
 
-                for item_id in tree.get_children():
-                    tree.delete(item_id)
-
-                if ok:
-                    for index, job in enumerate(jobs):
-                        tree.insert(
-                            "",
-                            "end",
-                            iid=str(index),
-                            values=(
-                                job["name"],
-                                job["number"],
-                                job["status"],
-                                job["duration"],
-                                job["timestamp"],
-                                job["url"],
-                            ),
-                        )
-                    result = "consultado"
-                else:
-                    result = "erro"
-                    messagebox.showwarning("Jenkins", message)
-
-                self._write_jenkins_audit(
-                    "status_jobs",
-                    result,
-                    normalize_jenkins_url(config["url"]),
-                    message,
-                )
-                status_var.set(message)
+                state["running"] = False
                 refresh_button.config(state="normal")
+                if ok:
+                    render(jobs)
+                    status_var.set(summary(jobs))
+                else:
+                    # Consulta automatica nao abre mensagem: so mostra o erro na tela.
+                    status_var.set(f"{message}   •   nova tentativa em {JENKINS_REFRESH_MS // 1000} s")
+                    if manual:
+                        messagebox.showwarning("Jenkins", message, parent=window)
 
             threading.Thread(target=worker, daemon=True).start()
-            self.jenkins_jobs_window.after(100, poll)
+            window.after(100, poll)
+
+        def auto_refresh():
+            if not window.winfo_exists():
+                return
+            refresh_jobs(manual=False)
+            window.after(JENKINS_REFRESH_MS, auto_refresh)
 
         refresh_button.config(command=refresh_jobs)
         refresh_jobs()
+        window.after(JENKINS_REFRESH_MS, auto_refresh)
 
     def _write_jenkins_audit(self, action, result, url, reason):
+        # Mesmo padrao das demais linhas ("<acao> <resultado> | campo=valor"),
+        # para a tela de Auditoria mostrar a acao (ex.: "Jenkins teste_conexao").
         user = os.environ.get("USERNAME") or os.environ.get("USER") or "desconhecido"
         logging_utils.write_log(
-            f"Jenkins {action} | usuario={user} | destino={url} | "
-            f"resultado={result} | motivo={reason}"
+            f"Jenkins {action} {result} | usuario={user} | destino={url} | motivo={reason}"
         )
 
     def open_pattern_window(self):

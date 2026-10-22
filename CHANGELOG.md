@@ -5,6 +5,21 @@ Todas as alteracoes relevantes deste projeto sao documentadas neste arquivo.
 O formato e baseado em Keep a Changelog e o projeto segue Versionamento
 Semantico (`MAIOR.MENOR.CORRECAO`).
 
+## [Nao lancado]
+
+### Alterado
+- Jenkins - Status dos Jobs: situacao em portugues com simbolo e cor
+  (Falhou, Em andamento, Instavel, Cancelado, Sucesso, Sem build), falhas e
+  builds em andamento no topo, andamento estimado (`Em andamento 45%`) e resumo
+  com total de falhas.
+- A tela de status atualiza sozinha a cada 15 s enquanto aberta; erro na
+  consulta automatica aparece so na tela, sem janela de aviso.
+
+### Corrigido
+- Auditoria do Jenkins mostrava apenas "Jenkins" na coluna Acao; agora mostra a
+  acao (ex.: `Jenkins teste_conexao`) e o resultado. Consultas de status nao
+  sao mais gravadas na Auditoria.
+
 ## [2.6.2] - 2026-10-22
 
 ### Alterado

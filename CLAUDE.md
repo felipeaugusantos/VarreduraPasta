@@ -174,6 +174,13 @@ caminho base for uma pasta local, busca o requisito em nomes/conteudo de arquivo
 Menu `Jenkins` permite configurar URL, usuario e senha, abrir o painel local e
 ver status dos jobs. A senha nao deve ser escrita em logs.
 
+A tela de status mostra a situacao em portugues com simbolo (`job_label` em
+`app/jenkins.py`), falhas e builds em andamento primeiro
+(`sort_jobs_for_display`) e o andamento estimado pelo `estimatedDuration` do
+Jenkins. Atualiza sozinha a cada 15 s enquanto aberta; consultas de status nao
+vao para a Auditoria (so configuracao, teste de conexao e abrir build/painel).
+Linhas de Auditoria do Jenkins seguem `Jenkins <acao> <resultado> | campo=valor`.
+
 Padrao esperado:
 
 ```text

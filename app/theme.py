@@ -27,6 +27,7 @@ COLORS = {
     "row_warning": "#fff7e6",
     "row_error": "#fdf0f0",
     "row_zip_below": "#ffe8a3",
+    "row_info": "#eaf1fe",
     "selection": "#2563eb",
 }
 
