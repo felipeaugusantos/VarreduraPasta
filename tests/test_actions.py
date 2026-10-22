@@ -308,6 +308,44 @@ class ActionAuditTests(unittest.TestCase):
         self.assertIn("Fechamento Local concluido | usuario=", content)
         self.assertIn("codigo_bat=1; duracao=", content)
 
+    def test_closing_job_reports_percent_by_size_while_bat_runs(self):
+        from tempfile import TemporaryDirectory
+        from app.actions import _execute_closing_job
+        from app.closing_runner import ClosingJob
+
+        with TemporaryDirectory() as temp_directory:
+            project_path = Path(temp_directory)
+            (project_path / "Autcom.exe").write_bytes(b"x" * 700)
+            (project_path / "libA.dll").write_bytes(b"x" * 200)
+            (project_path / "Principal.bpl").write_bytes(b"x" * 100)
+            project = make_project(path=project_path)
+            job = ClosingJob(
+                key="k",
+                project=project,
+                title="Fechamento Local",
+                bat_path=project_path / "comandosCMD" / "_FechamentoArquivos.bat",
+            )
+            seen = []
+
+            # Simula o BAT: cada .cmd compacta um arquivo e o apaga da pasta.
+            def fake_bat(bat_path, log_path, timeout, on_tick):
+                seen.append(job.percent)
+                for name in ("libA.dll", "Principal.bpl", "Autcom.exe"):
+                    (project_path / name).unlink()
+                    on_tick()
+                    seen.append(job.percent)
+                return 1
+
+            with (
+                patch("app.actions._learn_project_pattern"),
+                patch("app.actions.run_closing_bat", side_effect=fake_bat),
+                patch("app.actions._write_action_audit"),
+            ):
+                return_code = _execute_closing_job(job)
+
+        self.assertEqual(return_code, 0)
+        self.assertEqual(seen, [0, 20, 30, 99])
+
     def test_closing_job_fails_when_files_remain_even_with_code_zero(self):
         from tempfile import TemporaryDirectory
         from app.actions import _execute_closing_job
@@ -338,6 +376,7 @@ class ActionAuditTests(unittest.TestCase):
         reason = write_audit.call_args.kwargs["reason"]
         self.assertIn("Autcom.exe, libFuncoes.DLL", reason)
         self.assertIn("codigo_bat=0", reason)
+        self.assertEqual(job.percent, 0)
 
     def test_post_closing_validation_is_audited(self):
         import app.logging_utils as logging_utils

@@ -12,7 +12,14 @@ from tkinter import Listbox, TclError, Toplevel, messagebox, ttk
 
 from app import logging_utils
 from app.autcom_test import resolve_test_layout, run_autcom_test
-from app.closing_runner import ClosingManager, format_elapsed, run_closing_bat
+from app.closing_runner import (
+    PENDING_SUFFIXES,
+    ClosingManager,
+    format_elapsed,
+    pending_file_sizes,
+    run_closing_bat,
+    zipped_percent,
+)
 from app.config import (
     CLOSING_MAX_CONCURRENT,
     CLOSING_TIMEOUT_SECONDS,
@@ -27,7 +34,6 @@ POLL_INTERVAL_MS = 100
 CLEANUP_RETRY_ATTEMPTS = 5
 CLEANUP_RETRY_DELAY_SECONDS = 1
 _PATTERN_LOCK = threading.Lock()
-CLOSING_PENDING_SUFFIXES = {".exe", ".dll", ".bpl"}
 
 
 class CleanupError(OSError):
@@ -226,11 +232,23 @@ def _execute_closing_job(job):
         bat_path=job.bat_path,
         reason=f"versao antes do fechamento; log={job.log_path}",
     )
+
+    # O percentual compara o que ainda falta compactar com o tamanho inicial.
+    try:
+        initial_sizes = pending_file_sizes(project.path)
+    except OSError:
+        initial_sizes = {}
+    job.percent = 0
+
+    def update_percent():
+        job.percent = zipped_percent(initial_sizes, pending_file_sizes(project.path))
+
     try:
         return_code = run_closing_bat(
             job.bat_path,
             job.log_path,
             CLOSING_TIMEOUT_SECONDS,
+            on_tick=update_percent,
         )
     except Exception as error:
         _write_action_audit(
@@ -259,6 +277,10 @@ def _execute_closing_job(job):
         )
         raise
     if pending_files:
+        job.percent = zipped_percent(
+            initial_sizes,
+            {name.lower() for name in pending_files},
+        )
         preview = ", ".join(pending_files[:5])
         if len(pending_files) > 5:
             preview += f" +{len(pending_files) - 5}"
@@ -285,7 +307,7 @@ def _pending_closing_files(project_path):
     return sorted(
         item.name
         for item in Path(project_path).iterdir()
-        if item.is_file() and item.suffix.lower() in CLOSING_PENDING_SUFFIXES
+        if item.is_file() and item.suffix.lower() in PENDING_SUFFIXES
     )
 
 

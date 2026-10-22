@@ -12,6 +12,11 @@ CREATE_NEW_CONSOLE = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
 BELOW_NORMAL_PRIORITY_CLASS = getattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0)
 SW_HIDE = 0
 
+# Arquivos que o _FechamentoArquivos.bat compacta e apaga; o fechamento termina
+# quando nao resta nenhum na pasta do projeto.
+PENDING_SUFFIXES = {".exe", ".dll", ".bpl"}
+PROGRESS_TICK_SECONDS = 1
+
 STATUS_QUEUED = "Na fila"
 STATUS_RUNNING = "Em andamento"
 STATUS_DONE = "Concluído"
@@ -35,6 +40,7 @@ class ClosingJob:
     return_code: int = None
     message: str = ""
     log_path: Path = None
+    percent: int = None
 
 
 def project_key(project):
@@ -50,8 +56,39 @@ def format_elapsed(seconds):
     return f"{minutes:02d}:{seconds:02d}"
 
 
-def run_closing_bat(bat_path, log_path, timeout):
+def pending_file_sizes(folder):
+    """Tamanho dos .exe/.dll/.bpl ainda nao compactados na raiz da pasta."""
+    sizes = {}
+    for item in Path(folder).iterdir():
+        if item.suffix.lower() not in PENDING_SUFFIXES:
+            continue
+        try:
+            if item.is_file():
+                sizes[item.name.lower()] = item.stat().st_size
+        except OSError:
+            continue
+    return sizes
+
+
+def zipped_percent(initial_sizes, remaining_names):
+    """Percentual ja compactado, ponderado pelo tamanho inicial de cada arquivo.
+
+    Fica em no maximo 99 enquanto o BAT roda; 100 so vale com o fechamento
+    concluido.
+    """
+    total = sum(initial_sizes.values())
+    if total <= 0:
+        return 0
+    remaining = sum(
+        size for name, size in initial_sizes.items() if name in remaining_names
+    )
+    return min(99, int((total - remaining) * 100 / total))
+
+
+def run_closing_bat(bat_path, log_path, timeout, on_tick=None):
     """Executa o BAT em console oculto, gravando a saida no log. Retorna o codigo.
+
+    Enquanto espera, chama `on_tick()` a cada segundo (usado para o percentual).
 
     O BAT precisa de um console proprio: comandos como `timeout` falham na hora
     quando a entrada nao e um console, transformando lacos de espera em lacos
@@ -70,13 +107,22 @@ def run_closing_bat(bat_path, log_path, timeout):
         creationflags=CREATE_NEW_CONSOLE | BELOW_NORMAL_PRIORITY_CLASS,
         startupinfo=startupinfo,
     )
-    try:
-        return process.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        _kill_process_tree(process)
-        raise ClosingTimeoutError(
-            f"BAT excedeu {format_elapsed(timeout)} e foi encerrado."
-        )
+    deadline = time.monotonic() + timeout
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            _kill_process_tree(process)
+            raise ClosingTimeoutError(
+                f"BAT excedeu {format_elapsed(timeout)} e foi encerrado."
+            )
+        try:
+            return process.wait(timeout=min(PROGRESS_TICK_SECONDS, remaining))
+        except subprocess.TimeoutExpired:
+            if on_tick is not None:
+                try:
+                    on_tick()
+                except Exception:
+                    pass
 
 
 def _kill_process_tree(process):
@@ -149,17 +195,17 @@ class ClosingManager:
             job = self._jobs.get(project_key(project))
             if job is None:
                 return ""
-            now = self._clock()
             if job.status == STATUS_QUEUED:
                 return STATUS_QUEUED
             if job.status == STATUS_RUNNING:
-                return f"{STATUS_RUNNING} {format_elapsed(now - job.started_at)}"
-            elapsed = format_elapsed(job.finished_at - job.started_at)
+                percent = job.percent if job.percent is not None else 0
+                return f"{STATUS_RUNNING} {percent}%"
             if job.status == STATUS_DONE:
+                elapsed = format_elapsed(job.finished_at - job.started_at)
                 return f"{STATUS_DONE} {elapsed}"
-            if job.return_code is not None:
-                return f"{STATUS_ERROR} (código {job.return_code}) {elapsed}"
-            return f"{STATUS_ERROR} {elapsed}"
+            if job.percent is not None:
+                return f"{STATUS_ERROR} em {job.percent}%"
+            return STATUS_ERROR
 
     def _start_next(self):
         to_start = []

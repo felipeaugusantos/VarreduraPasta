@@ -5,6 +5,14 @@ Todas as alteracoes relevantes deste projeto sao documentadas neste arquivo.
 O formato e baseado em Keep a Changelog e o projeto segue Versionamento
 Semantico (`MAIOR.MENOR.CORRECAO`).
 
+## [Nao lancado]
+
+### Alterado
+- Coluna `Fechamento` mostra o percentual ja compactado durante o fechamento
+  (`Em andamento 45%`), calculado pelo tamanho dos `.exe`, `.dll` e `.bpl`
+  que o BAT ja processou. O tempo aparece apenas no `Concluido`; erros mostram
+  ate onde o fechamento chegou (`Erro em 80%`).
+
 ## [2.4.0] - 2026-10-21
 
 ### Adicionado

@@ -207,8 +207,13 @@ Executa o mesmo BAT:
 - E possivel selecionar varios projetos do mesmo tipo (Ctrl ou Shift + clique)
   e clicar no fechamento correspondente. Ate 2 BATs rodam ao mesmo tempo; os
   demais aguardam na fila.
-- A coluna `Fechamento` mostra `Na fila`, `Em andamento`, `Concluido` ou
-  `Erro (codigo N)`, com o tempo decorrido.
+- A coluna `Fechamento` mostra `Na fila`, `Em andamento 45%`,
+  `Concluido 04:30` (tempo total) ou `Erro em 80%`.
+- O percentual e calculado pelo tamanho dos `.exe`, `.dll` e `.bpl` que o BAT
+  ja compactou (cada arquivo some da pasta quando seu ZIP fica pronto). Como o
+  `Autcom.exe` e bem maior que os demais, o percentual pode ficar parado
+  enquanto ele e compactado e depois avancar de uma vez. Fica em no maximo 99%
+  ate o fechamento concluir.
 - A saida de cada BAT e gravada em `logs\fechamentos_bat\<Projeto>_<data>.log`.
 - Um BAT que passar de 60 minutos e encerrado e marcado como erro.
 - Quando todos os fechamentos terminam, a tabela e atualizada automaticamente.
