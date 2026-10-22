@@ -11,7 +11,7 @@ from app.config import (
     LOCAL_MAX_AUTCOM_MB,
     REQUIRED_FILE_GROUPS,
 )
-from app.pattern import load_required_file_groups
+from app.pattern import is_specific_copy, load_project_file_groups, load_required_file_groups
 from app.settings import load_ignored_project_folders
 from app.version_reader import read_exe_versions
 
@@ -68,10 +68,13 @@ class ProjectResult:
 def expected_versions_from_folder(folder_name):
     base_name = folder_name.removesuffix("_CLOUD")
     parts = base_name.split(".")
-    if len(parts) < 6:
+    if len(parts) < 6 and not is_specific_copy(folder_name):
         return None, None
 
     normalized = [part.zfill(2) if part.isdigit() and len(part) == 1 else part for part in parts]
+    if is_specific_copy(folder_name):
+        # Copia especifica (ex.: 379.48.2.40.5): 379.48.02.40 / 48.02.40.05.
+        return ".".join(normalized[0:4]), ".".join(normalized[1:5])
     file_version = ".".join(normalized[1:5])
     product_version = ".".join(normalized[2:6])
     return file_version, product_version
@@ -227,6 +230,23 @@ def _merge_required_core_groups(required_file_groups):
             existing_stems.update(_group_stems(core_group))
 
     return tuple(merged_groups)
+
+
+def _ensure_autcom_group(groups):
+    groups = list(groups or ())
+    if not any("autcom" in _group_stems(group) for group in groups):
+        groups.insert(0, REQUIRED_FILE_GROUPS[0])
+    return tuple(groups)
+
+
+def _required_groups_for_project(folder_name):
+    if is_specific_copy(folder_name):
+        # Sem o padrao geral nem os grupos fixos da copia padrao: so o que a
+        # propria copia aprendeu no fechamento, mais o Autcom.
+        return _ensure_autcom_group(load_project_file_groups(folder_name))
+    return _merge_required_core_groups(
+        load_required_file_groups(folder_name) or REQUIRED_FILE_GROUPS
+    )
 
 
 def _find_zip_file(project_path, file_name, zip_index=None):
@@ -446,9 +466,7 @@ def scan_projects(base_directory=BASE_DIRECTORY):
         if not _project_has_candidate_files(project_path):
             continue
 
-        required_file_groups = _merge_required_core_groups(
-            load_required_file_groups(project_path.name) or REQUIRED_FILE_GROUPS
-        )
+        required_file_groups = _required_groups_for_project(project_path.name)
         expected_file, expected_product = expected_versions_from_folder(project_path.name)
         zip_index = _build_zip_index(project_path)
         zip_name_errors = validate_zip_names(project_path)

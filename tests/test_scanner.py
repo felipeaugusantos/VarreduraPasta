@@ -220,3 +220,91 @@ class ValidateZipNamesTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SpecificCopyTests(unittest.TestCase):
+    """Copias especificas (5 partes, ex.: 379.48.2.40.5) tem arquivos proprios."""
+
+    FOLDER = "379.48.2.40.5"
+    VERSIONS = ("379.48.02.40", "48.02.40.05")
+
+    def setUp(self):
+        from unittest.mock import patch
+        from app import pattern
+
+        self._temp = TemporaryDirectory(ignore_cleanup_errors=True)
+        self.addCleanup(self._temp.cleanup)
+        root = Path(self._temp.name)
+        self.base = root / "VERSOES_FECHADAS"
+        self.project_path = self.base / self.FOLDER
+        self.project_path.mkdir(parents=True)
+        # Padrao geral "de copia completa" exige muito mais que a copia especifica tem.
+        pattern_file = root / "project_pattern.json"
+        pattern_file.write_text(
+            '{"required_groups": ['
+            '{"name": "Autcom", "accepted_files": ["Autcom.exe"], "validate_version": true},'
+            '{"name": "libTintaSuvinil", "accepted_files": ["libTintaSuvinil.dll"], "validate_version": false},'
+            '{"name": "libCartoesCielo", "accepted_files": ["libCartoesCielo.dll"], "validate_version": false}'
+            ']}',
+            encoding="utf-8",
+        )
+        for target, value in (
+            ((pattern, "PATTERN_FILE"), pattern_file),
+            (("app.scanner.read_exe_versions",), lambda _path: self.VERSIONS),
+        ):
+            patcher = patch.object(*target, value) if len(target) == 2 else patch(target[0], value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def write_files(self, *names):
+        for name in names:
+            (self.project_path / name).write_bytes(b"MZ")
+
+    def scan(self):
+        from app.scanner import scan_projects
+
+        return {project.folder_name: project for project in scan_projects(self.base)}[self.FOLDER]
+
+    def test_expected_versions_for_specific_copy(self):
+        self.assertEqual(expected_versions_from_folder("379.48.2.40.5"), self.VERSIONS)
+        self.assertEqual(expected_versions_from_folder("379.48.2.40.5_CLOUD"), self.VERSIONS)
+
+    def test_without_own_pattern_only_autcom_is_required(self):
+        self.write_files("Autcom.exe", "libNfe.dll")
+
+        project = self.scan()
+
+        # Antes: exigia o padrao geral e AutcomTinta/Autban/Auttin -> "Arquivo ausente".
+        self.assertEqual(project.status, "OK")
+        self.assertEqual([check.group_name for check in project.file_checks], ["Autcom"])
+
+    def test_learns_own_files_on_closing_and_flags_when_one_disappears(self):
+        from app.pattern import save_project_pattern
+
+        self.write_files("Autcom.exe", "libNfe.dll", "AutBan.exe")
+        saved, key = save_project_pattern(self.scan())
+        self.assertTrue(saved)
+        self.assertEqual(key, "379.48.2.40.5|local")
+
+        # Depois do BAT, tudo vira ZIP: continua OK.
+        for name in ("Autcom.exe", "libNfe.dll", "AutBan.exe"):
+            with ZipFile(self.project_path / f"{Path(name).stem}.zip", "w") as archive:
+                archive.writestr(name, b"MZ")
+            (self.project_path / name).unlink()
+        self.assertEqual(self.scan().status, "OK")
+
+        # Se a DLL da propria copia sumir, ai sim aparece como ausente.
+        (self.project_path / "libNfe.zip").unlink()
+        status = self.scan().status
+        self.assertIn("Ausente: libNfe.dll", status)
+        self.assertNotIn("Suvinil", status)
+        self.assertNotIn("AutcomTinta", status)
+
+    def test_standard_copy_keeps_using_general_pattern(self):
+        standard = self.base / "379.48.2.30.74.74.92"
+        standard.mkdir()
+        (standard / "Autcom.exe").write_bytes(b"MZ")
+        from app.scanner import scan_projects
+
+        result = {p.folder_name: p for p in scan_projects(self.base)}["379.48.2.30.74.74.92"]
+        self.assertIn("libTintaSuvinil.dll", result.status)

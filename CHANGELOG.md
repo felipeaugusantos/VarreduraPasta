@@ -5,6 +5,19 @@ Todas as alteracoes relevantes deste projeto sao documentadas neste arquivo.
 O formato e baseado em Keep a Changelog e o projeto segue Versionamento
 Semantico (`MAIOR.MENOR.CORRECAO`).
 
+## [Nao lancado]
+
+### Corrigido
+- Copias especificas (nome com 5 partes, ex.: `379.48.2.40.5`) apareciam como
+  "Arquivo ausente" mesmo completas: eram cobradas pelo padrao geral da copia
+  completa (138 grupos) e pelos grupos fixos. Agora exigem so o Autcom ate o
+  primeiro fechamento, que aprende os arquivos da propria copia; dali em diante
+  alertam se algum deles sumir.
+- Versoes esperadas das copias especificas passam a ser lidas do nome
+  (`379.48.02.40` / `48.02.40.05`), sem a pendencia "Nome da pasta fora do padrao".
+- Janelas secundarias crescem ate caber o conteudo com o tema novo (botoes de
+  Copiar, Status dos Jobs e Consulta SVN ficavam cortados).
+
 ## [2.6.0] - 2026-10-21
 
 ### Alterado

@@ -91,6 +91,11 @@ Nao distribuir `settings.json` junto do pacote. Dados persistentes ficam em
 - `Auttin.exe`, `libAuttin.dll` e `libAuttin.exe` sao alternativas do grupo Auttin.
 - `libFuncoes.dll` e opcional.
 - Pastas de teste podem ser ignoradas pela tela de configuracao.
+- Copias especificas tem nome com 5 partes (ex.: `379.48.2.40.5`): FileVersion
+  = 4 primeiras partes (`379.48.02.40`) e ProductVersion = 4 ultimas
+  (`48.02.40.05`). Nao usam o padrao geral nem os grupos fixos: exigem so o
+  Autcom ate o primeiro fechamento, que aprende os `.exe`/`.dll` da propria
+  copia (`is_specific_copy` em `app/pattern.py`).
 - Fechamento concluido com menos ZIPs que o maior total ja registrado para a
   mesma pasta (nome completo) deixa a linha amarela (`zip_below`).
 - Os testes usam uma pasta de dados temporaria (`tests/__init__.py`); nunca

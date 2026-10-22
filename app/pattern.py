@@ -27,6 +27,16 @@ def pattern_key_from_project_name(folder_name):
     return base_name
 
 
+def is_specific_copy(folder_name):
+    """Copia especifica: nome com 5 partes numericas (ex.: 379.48.2.40.5).
+
+    Essas copias tem um conjunto proprio de arquivos, diferente das copias
+    padrao (6+ partes); por isso o padrao delas e aprendido delas mesmas.
+    """
+    parts = folder_name.removesuffix("_CLOUD").split(".")
+    return len(parts) == 5 and all(part.isdigit() for part in parts)
+
+
 def pattern_scope_from_project_name(folder_name):
     scope = "cloud" if folder_name.upper().endswith("_CLOUD") else "local"
     return f"{pattern_key_from_project_name(folder_name)}|{scope}"
@@ -201,6 +211,18 @@ def _read_pattern_file():
             return None
 
 
+def load_project_file_groups(project_folder_name):
+    """Somente o padrao aprendido para este projeto (sem o padrao geral)."""
+    data = _read_pattern_file()
+    if not data:
+        return None
+    project_patterns = data.get("project_patterns") or {}
+    project_pattern = project_patterns.get(pattern_scope_from_project_name(project_folder_name))
+    if not project_pattern:
+        return None
+    return _normalize_groups(project_pattern.get("required_groups")) or None
+
+
 def load_required_file_groups(project_folder_name=None):
     data = _read_pattern_file()
     if not data:
@@ -244,7 +266,13 @@ def generate_versioned_pattern_from_project(project):
     if not expected_file or not expected_product:
         return None
 
-    for check in project.file_checks:
+    checks = list(project.file_checks)
+    if is_specific_copy(project.folder_name):
+        # A copia especifica aprende todos os .exe/.dll que ela realmente tem,
+        # nao apenas os grupos que ja eram exigidos.
+        checks.extend(getattr(project, "discovered_files", ()) or ())
+
+    for check in checks:
         if not check.found_name or check.status != "OK":
             continue
 
