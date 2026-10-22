@@ -10,7 +10,7 @@ from pathlib import Path
 from uuid import uuid4
 from tkinter import Listbox, TclError, Toplevel, messagebox, ttk
 
-from app import logging_utils, zip_memory
+from app import logging_utils, theme, zip_memory
 from app.autcom_test import resolve_test_layout, run_autcom_test
 from app.closing_runner import (
     PENDING_SUFFIXES,
@@ -417,7 +417,7 @@ def limpar_pasta(project):
 def _start_manual_cleanup(project):
     progress = Toplevel()
     progress.title("Limpar Pasta")
-    progress.geometry("560x120")
+    theme.size_window(progress, 560, 120)
     progress.resizable(False, False)
     progress.protocol("WM_DELETE_WINDOW", lambda: None)
     progress.grab_set()
@@ -618,7 +618,7 @@ def testar_autcom(project):
 
     progress = Toplevel()
     progress.title(title)
-    progress.geometry("600x140")
+    theme.size_window(progress, 600, 140)
     progress.resizable(False, False)
     progress.protocol("WM_DELETE_WINDOW", lambda: None)
     progress.grab_set()
@@ -750,7 +750,7 @@ def _prepare_copy(project, title):
 
     progress = Toplevel()
     progress.title(title)
-    progress.geometry("560x130")
+    theme.size_window(progress, 560, 130)
     progress.resizable(False, False)
     progress.protocol("WM_DELETE_WINDOW", lambda: None)
     progress.grab_set()
@@ -899,7 +899,7 @@ def _finish_copy_search(progress, project, target_root, destinations, title):
 def _show_destination_choice(project, target_root, destinations, title):
     window = Toplevel()
     window.title(f"{title} - escolher destino")
-    window.geometry("920x360")
+    theme.size_window(window, 920, 360)
     window.resizable(False, False)
     window.grab_set()
 
@@ -1060,7 +1060,7 @@ def _show_copy_confirmation(project, destination, target_root, title):
     block_reasons = _copy_block_reasons(safety_checks)
     window = Toplevel()
     window.title(title)
-    window.geometry("860x430")
+    theme.size_window(window, 860, 430)
     window.resizable(False, False)
     window.grab_set()
 
@@ -1132,6 +1132,7 @@ def _show_copy_confirmation(project, destination, target_root, title):
     ttk.Button(
         button_bar,
         text="Continuar",
+        style="Primary.TButton",
         command=lambda: _start_copy(window, project, destination, title),
         state="normal" if not block_reasons else "disabled",
     ).grid(row=0, column=0, padx=(0, 8))
@@ -1155,7 +1156,7 @@ def _start_copy(window, project, destination, title):
     _write_action_audit(title, "iniciado", project, destination)
     progress = Toplevel()
     progress.title(title)
-    progress.geometry("560x110")
+    theme.size_window(progress, 560, 110)
     progress.resizable(False, False)
     progress.protocol("WM_DELETE_WINDOW", lambda: None)
     progress.grab_set()

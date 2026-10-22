@@ -670,7 +670,7 @@ class VersionScannerApp(tk.Tk):
 
         self.config_window = tk.Toplevel(self)
         self.config_window.title("Configurações")
-        self.config_window.geometry("820x420")
+        theme.size_window(self.config_window, 820, 420)
         self.config_window.resizable(False, False)
         self.config_window.transient(self)
 
@@ -814,7 +814,7 @@ class VersionScannerApp(tk.Tk):
         config = load_jenkins_config()
         self.jenkins_window = tk.Toplevel(self)
         self.jenkins_window.title("Jenkins")
-        self.jenkins_window.geometry("620x220")
+        theme.size_window(self.jenkins_window, 620, 220)
         self.jenkins_window.resizable(False, False)
         self.jenkins_window.transient(self)
 
@@ -970,7 +970,7 @@ class VersionScannerApp(tk.Tk):
 
         self.jenkins_jobs_window = tk.Toplevel(self)
         self.jenkins_jobs_window.title("Jenkins - Status dos Jobs")
-        self.jenkins_jobs_window.geometry("980x460")
+        theme.size_window(self.jenkins_jobs_window, 980, 460)
         self.jenkins_jobs_window.transient(self)
 
         frame = ttk.Frame(self.jenkins_jobs_window, padding=12)
@@ -1102,7 +1102,7 @@ class VersionScannerApp(tk.Tk):
     def open_pattern_window(self):
         pattern_window = tk.Toplevel(self)
         pattern_window.title("Padrão de Arquivos")
-        pattern_window.geometry("760x170")
+        theme.size_window(pattern_window, 760, 170)
         pattern_window.resizable(False, False)
         pattern_window.transient(self)
 
@@ -1181,7 +1181,7 @@ class VersionScannerApp(tk.Tk):
     def open_ignored_folders_window(self):
         ignored_window = tk.Toplevel(self)
         ignored_window.title("Pastas Ignoradas")
-        ignored_window.geometry("560x420")
+        theme.size_window(ignored_window, 560, 420)
         ignored_window.transient(self)
 
         frame = ttk.Frame(ignored_window, padding=12)
@@ -1275,7 +1275,7 @@ class VersionScannerApp(tk.Tk):
     def open_audit_window(self):
         audit_window = tk.Toplevel(self)
         audit_window.title("Auditoria")
-        audit_window.geometry("1180x560")
+        theme.size_window(audit_window, 1180, 560)
         audit_window.transient(self)
 
         frame = ttk.Frame(audit_window, padding=12)
@@ -1502,7 +1502,7 @@ class VersionScannerApp(tk.Tk):
     def open_script_monitor_window(self):
         monitor_window = tk.Toplevel(self)
         monitor_window.title("Monitoramento de Scripts")
-        monitor_window.geometry("860x420")
+        theme.size_window(monitor_window, 860, 420)
         monitor_window.transient(self)
 
         frame = ttk.Frame(monitor_window, padding=12)
@@ -1620,7 +1620,7 @@ class VersionScannerApp(tk.Tk):
 
         self.svn_search_window = tk.Toplevel(self)
         self.svn_search_window.title("Consulta SVN")
-        self.svn_search_window.geometry("1180x720")
+        theme.size_window(self.svn_search_window, 1180, 720)
         self.svn_search_window.minsize(980, 620)
         self.svn_search_window.transient(self)
 
@@ -2019,7 +2019,7 @@ class VersionScannerApp(tk.Tk):
     def open_user_manual_window(self):
         manual_window = tk.Toplevel(self)
         manual_window.title("Manual de Utilizacao")
-        manual_window.geometry("900x620")
+        theme.size_window(manual_window, 900, 620)
         manual_window.transient(self)
 
         frame = ttk.Frame(manual_window, padding=12)
@@ -2395,7 +2395,7 @@ class VersionScannerApp(tk.Tk):
 
         details_window = tk.Toplevel(self)
         details_window.title(f"Detalhes - {selected.folder_name}")
-        details_window.geometry("980x390")
+        theme.size_window(details_window, 980, 390)
         details_window.transient(self)
 
         header = ttk.Frame(details_window, padding=(12, 10))

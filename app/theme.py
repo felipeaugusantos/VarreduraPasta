@@ -183,3 +183,40 @@ def apply_theme(root):
     style.configure("Status.TFrame", background=c["surface"])
     style.configure("Status.TLabel", background=c["surface"], foreground=c["muted"])
     return fonts
+
+
+MAX_GROWTH = 1.3
+
+
+def fitted_dimension(base, requested, screen_limit, max_growth=MAX_GROWTH):
+    """Cresce ate o pedido quando falta pouco (botoes cortados pelo tema).
+
+    Pedidos muito maiores vem de tabelas largas/altas, que ja rolam: nesse caso
+    mantem o tamanho original. Nunca passa do limite da tela.
+    """
+    if base < requested <= base * max_growth:
+        return min(requested, screen_limit)
+    return min(base, screen_limit)
+
+
+def size_window(window, width, height, margin=40):
+    """Define o tamanho inicial e, apos montar a janela, ajusta ao conteudo."""
+    window.geometry(f"{width}x{height}")
+
+    def fit_to_content():
+        try:
+            if not window.winfo_exists():
+                return
+            window.update_idletasks()
+            fitted_width = fitted_dimension(
+                width, window.winfo_reqwidth(), window.winfo_screenwidth() - margin
+            )
+            fitted_height = fitted_dimension(
+                height, window.winfo_reqheight(), window.winfo_screenheight() - margin * 2
+            )
+            window.geometry(f"{fitted_width}x{fitted_height}")
+        except Exception:
+            # Janela fechada antes do ajuste; nada a fazer.
+            pass
+
+    window.after_idle(fit_to_content)
