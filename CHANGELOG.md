@@ -7,6 +7,8 @@ Semantico (`MAIOR.MENOR.CORRECAO`).
 
 ## [Nao lancado]
 
+## [2.6.5] - 2026-10-26
+
 ### Adicionado
 - Cache em disco das versoes lidas dentro dos ZIPs (`zip_versions.json`): ao
   reabrir o sistema, ZIPs que nao mudaram (data/tamanho) nao sao extraidos de
