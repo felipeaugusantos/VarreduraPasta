@@ -7,6 +7,8 @@ Semantico (`MAIOR.MENOR.CORRECAO`).
 
 ## [Nao lancado]
 
+## [2.6.6] - 2026-10-26
+
 ### Adicionado
 - `Iniciar_VarreduraSistema.bat` no pacote: copia a versao publicada para
   `%LOCALAPPDATA%\VarreduraSistema\app\<versao>` e abre o sistema dali. A
