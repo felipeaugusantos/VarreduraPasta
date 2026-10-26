@@ -226,7 +226,12 @@ ver status dos jobs. A senha nao deve ser escrita em logs.
 A tela de status mostra a situacao em portugues com simbolo (`job_label` em
 `app/jenkins.py`), falhas e builds em andamento primeiro
 (`sort_jobs_for_display`) e o andamento estimado pelo `estimatedDuration` do
-Jenkins. Atualiza sozinha a cada 15 s enquanto aberta; consultas de status nao
+Jenkins. Jobs dentro de pastas aparecem como `Pasta/job`. `Ver Log` mostra o fim do
+log do ultimo build; `Disparar Build` (confirmacao, Auditoria `disparar_build`)
+usa o endpoint `/build` com o crumb do Jenkins (sem parametros). Os links vindos
+da API sao refeitos sobre a URL configurada, para as credenciais nunca irem a
+outro host. O cabecalho mostra `Jenkins: N job(s) com falha`, consultado a cada
+5 min em segundo plano. A tela atualiza sozinha a cada 15 s enquanto aberta; consultas de status nao
 vao para a Auditoria (so configuracao, teste de conexao e abrir build/painel).
 Linhas de Auditoria do Jenkins seguem `Jenkins <acao> <resultado> | campo=valor`.
 

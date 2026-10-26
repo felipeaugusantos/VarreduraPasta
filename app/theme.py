@@ -69,6 +69,7 @@ def apply_theme(root):
     style.configure("HeaderTitle.TLabel", background=c["header"], foreground=c["header_text"], font=fonts["title"])
     style.configure("HeaderMuted.TLabel", background=c["header"], foreground=c["header_muted"], font=fonts["subtitle"])
     style.configure("HeaderUpdate.TLabel", background=c["header"], foreground="#fbbf24", font=fonts["subtitle_bold"])
+    style.configure("HeaderAlert.TLabel", background=c["header"], foreground="#f87171", font=fonts["subtitle_bold"])
 
     # Cartoes de contadores e painel de detalhes.
     style.configure("Card.TFrame", background=c["surface"], relief="solid", borderwidth=1)

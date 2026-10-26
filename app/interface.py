@@ -23,11 +23,14 @@ from app.config import (
 )
 from app.error_handler import ErrorReporter
 from app.jenkins import (
+    count_failed_jobs,
+    get_build_log,
     get_jenkins_jobs_status,
     job_label,
     normalize_jenkins_url,
     sort_jobs_for_display,
     test_jenkins_connection,
+    trigger_build,
 )
 from app.learning import insights_for_project, learn_from_projects
 from app.pattern import generate_pattern_from_projects, save_pattern
@@ -60,6 +63,7 @@ CLOSING_POLL_MS = 1000
 AUDIT_SOURCE_LOCAL = "Meus registros"
 AUDIT_SOURCE_SHARED = "Todos os operadores"
 JENKINS_REFRESH_MS = 15 * 1000
+JENKINS_HEADER_CHECK_MS = 5 * 60 * 1000
 
 
 class VersionScannerApp(tk.Tk):
@@ -101,6 +105,7 @@ class VersionScannerApp(tk.Tk):
         self.after(100, self.refresh)
         self.after(2000, self.check_scripts_periodically)
         self.after(3000, self.check_for_update_periodically)
+        self.after(6000, self.check_jenkins_periodically)
         self.after(15000, self._clean_old_logs)
         self.after(CLOSING_POLL_MS, self._update_closing_column)
 
@@ -220,6 +225,9 @@ class VersionScannerApp(tk.Tk):
         # Aviso de versao nova (aparece so quando ha versao mais nova publicada).
         self.update_label = ttk.Label(subtitle, style="HeaderUpdate.TLabel", cursor="hand2")
         self.update_label.bind("<Button-1>", lambda _event: self._show_update_details())
+        # Aviso de job do Jenkins com falha (so aparece quando ha falha).
+        self.jenkins_label = ttk.Label(subtitle, style="HeaderAlert.TLabel", cursor="hand2")
+        self.jenkins_label.bind("<Button-1>", lambda _event: self.open_jenkins_jobs_window())
 
         self.refresh_button = ttk.Button(
             header,
@@ -1153,7 +1161,7 @@ class VersionScannerApp(tk.Tk):
             "data": "Data",
             "url": "URL",
         }
-        widths = {"job": 210, "status": 190, "build": 70, "duracao": 100, "data": 150, "url": 230}
+        widths = {"job": 260, "status": 190, "build": 70, "duracao": 100, "data": 150, "url": 180}
         tree = ttk.Treeview(frame, columns=columns, show="headings", height=14)
         for column in columns:
             anchor = "w" if column in ("job", "status", "url") else "center"
@@ -1189,22 +1197,43 @@ class VersionScannerApp(tk.Tk):
             self._write_jenkins_audit("abrir_build", "solicitado", build_url, values[0])
             webbrowser.open(build_url)
 
+        def selected_job():
+            selection = tree.selection()
+            if not selection:
+                messagebox.showwarning("Jenkins", "Selecione um job.", parent=window)
+                return None
+            return state["jobs"].get(selection[0])
+
+        def view_log():
+            job = selected_job()
+            if job:
+                self._show_jenkins_log(job, window)
+
+        def start_build():
+            job = selected_job()
+            if job:
+                self._trigger_jenkins_build(job, window, on_done=lambda: window.after(3000, refresh_jobs))
+
+        ttk.Button(button_bar, text="Ver Log", command=view_log).grid(row=0, column=1, padx=(0, 8))
+        ttk.Button(button_bar, text="Disparar Build", command=start_build).grid(row=0, column=2, padx=(0, 8))
         ttk.Button(
             button_bar,
             text="Abrir Build",
             command=open_selected_build,
-        ).grid(row=0, column=1, padx=(0, 8))
+        ).grid(row=0, column=3, padx=(0, 8))
         ttk.Button(
             button_bar,
             text="Fechar",
             command=window.destroy,
-        ).grid(row=0, column=2)
+        ).grid(row=0, column=4)
 
-        state = {"running": False}
+        state = {"running": False, "jobs": {}}
 
         def render(jobs):
             selected = set(tree.selection())
             tree.delete(*tree.get_children())
+            state["jobs"] = {job["name"]: job for job in jobs}
+            self._apply_jenkins_alert(count_failed_jobs(jobs))
             for job in sort_jobs_for_display(jobs):
                 iid = job["name"] or str(id(job))
                 tree.insert(
@@ -1291,6 +1320,148 @@ class VersionScannerApp(tk.Tk):
         refresh_button.config(command=refresh_jobs)
         refresh_jobs()
         window.after(JENKINS_REFRESH_MS, auto_refresh)
+
+    def check_jenkins_periodically(self):
+        """Consulta o Jenkins (em thread) e mostra no cabecalho quantos jobs falharam."""
+        result_queue = queue.Queue()
+
+        def worker():
+            try:
+                config = load_jenkins_config()
+                ok, _message, jobs = get_jenkins_jobs_status(
+                    config["url"], config["username"], config["password"]
+                )
+                result_queue.put(count_failed_jobs(jobs) if ok else 0)
+            except Exception:
+                result_queue.put(0)  # Jenkins fora do ar nao pode atrapalhar o uso
+
+        def poll():
+            if not self.winfo_exists():
+                return
+            try:
+                failures = result_queue.get_nowait()
+            except queue.Empty:
+                self.after(200, poll)
+                return
+            self._apply_jenkins_alert(failures)
+            self.after(JENKINS_HEADER_CHECK_MS, self.check_jenkins_periodically)
+
+        threading.Thread(target=worker, daemon=True).start()
+        self.after(200, poll)
+
+    def _apply_jenkins_alert(self, failures):
+        if not failures:
+            self.jenkins_label.pack_forget()
+            return
+        self.jenkins_label.config(text=f"✖  Jenkins: {failures} job(s) com falha")
+        self.jenkins_label.pack(side="left", padx=(18, 0))
+
+    def _show_jenkins_log(self, job, parent):
+        if not job.get("number") or not job.get("url"):
+            messagebox.showwarning("Jenkins", "Este job nao possui build para mostrar o log.", parent=parent)
+            return
+        config = load_jenkins_config()
+        self._write_jenkins_audit("ver_log", "solicitado", job["url"], job["name"])
+
+        window = tk.Toplevel(parent)
+        window.title(f"Jenkins - Log de {job['name']} #{job['number']}")
+        theme.size_window(window, 920, 540)
+        window.transient(parent)
+        frame = ttk.Frame(window, padding=12)
+        frame.pack(fill="both", expand=True)
+        frame.rowconfigure(1, weight=1)
+        frame.columnconfigure(0, weight=1)
+
+        status_var = tk.StringVar(value="Carregando o log do build...")
+        ttk.Label(frame, textvariable=status_var).grid(row=0, column=0, sticky="w")
+        text = tk.Text(frame, wrap="none", font=("Consolas", 9), state="disabled")
+        text.grid(row=1, column=0, sticky="nsew", pady=(8, 0))
+        vertical = ttk.Scrollbar(frame, orient="vertical", command=text.yview)
+        vertical.grid(row=1, column=1, sticky="ns", pady=(8, 0))
+        horizontal = ttk.Scrollbar(frame, orient="horizontal", command=text.xview)
+        horizontal.grid(row=2, column=0, sticky="ew")
+        text.configure(yscrollcommand=vertical.set, xscrollcommand=horizontal.set)
+
+        def copy_log():
+            window.clipboard_clear()
+            window.clipboard_append(text.get("1.0", "end-1c"))
+            status_var.set("Log copiado para a area de transferencia.")
+
+        buttons = ttk.Frame(frame)
+        buttons.grid(row=3, column=0, columnspan=2, sticky="e", pady=(10, 0))
+        ttk.Button(buttons, text="Copiar", command=copy_log).grid(row=0, column=0, padx=(0, 8))
+        ttk.Button(buttons, text="Fechar", command=window.destroy).grid(row=0, column=1)
+
+        result_queue = queue.Queue()
+
+        def worker():
+            try:
+                result = get_build_log(
+                    config["url"], config["username"], config["password"], job["url"]
+                )
+            except Exception as error:
+                result = (False, f"Nao foi possivel ler o log: {error}", "")
+            result_queue.put(result)
+
+        def poll():
+            if not window.winfo_exists():
+                return
+            try:
+                ok, message, log_text = result_queue.get_nowait()
+            except queue.Empty:
+                window.after(100, poll)
+                return
+            if not ok:
+                status_var.set(message)
+                return
+            text.config(state="normal")
+            text.insert("1.0", log_text or "(log vazio)")
+            text.config(state="disabled")
+            text.see("end")
+            status_var.set(f"{job['name']} #{job['number']}   •   mostrando o final do log")
+
+        threading.Thread(target=worker, daemon=True).start()
+        window.after(100, poll)
+
+    def _trigger_jenkins_build(self, job, parent, on_done=None):
+        job_url = job.get("job_url") or ""
+        if not job_url:
+            messagebox.showwarning("Jenkins", "Nao foi possivel identificar o endereco do job.", parent=parent)
+            return
+        if not messagebox.askyesno(
+            "Jenkins",
+            f"Disparar um novo build do job '{job['name']}'?",
+            parent=parent,
+        ):
+            return
+        config = load_jenkins_config()
+        self._write_jenkins_audit("disparar_build", "solicitado", job_url, job["name"])
+        result_queue = queue.Queue()
+
+        def worker():
+            try:
+                result = trigger_build(config["url"], config["username"], config["password"], job_url)
+            except Exception as error:
+                result = (False, f"Nao foi possivel disparar o build: {error}")
+            result_queue.put(result)
+
+        def poll():
+            try:
+                ok, message = result_queue.get_nowait()
+            except queue.Empty:
+                self.after(100, poll)
+                return
+            self._write_jenkins_audit("disparar_build", "ok" if ok else "erro", job_url, message)
+            if parent.winfo_exists():
+                if ok:
+                    messagebox.showinfo("Jenkins", f"{message}\n\nJob: {job['name']}", parent=parent)
+                else:
+                    messagebox.showwarning("Jenkins", message, parent=parent)
+                if on_done:
+                    on_done()
+
+        threading.Thread(target=worker, daemon=True).start()
+        self.after(100, poll)
 
     def _write_jenkins_audit(self, action, result, url, reason):
         # Mesmo padrao das demais linhas ("<acao> <resultado> | campo=valor"),

@@ -7,6 +7,16 @@ Semantico (`MAIOR.MENOR.CORRECAO`).
 
 ## [Nao lancado]
 
+### Adicionado
+- Jenkins: a tela de status mostra tambem os jobs dentro de pastas (ate 3
+  niveis, como `Pasta/job`).
+- Jenkins: botao `Ver Log` mostra o final do log do ultimo build (onde a falha
+  aparece), com opcao de copiar.
+- Jenkins: botao `Disparar Build` (com confirmacao) inicia um build do job; vai
+  para a Auditoria. Jobs com parametros nao sao suportados.
+- Jenkins: o cabecalho mostra `Jenkins: N job(s) com falha` (consulta a cada 5
+  min); clicar abre a tela de status.
+
 ## [2.6.7] - 2026-10-26
 
 ### Adicionado
