@@ -86,6 +86,9 @@ Nao distribuir `settings.json` junto do pacote. Dados persistentes ficam em
 | `app/audit.py` | Leitura/filtro dos logs para tela de Auditoria. |
 | `app/logging_utils.py` | Escrita dos logs mensais. |
 | `app/script_monitor.py` | Monitoramento diario de scripts de banco modelo. |
+| `app/model_db.py` | Execucao de scripts SQL no MySQL do banco modelo (PyMySQL), divisor de comandos. |
+| `app/script_runner.py` | Roda scripts no banco e registra `executado` no controle compartilhado. |
+| `app/model_db_dialogs.py` | Janelas de login e configuracao do banco modelo. |
 | `app/jenkins.py` | Integracao Jenkins local via HTTP/Basic Auth. |
 | `app/svn_search.py` | Consulta SVN por revisao/requisito. |
 | `app/runtime.py` | Caminhos em dev/PyInstaller e data de geracao do exe. |
@@ -216,6 +219,14 @@ script volta a pendente como `Alterado depois de marcado`; registros sem a data
 nunca contam como alterados. A pasta de scripts e configuravel em Configuracoes
 (`script_directory`). Logica em `app/script_monitor.py` (sem Tkinter).
 
+`Executar no banco` (`app/model_db.py`, `app/script_runner.py`) roda no MySQL os
+scripts selecionados, em ordem e parando no primeiro erro, com usuario/senha
+digitados a cada execucao (nunca gravados nem logados). Servidor/porta/banco ficam
+em `settings.json` (`model_db`). Cada script e uma transacao: DML e desfeito em
+erro, DDL nao. Sucesso grava `executado` no controle compartilhado na hora. O
+PyMySQL e a unica dependencia fora da biblioteca padrao (`requirements.txt`,
+`hiddenimports` no spec).
+
 ### Consulta SVN
 
 `Monitoramento > Consulta SVN` busca por revisao, requisito ou ambos.
@@ -254,7 +265,8 @@ http://localhost:8080
   varredura, limpeza ou SVN. Usar thread + queue/polling.
 - Nao chamar metodos Tkinter diretamente de thread secundaria.
 - Preservar logs e mensagens em portugues.
-- Usar apenas biblioteca padrao para novas funcionalidades do sistema.
+- Usar apenas biblioteca padrao para novas funcionalidades do sistema (unica
+  excecao autorizada: PyMySQL, para o banco modelo).
 - Ao editar manualmente, preferir mudancas pequenas e cobertas por testes.
 
 ## Git

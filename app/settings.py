@@ -184,6 +184,36 @@ def save_svn_base_path(svn_base_path):
     _save_settings(data)
 
 
+def load_model_db():
+    """Servidor/banco do banco modelo (MySQL). Usuario e senha nunca ficam aqui."""
+    data = _load_settings()
+    value = data.get("model_db")
+    if not isinstance(value, dict):
+        value = {}
+    try:
+        port = int(value.get("port") or 3306)
+    except (TypeError, ValueError):
+        port = 3306
+    return {
+        "host": str(value.get("host") or "").strip(),
+        "port": port,
+        "database": str(value.get("database") or "").strip(),
+        "username": str(value.get("username") or "").strip(),
+    }
+
+
+@_synchronized
+def save_model_db(host, port, database, username=""):
+    data = _load_settings()
+    data["model_db"] = {
+        "host": str(host or "").strip(),
+        "port": int(port) if str(port or "").strip().isdigit() else 3306,
+        "database": str(database or "").strip(),
+        "username": str(username or "").strip(),
+    }
+    _save_settings(data)
+
+
 def load_script_directory():
     """Pasta dos scripts do banco modelo; vazio/ausente usa o padrao de config.py."""
     data = _load_settings()

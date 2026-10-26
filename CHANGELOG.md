@@ -10,6 +10,13 @@ Semantico (`MAIOR.MENOR.CORRECAO`).
 ## [2.6.8] - 2026-10-26
 
 ### Adicionado
+- Scripts do banco modelo: `Executar no banco` roda no MySQL os scripts
+  selecionados, em ordem, parando no primeiro erro. Usuario e senha sao
+  digitados a cada execucao (a senha nunca e gravada nem vai para log); o que
+  roda com sucesso vira `executado` no controle compartilhado na hora. Cada
+  script e uma transacao (DML desfeito em erro; DDL o MySQL confirma sozinho).
+  Servidor, porta e banco em `Banco...` (com teste de conexao). Usa o PyMySQL,
+  embutido no exe (unica dependencia alem da biblioteca padrao).
 - Scripts do banco modelo: um script ja marcado como feito que for alterado
   depois (data do arquivo) volta a ficar pendente, destacado como `Alterado
   depois de marcado`, e o aviso diferencia novos de alterados. Marcar de novo

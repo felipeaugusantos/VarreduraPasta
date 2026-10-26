@@ -13,7 +13,7 @@ jobs:
         with:
           python-version: "3.13"
       - name: Instalar PyInstaller
-        run: python -m pip install pyinstaller==6.20.0
+        run: python -m pip install pyinstaller==6.20.0 pymysql==2.2.8
       - name: Validar e gerar release
         shell: pwsh
         run: .\scripts\build_release.ps1

@@ -8,9 +8,10 @@ from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from app import __version__, actions, log_cleanup, logging_utils, project_view, theme, zip_memory
+from app import __version__, actions, log_cleanup, logging_utils, model_db, project_view, theme, zip_memory
 from app.audit import filter_log_entries, list_log_files, parse_log_entries, read_log_file
 from app.autcom_test import login_value_error
+from app.model_db_dialogs import ask_credentials, open_db_settings
 from app.config import (
     CLOSING_MAX_CONCURRENT,
     CLOUD_MIN_AUTCOM_MB,
@@ -36,6 +37,7 @@ from app.pattern import generate_pattern_from_projects, save_pattern
 from app.project_lock import describe_owner, read_owner
 from app.runtime import executable_generation_text, resource_path
 from app.scanner import enrich_project_file_versions, scan_projects
+from app.script_runner import execute_scripts
 from app.script_monitor import ScriptMonitorResult, check_scripts, mark_scripts_done
 from app.settings import (
     load_additional_copy_target_directories,
@@ -43,6 +45,7 @@ from app.settings import (
     load_base_directory,
     load_ignored_project_folders,
     load_jenkins_config,
+    load_model_db,
     load_script_control_directory,
     load_script_directory,
     load_svn_base_path,
@@ -51,6 +54,7 @@ from app.settings import (
     save_copy_target_directories,
     save_ignored_project_folders,
     save_jenkins_config,
+    save_model_db,
     save_script_control_directory,
     save_script_directory,
     save_svn_base_path,
@@ -2078,7 +2082,7 @@ class VersionScannerApp(tk.Tk):
         monitor_window = tk.Toplevel(self)
         self.script_monitor_window = monitor_window
         monitor_window.title("Scripts Banco Modelo")
-        theme.size_window(monitor_window, 960, 620)
+        theme.size_window(monitor_window, 1040, 620)
         monitor_window.transient(self)
 
         frame = ttk.Frame(monitor_window, padding=14)
@@ -2238,6 +2242,83 @@ class VersionScannerApp(tk.Tk):
                 return
             os.startfile(directory)
 
+        def run_selected_in_database():
+            selection = set(pending_table.selection())
+            names = [iid for iid in pending_table.get_children() if iid in selection]
+            if not names:
+                messagebox.showinfo(
+                    "Scripts Banco Modelo",
+                    "Selecione na lista os scripts que devem ser executados no banco modelo.",
+                    parent=monitor_window,
+                )
+                return
+            database = load_model_db()
+            if not database["host"] or not database["database"]:
+                messagebox.showinfo(
+                    "Scripts Banco Modelo",
+                    "Configure o servidor e o banco modelo antes de executar.",
+                    parent=monitor_window,
+                )
+                open_db_settings(monitor_window)
+                return
+            preview = "\n".join(names[:15])
+            if len(names) > 15:
+                preview += f"\n... +{len(names) - 15} script(s)"
+            if not messagebox.askyesno(
+                "Scripts Banco Modelo",
+                f"Executar {len(names)} script(s) no banco '{database['database']}' "
+                f"({database['host']}:{database['port']}), na ordem da lista?\n\n{preview}\n\n"
+                "Se um script falhar, os seguintes não são executados.",
+                parent=monitor_window,
+            ):
+                return
+            credentials = ask_credentials(monitor_window, database["username"])
+            if credentials is None:
+                return
+            save_model_db(database["host"], database["port"], database["database"], credentials[0])
+
+            run_button.config(state="disabled")
+            status_var.set(f"Executando {len(names)} script(s) no banco modelo...")
+            directory = Path(path_var.get())
+            result_queue = queue.Queue()
+
+            def worker():
+                try:
+                    result_queue.put(execute_scripts(names, credentials[0], credentials[1], directory=directory))
+                except model_db.ModelDbError as error:
+                    result_queue.put(error)
+                except Exception as error:
+                    result_queue.put(model_db.ModelDbError(f"Falha inesperada: {error}"))
+
+            def poll():
+                if not monitor_window.winfo_exists():
+                    return
+                try:
+                    outcome = result_queue.get_nowait()
+                except queue.Empty:
+                    monitor_window.after(150, poll)
+                    return
+                run_button.config(state="normal")
+                if isinstance(outcome, Exception):
+                    messagebox.showerror("Scripts Banco Modelo", str(outcome), parent=monitor_window)
+                    verify_now()
+                    return
+                succeeded = [result for result in outcome if result.ok]
+                failed = [result for result in outcome if not result.ok]
+                not_run = names[len(outcome):]
+                lines = [f"{len(succeeded)} de {len(names)} script(s) executado(s) com sucesso."]
+                if failed:
+                    lines += ["", f"Falhou: {failed[0].name}", failed[0].message]
+                    if not_run:
+                        lines += ["", "Não executados:", *not_run[:15]]
+                (messagebox.showwarning if failed else messagebox.showinfo)(
+                    "Scripts Banco Modelo", "\n".join(lines), parent=monitor_window
+                )
+                verify_now()
+
+            threading.Thread(target=worker, daemon=True).start()
+            monitor_window.after(150, poll)
+
         pending_table.bind("<Double-1>", open_selected_script)
 
         button_bar = ttk.Frame(frame)
@@ -2248,10 +2329,15 @@ class VersionScannerApp(tk.Tk):
             style="Primary.TButton",
             command=mark_selected_done,
         ).grid(row=0, column=0, padx=(0, 8))
-        ttk.Button(button_bar, text="Abrir script", command=open_selected_script).grid(row=0, column=1, padx=(0, 8))
-        ttk.Button(button_bar, text="Abrir pasta", command=open_folder).grid(row=0, column=2, padx=(0, 8))
-        ttk.Button(button_bar, text="Verificar agora", command=verify_now).grid(row=0, column=3, padx=(0, 8))
-        ttk.Button(button_bar, text="Fechar", command=monitor_window.destroy).grid(row=0, column=4)
+        run_button = ttk.Button(button_bar, text="Executar no banco", command=run_selected_in_database)
+        run_button.grid(row=0, column=1, padx=(0, 8))
+        ttk.Button(
+            button_bar, text="Banco...", command=lambda: open_db_settings(monitor_window)
+        ).grid(row=0, column=2, padx=(0, 8))
+        ttk.Button(button_bar, text="Abrir script", command=open_selected_script).grid(row=0, column=3, padx=(0, 8))
+        ttk.Button(button_bar, text="Abrir pasta", command=open_folder).grid(row=0, column=4, padx=(0, 8))
+        ttk.Button(button_bar, text="Verificar agora", command=verify_now).grid(row=0, column=5, padx=(0, 8))
+        ttk.Button(button_bar, text="Fechar", command=monitor_window.destroy).grid(row=0, column=6)
 
         # Abrir a tela so consulta; nao grava "verificado" na Auditoria.
         self._run_script_monitor_check(show_without_news=False, on_result=update_result)

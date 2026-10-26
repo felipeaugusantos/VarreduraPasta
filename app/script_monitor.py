@@ -278,7 +278,7 @@ def check_scripts(directory=None, control_directory=None, now=None):
     return result
 
 
-def mark_scripts_done(scripts, control_directory=None, now=None, directory=None):
+def mark_scripts_done(scripts, control_directory=None, now=None, directory=None, event=EVENT_DONE, detail="marcado manualmente"):
     """Registra os scripts como feitos. Devolve (marcados, ja_feitos_por_outro).
 
     Um script alterado depois de marcado volta a ser pendente e pode ser marcado
@@ -295,7 +295,7 @@ def mark_scripts_done(scripts, control_directory=None, now=None, directory=None)
     user = current_user()
     append_events(
         [
-            LedgerEvent(timestamp, user, name, EVENT_DONE, _with_mod("marcado manualmente", directory, name))
+            LedgerEvent(timestamp, user, name, event, _with_mod(detail, directory, name))
             for name in to_mark
         ],
         control_directory,

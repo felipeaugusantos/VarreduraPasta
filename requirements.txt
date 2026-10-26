@@ -1,1 +1,3 @@
 # Tkinter e ctypes fazem parte da biblioteca padrao do Python no Windows.
+# Execucao de scripts no banco modelo (MySQL); vai embutido no exe.
+pymysql==2.2.8
