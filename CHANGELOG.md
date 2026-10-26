@@ -7,6 +7,8 @@ Semantico (`MAIOR.MENOR.CORRECAO`).
 
 ## [Nao lancado]
 
+## [2.6.7] - 2026-10-26
+
 ### Adicionado
 - Ao detectar uma versao nova publicada, o sistema pergunta (uma vez por versao)
   se o operador quer fechar o programa para abrir a versao nova; ao confirmar,
