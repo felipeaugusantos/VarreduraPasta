@@ -48,7 +48,8 @@ O script tambem gera o ZIP versionado e seu arquivo `.sha256`.
 O build tambem grava `versao.txt` (so o numero) dentro de `dist\VarreduraSistema`.
 Para publicar, copie o conteudo dessa pasta para `\\citel-fileserve\Modem\SISTEMA_COPIA`
 (o `versao.txt` vai junto): os sistemas abertos avisam "Versao X disponivel"
-(`app/update_check.py`). Os operadores devem abrir o sistema por `Iniciar_VarreduraSistema.bat`
+(`app/update_check.py`), perguntam se querem fechar o sistema e, ao confirmar,
+rodam o iniciador da pasta oficial para abrir a versao nova. Os operadores devem abrir o sistema por `Iniciar_VarreduraSistema.bat`
 (vai no pacote, `scripts\Iniciar_VarreduraSistema.bat`): ele copia a versao para
 `%LOCALAPPDATA%\VarreduraSistema\app\<versao>` e roda dali, entao a pasta de rede
 nao fica travada e pode ser sobrescrita a qualquer hora. Abrir o

@@ -7,11 +7,13 @@ Qualquer falha de leitura e silenciosa: sem rede nao pode atrapalhar o uso.
 """
 
 import re
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
 from app import __version__
-from app.config import UPDATE_VERSION_FILE_NAME
+from app.config import UPDATE_LAUNCHER_FILE_NAME, UPDATE_VERSION_FILE_NAME
+from app.runtime import data_directory
 from app.settings import load_update_directory
 
 _VERSION_PATTERN = re.compile(r"^\s*v?(\d+(?:\.\d+){1,3})\s*$")
@@ -54,3 +56,26 @@ def check_for_update(directory=None, current=None):
     if published is None:
         return None
     return UpdateInfo(current=current or __version__, published=published, directory=directory)
+
+
+def launcher_path(directory):
+    return Path(directory) / UPDATE_LAUNCHER_FILE_NAME
+
+
+def start_update(directory):
+    """Dispara o iniciador da pasta oficial (copia a versao nova e a abre).
+
+    O chamador fecha o sistema logo em seguida. Levanta FileNotFoundError se a
+    pasta publicada nao tiver o iniciador e OSError se nao der para executa-lo.
+    """
+    launcher = launcher_path(directory)
+    if not launcher.exists():
+        raise FileNotFoundError(str(launcher))
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "DETACHED_PROCESS", 0)
+    # pasta local como diretorio atual: o cmd nao aceita caminho de rede
+    subprocess.Popen(
+        ["cmd.exe", "/c", str(launcher)],
+        cwd=str(data_directory()) if data_directory().exists() else None,
+        creationflags=flags,
+        close_fds=True,
+    )

@@ -53,7 +53,7 @@ from app.settings import (
 )
 from app.shared_audit import list_shared_log_files
 from app.svn_search import search_svn
-from app.update_check import check_for_update
+from app.update_check import check_for_update, launcher_path, start_update
 
 
 CLOSING_POLL_MS = 1000
@@ -91,6 +91,7 @@ class VersionScannerApp(tk.Tk):
         self.pending_scripts_count = None
         self.scripts_check_error = ""
         self.update_info = None
+        self._update_prompted = None
         self.first_scan_done = False
         self.projects_shown_once = False
         self.script_monitor_window = None
@@ -1768,20 +1769,50 @@ class VersionScannerApp(tk.Tk):
             return
         self.update_label.config(text=f"▲  Versão {info.published} disponível")
         self.update_label.pack(side="left", padx=(18, 0))
+        if self._update_prompted != info.published:
+            # pergunta uma vez por versao publicada; depois, so pelo clique no aviso
+            self._update_prompted = info.published
+            self.after(500, self._show_update_details)
 
     def _show_update_details(self):
+        """Pergunta se o operador quer fechar o sistema para abrir a versao nova."""
         info = self.update_info
         if info is None:
             return
-        messagebox.showinfo(
+        active = actions.CLOSING_MANAGER.active_count()
+        if active:
+            messagebox.showinfo(
+                "Nova versão disponível",
+                f"A versão {info.published} já está publicada (você usa a {info.current}).\n\n"
+                f"Há {active} fechamento(s) na fila ou em andamento. Aguarde terminarem "
+                "e clique no aviso de versão no cabeçalho para atualizar.",
+            )
+            return
+        if not launcher_path(info.directory).exists():
+            messagebox.showinfo(
+                "Nova versão disponível",
+                f"A versão {info.published} já está publicada em:\n\n{info.directory}\n\n"
+                "Salve o que estiver em andamento, feche o sistema e abra o executável "
+                "dessa pasta para usar a versão nova.",
+            )
+            return
+        if not messagebox.askyesno(
             "Nova versão disponível",
-            f"Você está usando a versão {info.current}.\n"
-            f"A versão {info.published} já está publicada em:\n\n"
-            f"{info.directory}\n\n"
-            "Salve o que estiver em andamento, feche o sistema e abra de novo pelo "
-            "Iniciar_VarreduraSistema.bat "
-            "dessa pasta para usar a versão nova.",
-        )
+            f"A versão {info.published} já foi publicada (você está na {info.current}).\n\n"
+            "Deseja fechar o programa agora para abrir a versão nova?",
+        ):
+            return
+        try:
+            start_update(info.directory)
+        except OSError as error:
+            messagebox.showerror(
+                "Nova versão disponível",
+                f"Não foi possível abrir a versão nova:\n{error}\n\n"
+                "Feche o sistema e abra Iniciar_VarreduraSistema.bat em:\n"
+                f"{info.directory}",
+            )
+            return
+        self.destroy()
 
     def check_scripts_periodically(self):
         """Verifica a pasta de scripts a cada 30 min (15 min se a rede falhar)."""

@@ -7,6 +7,13 @@ Semantico (`MAIOR.MENOR.CORRECAO`).
 
 ## [Nao lancado]
 
+### Adicionado
+- Ao detectar uma versao nova publicada, o sistema pergunta (uma vez por versao)
+  se o operador quer fechar o programa para abrir a versao nova; ao confirmar,
+  roda o `Iniciar_VarreduraSistema.bat` da pasta oficial, que copia e abre a
+  versao nova. O clique no aviso do cabecalho repete a pergunta. Com
+  fechamentos na fila/em andamento, a atualizacao e adiada.
+
 ### Corrigido
 - O build nao falha mais ao gerar o ZIP quando antivirus/indexador esta com um
   arquivo do pacote aberto: o ZIP e feito com leitura compartilhada e refeito

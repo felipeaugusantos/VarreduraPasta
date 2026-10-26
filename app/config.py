@@ -57,6 +57,7 @@ SCRIPT_RETRY_INTERVAL_MS = 15 * 60 * 1000
 # Pasta oficial do exe no fileserver; o pacote traz versao.txt com o numero.
 UPDATE_DIRECTORY = Path(r"\\citel-fileserve\Modem\SISTEMA_COPIA")
 UPDATE_VERSION_FILE_NAME = "versao.txt"
+UPDATE_LAUNCHER_FILE_NAME = "Iniciar_VarreduraSistema.bat"
 UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000
 # Login de teste do Autcom (Testar Autcom); cada operador pode trocar em Configuracoes.
 AUTCOM_TEST_USERNAME = "998"
