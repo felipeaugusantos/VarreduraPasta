@@ -5,7 +5,7 @@ Todas as alteracoes relevantes deste projeto sao documentadas neste arquivo.
 O formato e baseado em Keep a Changelog e o projeto segue Versionamento
 Semantico (`MAIOR.MENOR.CORRECAO`).
 
-## [Nao lancado]
+## [2.6.3] - 2026-10-26
 
 ### Alterado
 - Cartoes do cabecalho: mostram "…/analisando…" ate a primeira varredura (em
