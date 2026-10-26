@@ -8,4 +8,6 @@ import tempfile
 # import de `app`, pois os caminhos sao resolvidos no import.
 _TEST_DATA_DIR = tempfile.mkdtemp(prefix="varredura-testes-")
 os.environ["VARREDURA_SISTEMA_DATA_DIR"] = _TEST_DATA_DIR
+# Testes nunca gravam na auditoria compartilhada da rede.
+os.environ["VARREDURA_SEM_AUDITORIA_COMPARTILHADA"] = "1"
 atexit.register(shutil.rmtree, _TEST_DATA_DIR, ignore_errors=True)

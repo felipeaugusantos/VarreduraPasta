@@ -14,6 +14,7 @@ from app import logging_utils, theme, zip_memory
 from app.autcom_test import resolve_test_layout, run_autcom_test
 from app.closing_runner import (
     PENDING_SUFFIXES,
+    ClosingCancelledError,
     ClosingManager,
     format_elapsed,
     pending_file_sizes,
@@ -269,7 +270,20 @@ def _run_closing_job(job):
             job.log_path,
             CLOSING_TIMEOUT_SECONDS,
             on_tick=update_percent,
+            cancel_event=job.cancel_event,
         )
+    except ClosingCancelledError:
+        _write_action_audit(
+            job.title,
+            "cancelado",
+            project,
+            bat_path=job.bat_path,
+            reason=(
+                f"cancelado pelo operador em {job.percent or 0}%; "
+                f"arquivos pendentes ficam na pasta; log={job.log_path}"
+            ),
+        )
+        raise
     except Exception as error:
         _write_action_audit(
             job.title,
@@ -412,8 +426,41 @@ def _block_if_closing_active(project, title):
     return True
 
 
+def cancelar_fechamentos(projects):
+    """Cancela os fechamentos na fila/em andamento dos projetos. Retorna os nomes cancelados."""
+    if not isinstance(projects, (list, tuple)):
+        projects = [projects]
+    cancelled = []
+    for project in projects:
+        outcome = CLOSING_MANAGER.cancel(project)
+        if outcome is None:
+            continue
+        if outcome == "queued":
+            # Nunca chegou a rodar: ninguem mais vai soltar a trava dele.
+            lock = _CLOSING_LOCKS.pop(_lock_key(project), None)
+            if lock is not None:
+                lock.release()
+            _write_action_audit(
+                "Cancelar Fechamento",
+                "cancelado",
+                project,
+                reason="removido da fila antes de comecar",
+            )
+        else:
+            _write_action_audit(
+                "Cancelar Fechamento",
+                "solicitado",
+                project,
+                reason="BAT em andamento sera encerrado",
+            )
+        cancelled.append(project.folder_name)
+    return cancelled
+
+
 def validar_pos_fechamento(project):
     if _block_if_closing_active(project, "Validar Fechamento"):
+        return
+    if _block_if_locked_by_other(project, "Validar Fechamento"):
         return
     result = "validado_ok" if project.status == "OK" else "validado_pendente"
     _write_action_audit(

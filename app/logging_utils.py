@@ -2,6 +2,7 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
+from app import shared_audit
 from app.runtime import logs_directory
 
 
@@ -25,3 +26,5 @@ def write_log(message):
     with _LOG_LOCK:
         with log_file.open("a", encoding="utf-8") as log:
             log.write(f"[{timestamp}] {message}\n")
+    # Copia na auditoria compartilhada (em segundo plano; nunca espera a rede).
+    shared_audit.enqueue(now, f"[{timestamp}] {message}\n")

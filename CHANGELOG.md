@@ -8,6 +8,15 @@ Semantico (`MAIOR.MENOR.CORRECAO`).
 ## [Nao lancado]
 
 ### Adicionado
+- Botao `Cancelar Fechamento`: tira da fila ou encerra o BAT em andamento (com
+  todos os processos que ele abriu), solta a trava do projeto e registra
+  `cancelado` na Auditoria. A coluna mostra `Cancelado em N%`; os arquivos ja
+  compactados ficam e o projeto precisa ser fechado de novo.
+- Auditoria compartilhada: toda linha de Auditoria tambem e acrescentada a
+  `auditoria-AAAA-MM.log` na pasta de controle. A gravacao e em segundo plano
+  (fila limitada; se a rede cair, as linhas aguardam e sao gravadas depois), entao
+  a tela nunca espera a rede. Em `Auditoria`, o seletor `Origem` alterna entre
+  `Meus registros` e `Todos os operadores` (leitura em thread, sem auto-atualizar).
 - Aviso de versao nova: o build gera `versao.txt` dentro do pacote; ao abrir (e
   a cada hora) o sistema le o `versao.txt` de `\\citel-fileserve\Modem\SISTEMA_COPIA`
   (configuravel em `update_directory` no `settings.json`) e, se a versao
@@ -15,6 +24,8 @@ Semantico (`MAIOR.MENOR.CORRECAO`).
   cabecalho (clique mostra onde esta). Falha ao ler a pasta e silenciosa.
 
 ### Corrigido
+- `Validar Fechamento` agora tambem confere a trava de outro operador (antes so
+  os botoes ficavam desabilitados).
 - Erros inesperados no exe (que roda sem console) sumiam sem deixar rastro: o
   botao "nao fazia nada". Agora todo erro nao tratado em tela, em thread ou na
   abertura do sistema e gravado com detalhes em `logs\erros.log`, gera uma

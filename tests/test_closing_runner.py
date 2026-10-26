@@ -105,6 +105,57 @@ class ClosingManagerTests(unittest.TestCase):
         target(job)
         self.assertEqual(manager.running_and_queued(), (1, 1))
 
+    def test_cancel_queued_job_removes_it_and_lets_others_run(self):
+        manager, started, _clock = self.make_manager(max_concurrent=1)
+        first, second, third = (make_project(name) for name in ("p1", "p2", "p3"))
+        for project in (first, second, third):
+            manager.enqueue(project, "Fechamento Local", "x.bat")
+
+        self.assertEqual(manager.cancel(second), "queued")
+
+        self.assertEqual(manager.progress_text(second), "Cancelado")
+        self.assertFalse(manager.is_active(second))
+        target, job = started[0]
+        target(job)  # o primeiro termina; o terceiro (nao o cancelado) comeca
+        self.assertEqual([item.project.folder_name for _t, item in started], ["p1", "p3"])
+        # Pode enfileirar de novo depois de cancelar.
+        self.assertTrue(manager.enqueue(second, "Fechamento Local", "x.bat"))
+
+    def test_cancel_running_job_signals_executor_and_ends_as_cancelled(self):
+        from app.closing_runner import ClosingCancelledError
+
+        def execute(job):
+            job.percent = 45
+            if job.cancel_event.is_set():
+                raise ClosingCancelledError("cancelado")
+            return 0
+
+        manager, started, _clock = self.make_manager(execute=execute, max_concurrent=1)
+        running, waiting = make_project("p1"), make_project("p2")
+        manager.enqueue(running, "Fechamento Local", "x.bat")
+        manager.enqueue(waiting, "Fechamento Local", "x.bat")
+
+        self.assertEqual(manager.cancel(running), "running")
+        self.assertTrue(manager.is_active(running))  # ainda encerrando o BAT
+        target, job = started[0]
+        target(job)
+
+        self.assertEqual(manager.progress_text(running), "Cancelado em 45%")
+        self.assertFalse(manager.is_active(running))
+        self.assertEqual(manager.finished_count, 1)
+        self.assertEqual(len(started), 2)  # a fila andou
+
+    def test_cancel_unknown_or_finished_project_does_nothing(self):
+        manager, started, _clock = self.make_manager(max_concurrent=1)
+        project = make_project("p1")
+        self.assertIsNone(manager.cancel(project))
+
+        manager.enqueue(project, "Fechamento Local", "x.bat")
+        target, job = started[0]
+        target(job)
+        self.assertIsNone(manager.cancel(project))
+        self.assertEqual(manager.progress_text(project).split()[0], "Concluído")
+
     def test_unknown_project_has_empty_progress(self):
         manager, _started, _clock = self.make_manager()
         self.assertEqual(manager.progress_text(make_project("p1")), "")
@@ -238,6 +289,30 @@ class RunClosingBatTests(unittest.TestCase):
 
         self.assertEqual(return_code, 1)
         self.assertGreaterEqual(len(ticks), 1)
+
+    def test_cancel_event_kills_bat_quickly(self):
+        import threading
+        import time
+
+        from app.closing_runner import ClosingCancelledError
+
+        with TemporaryDirectory() as temp_directory:
+            bat_path = Path(temp_directory) / "lento.bat"
+            bat_path.write_text("@echo off\r\nping -n 60 127.0.0.1 >nul\r\n", encoding="utf-8")
+            cancel = threading.Event()
+            threading.Timer(0.5, cancel.set).start()
+
+            start = time.monotonic()
+            with self.assertRaises(ClosingCancelledError):
+                run_closing_bat(
+                    bat_path,
+                    Path(temp_directory) / "lento.log",
+                    timeout=120,
+                    cancel_event=cancel,
+                )
+            elapsed = time.monotonic() - start
+
+        self.assertLess(elapsed, 10)
 
     def test_timeout_stops_bat(self):
         with TemporaryDirectory() as temp_directory:

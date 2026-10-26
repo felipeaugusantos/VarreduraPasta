@@ -2,7 +2,7 @@ import subprocess
 import threading
 import time
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 
@@ -21,11 +21,16 @@ STATUS_QUEUED = "Na fila"
 STATUS_RUNNING = "Em andamento"
 STATUS_DONE = "Concluído"
 STATUS_ERROR = "Erro"
+STATUS_CANCELLED = "Cancelado"
 ACTIVE_STATUSES = {STATUS_QUEUED, STATUS_RUNNING}
 
 
 class ClosingTimeoutError(OSError):
     pass
+
+
+class ClosingCancelledError(Exception):
+    """O operador cancelou o fechamento; o BAT foi encerrado."""
 
 
 @dataclass
@@ -42,6 +47,7 @@ class ClosingJob:
     log_path: Path = None
     percent: int = None
     zip_record: object = None
+    cancel_event: threading.Event = field(default_factory=threading.Event)
 
 
 def project_key(project):
@@ -86,10 +92,11 @@ def zipped_percent(initial_sizes, remaining_names):
     return min(99, int((total - remaining) * 100 / total))
 
 
-def run_closing_bat(bat_path, log_path, timeout, on_tick=None):
+def run_closing_bat(bat_path, log_path, timeout, on_tick=None, cancel_event=None):
     """Executa o BAT em console oculto, gravando a saida no log. Retorna o codigo.
 
-    Enquanto espera, chama `on_tick()` a cada segundo (usado para o percentual).
+    Enquanto espera, chama `on_tick()` a cada segundo (usado para o percentual)
+    e encerra o BAT (com tudo que ele abriu) se `cancel_event` for acionado.
 
     O BAT precisa de um console proprio: comandos como `timeout` falham na hora
     quando a entrada nao e um console, transformando lacos de espera em lacos
@@ -110,6 +117,9 @@ def run_closing_bat(bat_path, log_path, timeout, on_tick=None):
     )
     deadline = time.monotonic() + timeout
     while True:
+        if cancel_event is not None and cancel_event.is_set():
+            _kill_process_tree(process)
+            raise ClosingCancelledError("Fechamento cancelado pelo operador.")
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             _kill_process_tree(process)
@@ -181,6 +191,27 @@ class ClosingManager:
             queued = sum(1 for job in self._jobs.values() if job.status == STATUS_QUEUED)
         return running, queued
 
+    def cancel(self, project):
+        """Cancela o fechamento do projeto. Retorna "queued", "running" ou None.
+
+        Na fila, o job sai na hora; rodando, o executor encerra o BAT em ate 1 s
+        (o proprio executor registra o fim e solta a trava).
+        """
+        with self._lock:
+            job = self._jobs.get(project_key(project))
+            if job is None or job.status not in ACTIVE_STATUSES:
+                return None
+            if job.status == STATUS_QUEUED:
+                try:
+                    self._pending.remove(job)
+                except ValueError:
+                    pass
+                job.status = STATUS_CANCELLED
+                job.finished_at = self._clock()
+                return "queued"
+            job.cancel_event.set()
+            return "running"
+
     def enqueue(self, project, title, bat_path):
         key = project_key(project)
         with self._lock:
@@ -210,6 +241,10 @@ class ClosingManager:
             if job.status == STATUS_DONE:
                 elapsed = format_elapsed(job.finished_at - job.started_at)
                 return f"{STATUS_DONE} {elapsed}"
+            if job.status == STATUS_CANCELLED:
+                if job.percent:
+                    return f"{STATUS_CANCELLED} em {job.percent}%"
+                return STATUS_CANCELLED
             if job.percent is not None:
                 return f"{STATUS_ERROR} em {job.percent}%"
             return STATUS_ERROR
@@ -229,15 +264,22 @@ class ClosingManager:
     def _run_job(self, job):
         return_code = None
         message = ""
+        cancelled = False
         try:
             return_code = self._execute(job)
+        except ClosingCancelledError as error:
+            cancelled = True
+            message = str(error)
         except Exception as error:
             message = str(error)
         with self._lock:
             job.finished_at = self._clock()
             job.return_code = return_code
             job.message = message
-            job.status = STATUS_DONE if return_code == 0 and not message else STATUS_ERROR
+            if cancelled:
+                job.status = STATUS_CANCELLED
+            else:
+                job.status = STATUS_DONE if return_code == 0 and not message else STATUS_ERROR
             self._running -= 1
             self.finished_count += 1
         self._start_next()

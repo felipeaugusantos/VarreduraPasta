@@ -328,7 +328,7 @@ class ActionAuditTests(unittest.TestCase):
             seen = []
 
             # Simula o BAT: cada .cmd compacta um arquivo e o apaga da pasta.
-            def fake_bat(bat_path, log_path, timeout, on_tick):
+            def fake_bat(bat_path, log_path, timeout, on_tick, cancel_event=None):
                 seen.append(job.percent)
                 for name in ("libA.dll", "Principal.bpl", "Autcom.exe"):
                     (project_path / name).unlink()
@@ -1436,6 +1436,116 @@ class CreateMissingDestinationTests(unittest.TestCase):
 
         messagebox.askyesno.assert_not_called()
         messagebox.showerror.assert_called_once()
+
+
+class CancelClosingTests(unittest.TestCase):
+    def setUp(self):
+        from tempfile import TemporaryDirectory
+
+        self._temp = TemporaryDirectory(ignore_cleanup_errors=True)
+        self.addCleanup(self._temp.cleanup)
+        self.projects = []
+        for name in ("379.48.2.30.74.150.100.7", "379.48.2.30.74.150.100.8"):
+            path = Path(self._temp.name) / name
+            (path / "comandosCMD").mkdir(parents=True)
+            (path / "comandosCMD" / "_FechamentoArquivos.bat").write_text("echo ok", encoding="utf-8")
+            self.projects.append(make_project(folder_name=name, path=path))
+
+    def make_manager(self):
+        from app import actions
+        from app.closing_runner import ClosingManager
+
+        started = []
+        manager = ClosingManager(
+            actions._execute_closing_job,
+            max_concurrent=1,
+            start_thread=lambda target, job: started.append((target, job)),
+        )
+        return manager, started
+
+    def queue_both(self, manager):
+        with (
+            patch("app.actions.CLOSING_MANAGER", manager),
+            patch("app.actions._write_action_audit"),
+            patch("app.actions.messagebox"),
+        ):
+            fechamento_local(self.projects)
+
+    def test_cancelling_queued_project_releases_its_lock_and_audits(self):
+        from app.actions import cancelar_fechamentos
+        from app.project_lock import read_owner
+
+        manager, _started = self.make_manager()
+        self.queue_both(manager)
+        queued = self.projects[1]
+        self.assertIsNotNone(read_owner(queued.path))  # trava ja tomada na fila
+
+        with (
+            patch("app.actions.CLOSING_MANAGER", manager),
+            patch("app.actions._write_action_audit") as write_audit,
+        ):
+            cancelled = cancelar_fechamentos([queued])
+
+        self.assertEqual(cancelled, [queued.folder_name])
+        self.assertIsNone(read_owner(queued.path))
+        self.assertFalse(manager.is_active(queued))
+        self.assertEqual(write_audit.call_args.args[:2], ("Cancelar Fechamento", "cancelado"))
+
+    def test_cancelling_running_project_ends_bat_audits_and_releases_lock(self):
+        from app.closing_runner import ClosingCancelledError
+        from app.project_lock import read_owner
+
+        manager, started = self.make_manager()
+        self.queue_both(manager)
+        running = self.projects[0]
+
+        def fake_bat(bat_path, log_path, timeout, on_tick=None, cancel_event=None):
+            on_tick()
+            self.assertTrue(cancel_event.is_set())
+            raise ClosingCancelledError("cancelado")
+
+        with (
+            patch("app.actions.CLOSING_MANAGER", manager),
+            patch("app.actions._write_action_audit") as write_audit,
+            patch("app.actions._learn_project_pattern"),
+            patch("app.actions.run_closing_bat", side_effect=fake_bat),
+        ):
+            from app.actions import cancelar_fechamentos
+
+            self.assertEqual(cancelar_fechamentos([running]), [running.folder_name])
+            target, job = started[0]
+            target(job)
+
+        results = [call.args[1] for call in write_audit.call_args_list]
+        self.assertIn("solicitado", results)
+        self.assertIn("cancelado", results)
+        self.assertEqual(manager.progress_text(running), "Cancelado")
+        self.assertIsNone(read_owner(running.path))  # trava solta ao terminar
+
+    def test_nothing_to_cancel_for_inactive_project(self):
+        from app.actions import cancelar_fechamentos
+
+        manager, _started = self.make_manager()
+        with patch("app.actions.CLOSING_MANAGER", manager), patch("app.actions._write_action_audit") as write_audit:
+            self.assertEqual(cancelar_fechamentos(self.projects), [])
+        write_audit.assert_not_called()
+
+    def test_validate_is_blocked_while_other_operator_uses_project(self):
+        from app.project_lock import ProjectLock
+
+        with patch.dict("os.environ", {"USERNAME": "joao.silva"}):
+            lock = ProjectLock(self.projects[0].path, "Fechamento Local").acquire()
+        self.addCleanup(lock.release)
+
+        with (
+            patch("app.actions._write_action_audit") as write_audit,
+            patch("app.actions.messagebox") as messagebox,
+        ):
+            validar_pos_fechamento(self.projects[0])
+
+        self.assertIn("joao.silva", messagebox.showerror.call_args.args[1])
+        self.assertEqual(write_audit.call_args.args[:2], ("Validar Fechamento", "bloqueado"))
+        messagebox.showinfo.assert_not_called()
 
 if __name__ == "__main__":
     unittest.main()

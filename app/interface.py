@@ -48,11 +48,14 @@ from app.settings import (
     save_script_control_directory,
     save_svn_base_path,
 )
+from app.shared_audit import list_shared_log_files
 from app.svn_search import search_svn
 from app.update_check import check_for_update
 
 
 CLOSING_POLL_MS = 1000
+AUDIT_SOURCE_LOCAL = "Meus registros"
+AUDIT_SOURCE_SHARED = "Todos os operadores"
 JENKINS_REFRESH_MS = 15 * 1000
 
 
@@ -455,6 +458,11 @@ class VersionScannerApp(tk.Tk):
             closing,
             text="Validar Fechamento",
             command=lambda: self._run_action(actions.validar_pos_fechamento),
+        )
+        self.cancel_close_button = ttk.Button(
+            closing,
+            text="Cancelar Fechamento",
+            command=self._cancel_closing,
         )
 
         copy = group(1, "Cópia")
@@ -1440,7 +1448,19 @@ class VersionScannerApp(tk.Tk):
         toolbar.columnconfigure(1, weight=1)
         toolbar.columnconfigure(3, weight=1)
 
-        ttk.Label(toolbar, text="Log:").grid(row=0, column=0, sticky="w")
+        source_box = ttk.Frame(toolbar)
+        source_box.grid(row=0, column=0, sticky="w")
+        ttk.Label(source_box, text="Origem:").pack(side="left")
+        source_var = tk.StringVar(value=AUDIT_SOURCE_LOCAL)
+        source_combo = ttk.Combobox(
+            source_box,
+            textvariable=source_var,
+            state="readonly",
+            width=20,
+            values=(AUDIT_SOURCE_LOCAL, AUDIT_SOURCE_SHARED),
+        )
+        source_combo.pack(side="left", padx=(8, 14))
+        ttk.Label(source_box, text="Log:").pack(side="left")
         log_var = tk.StringVar()
         log_combo = ttk.Combobox(toolbar, textvariable=log_var, state="readonly")
         log_combo.grid(row=0, column=1, sticky="ew", padx=(8, 8))
@@ -1528,7 +1548,77 @@ class VersionScannerApp(tk.Tk):
         current_log_content = {"entries": []}
         current_log_state = {"selected": "", "stamp": None}
 
+        shared_state = {"loading": False}
+
+        def show_message(text):
+            log_tree.delete(*log_tree.get_children())
+            log_tree.insert("", "end", values=("", text, "", "", "", "", ""))
+
+        def refresh_shared(_event=None):
+            """Le a auditoria compartilhada (rede) em thread, sem travar a tela."""
+            if shared_state["loading"]:
+                return
+            shared_state["loading"] = True
+            wanted = log_var.get()
+            show_message("Carregando auditoria compartilhada...")
+            result_queue = queue.Queue()
+
+            def worker():
+                try:
+                    directory = load_script_control_directory()
+                    if not directory.exists():
+                        raise OSError(f"{directory} nao encontrada")
+                    files = list_shared_log_files(directory)
+                    names = [path.name for path in files]
+                    chosen = wanted if wanted in names else (names[-1] if names else "")
+                    text = read_log_file(directory / chosen) if chosen else ""
+                    result_queue.put(("ok", names, chosen, parse_log_entries(text), str(directory)))
+                except Exception as error:
+                    result_queue.put(("erro", str(error)))
+
+            def poll():
+                if not audit_window.winfo_exists():
+                    return
+                try:
+                    outcome = result_queue.get_nowait()
+                except queue.Empty:
+                    audit_window.after(100, poll)
+                    return
+                shared_state["loading"] = False
+                if source_var.get() != AUDIT_SOURCE_SHARED:
+                    return  # trocou de origem enquanto lia
+                if outcome[0] == "erro":
+                    show_message(f"Pasta de controle indisponivel: {outcome[1]}")
+                    return
+                _status, names, chosen, entries, directory = outcome
+                log_combo["values"] = names
+                log_var.set(chosen)
+                current_log_content["entries"] = entries
+                apply_log_filter()
+                if not names:
+                    show_message(f"Nenhum registro compartilhado ainda em {directory}")
+
+            threading.Thread(target=worker, daemon=True).start()
+            audit_window.after(100, poll)
+
+        def on_source_changed(_event=None):
+            log_var.set("")
+            log_combo["values"] = []
+            current_log_content["entries"] = []
+            current_log_state["selected"] = ""
+            current_log_state["stamp"] = None
+            refresh_logs(force=True)
+
+        def on_log_selected(_event=None):
+            if source_var.get() == AUDIT_SOURCE_SHARED:
+                refresh_shared()
+            else:
+                load_selected_log()
+
         def refresh_logs(force=True):
+            if source_var.get() == AUDIT_SOURCE_SHARED:
+                refresh_shared()
+                return
             log_files = list_log_files()
             log_combo["values"] = [str(path.name) for path in log_files]
             if log_files and not log_var.get():
@@ -1581,7 +1671,8 @@ class VersionScannerApp(tk.Tk):
         def auto_refresh_logs():
             if not audit_window.winfo_exists():
                 return
-            refresh_logs(force=False)
+            if source_var.get() != AUDIT_SOURCE_SHARED:
+                refresh_logs(force=False)
             audit_window.after(2000, auto_refresh_logs)
 
         ttk.Button(toolbar, text="Atualizar", command=lambda: refresh_logs(force=True)).grid(
@@ -1595,7 +1686,8 @@ class VersionScannerApp(tk.Tk):
             sticky="e",
             padx=(8, 0),
         )
-        log_combo.bind("<<ComboboxSelected>>", load_selected_log)
+        log_combo.bind("<<ComboboxSelected>>", on_log_selected)
+        source_combo.bind("<<ComboboxSelected>>", on_source_changed)
         filter_entry.bind("<KeyRelease>", apply_log_filter)
         result_combo.bind("<<ComboboxSelected>>", apply_log_filter)
         refresh_logs()
@@ -2426,6 +2518,42 @@ class VersionScannerApp(tk.Tk):
         return selected[0] if len(selected) == 1 else None
 
     def _sync_buttons(self):
+        self._sync_action_buttons()
+        self._sync_cancel_button()
+
+    def _sync_cancel_button(self):
+        """Cancelar so vale para fechamentos na fila/em andamento deste sistema."""
+        has_active = any(
+            actions.CLOSING_MANAGER.is_active(project) for project in self._selected_projects()
+        )
+        self.cancel_close_button.config(state="normal" if has_active else "disabled")
+
+    def _cancel_closing(self):
+        active = [
+            project for project in self._selected_projects()
+            if actions.CLOSING_MANAGER.is_active(project)
+        ]
+        if not active:
+            return
+        names = "\n".join(f"- {project.folder_name}" for project in active[:10])
+        if len(active) > 10:
+            names += f"\n... +{len(active) - 10} projeto(s)"
+        if not messagebox.askyesno(
+            "Cancelar Fechamento",
+            f"Cancelar o fechamento de {len(active)} projeto(s)?\n\n{names}\n\n"
+            "O BAT em andamento será encerrado. Os arquivos que já foram "
+            "compactados continuam na pasta e os pendentes ficam como estão: "
+            "será preciso fechar de novo para concluir a versão.",
+        ):
+            return
+        cancelled = actions.cancelar_fechamentos(active)
+        if cancelled:
+            self.status_label.config(
+                text=f"{len(cancelled)} fechamento(s) sendo cancelado(s)..."
+            )
+        self._update_closing_column(reschedule=False)
+
+    def _sync_action_buttons(self):
         selected_projects = self._selected_projects()
         if len(selected_projects) > 1:
             self._sync_buttons_for_multiple(selected_projects)

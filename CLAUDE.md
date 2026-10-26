@@ -72,6 +72,7 @@ Nao distribuir `settings.json` junto do pacote. Dados persistentes ficam em
 | `app/zip_memory.py` | Maior total de ZIPs ja gerado por pasta (`zip_memory.json`). |
 | `app/project_lock.py` | Trava por projeto entre operadores do TS (`.varredura.lock` na pasta). |
 | `app/error_handler.py` | Erros inesperados: `logs\erros.log`, Auditoria e mensagem na tela. |
+| `app/shared_audit.py` | Copia da Auditoria na pasta de controle (fila em segundo plano). |
 | `app/update_check.py` | Aviso de versao nova (le `versao.txt` da pasta oficial do exe). |
 | `app/autcom_test.py` | Preparo da pasta de teste e validacao da abertura do Autcom. |
 | `app/pattern.py` | Padrao de arquivos por projeto. |
@@ -164,6 +165,10 @@ segundo. O sistema grava auditoria e aprende o padrao de arquivos do projeto.
 Enquanto o projeto estiver na fila ou em andamento, copia, limpeza, teste do
 Autcom e validacao ficam bloqueados (`_block_if_closing_active` em
 `app/actions.py`, alem dos botoes desabilitados na interface).
+`Cancelar Fechamento` (`cancelar_fechamentos` em `app/actions.py`): na fila o job
+sai na hora; rodando, `cancel_event` faz `run_closing_bat` encerrar o BAT e seus
+filhos (`taskkill /T`) em ate 1 s. Termina como `Cancelado em N%`, solta a trava
+e audita `cancelado`; o projeto fica incompleto e precisa ser fechado de novo.
 
 ### Copia
 
@@ -177,8 +182,14 @@ copias especificas (5 partes) nao tem regra e continuam so com o aviso
 
 ### Auditoria
 
-Logs ficam na pasta `logs` ao lado do executavel. A tela `Auditoria > Logs`
-mostra os registros em tabela e permite filtros.
+Logs locais ficam em `%LOCALAPPDATA%\VarreduraSistema\logs` (um por operador do
+TS). Toda linha de `write_log` tambem vai para `auditoria-AAAA-MM.log` na pasta
+de controle compartilhada, por uma fila em segundo plano (`app/shared_audit.py`:
+fila limitada, nova tentativa a cada 30 s se a rede falhar; nunca bloqueia a
+interface). A tela `Auditoria > Logs` mostra os registros em tabela, com filtros
+e o seletor `Origem` (`Meus registros` / `Todos os operadores`); a origem
+compartilhada e lida em thread e nao atualiza sozinha. Os testes desligam a
+gravacao compartilhada (`VARREDURA_SEM_AUDITORIA_COMPARTILHADA`).
 
 ### Monitoramento de scripts
 
