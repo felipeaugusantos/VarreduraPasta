@@ -50,7 +50,7 @@ Para publicar, copie o conteudo dessa pasta para `\\citel-fileserve\Modem\SISTEM
 (o `versao.txt` vai junto): os sistemas abertos avisam "Versao X disponivel"
 (`app/update_check.py`). Os operadores devem abrir o sistema por `Iniciar_VarreduraSistema.bat`
 (vai no pacote, `scripts\Iniciar_VarreduraSistema.bat`): ele copia a versao para
-`%LOCALAPPDATA%\VarreduraSistemapp\<versao>` e roda dali, entao a pasta de rede
+`%LOCALAPPDATA%\VarreduraSistema\app\<versao>` e roda dali, entao a pasta de rede
 nao fica travada e pode ser sobrescrita a qualquer hora. Abrir o
 `VarreduraSistema.exe` direto da rede volta a travar a pasta.
 

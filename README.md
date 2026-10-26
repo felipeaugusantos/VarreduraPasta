@@ -37,7 +37,7 @@ ou permissao administrativa. Configuracoes e dados de uso ficam no perfil:
 Arquivos antigos encontrados ao lado do executavel sao migrados automaticamente.
 
 Em rede, abra o sistema por `Iniciar_VarreduraSistema.bat` (vai no pacote): ele
-copia a versao para `%LOCALAPPDATA%\VarreduraSistemapp\<versao>` e roda dali,
+copia a versao para `%LOCALAPPDATA%\VarreduraSistema\app\<versao>` e roda dali,
 sem travar a pasta de rede; assim uma versao nova pode ser publicada com
 operadores usando o sistema.
 

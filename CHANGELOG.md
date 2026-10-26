@@ -9,7 +9,7 @@ Semantico (`MAIOR.MENOR.CORRECAO`).
 
 ### Adicionado
 - `Iniciar_VarreduraSistema.bat` no pacote: copia a versao publicada para
-  `%LOCALAPPDATA%\VarreduraSistemapp\<versao>` e abre o sistema dali. A
+  `%LOCALAPPDATA%\VarreduraSistema\app\<versao>` e abre o sistema dali. A
   pasta de rede deixa de ficar travada, entao uma versao nova pode ser publicada
   com operadores usando o sistema (quem esta na antiga segue nela ate fechar).
   Copias locais antigas que nao estao em uso sao apagadas.
