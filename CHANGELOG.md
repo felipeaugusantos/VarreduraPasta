@@ -7,6 +7,8 @@ Semantico (`MAIOR.MENOR.CORRECAO`).
 
 ## [Nao lancado]
 
+## [2.6.8] - 2026-10-26
+
 ### Adicionado
 - Scripts do banco modelo: um script ja marcado como feito que for alterado
   depois (data do arquivo) volta a ficar pendente, destacado como `Alterado
