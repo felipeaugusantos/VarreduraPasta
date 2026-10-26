@@ -235,14 +235,14 @@ class VersionScannerApp(tk.Tk):
             card.grid(row=0, column=column, sticky="ew", padx=(0 if column == 0 else 10, 0))
             strip = tk.Frame(card, background=theme.COLORS[color], width=4)
             strip.pack(side="left", fill="y")
-            body = ttk.Frame(card, style="CardBody.TFrame", padding=(14, 8, 12, 10))
+            body = ttk.Frame(card, style="CardBody.TFrame", padding=(12, 8, 12, 10))
             body.pack(side="left", fill="both", expand=True)
             caption_label = ttk.Label(body, text=caption, style="CardCaption.TLabel")
-            caption_label.pack(anchor="w")
+            caption_label.pack(anchor="center")
             value = ttk.Label(body, text="…", style=f"CardValue{color.title()}.TLabel")
-            value.pack(anchor="w")
+            value.pack(anchor="center")
             detail = ttk.Label(body, text="analisando…", style="CardDetail.TLabel")
-            detail.pack(anchor="w")
+            detail.pack(anchor="center")
             self.counter_cards[key] = {
                 "card": card,
                 "strip": strip,
