@@ -12,6 +12,49 @@ function Invoke-Python {
     }
 }
 
+function New-PackageZip {
+    # Compress-Archive falha quando antivirus/indexador esta com um arquivo aberto
+    # (visto em _tcl_data	zdata). Aqui cada arquivo e aberto permitindo
+    # compartilhamento e o ZIP inteiro e refeito algumas vezes se ainda falhar.
+    param([string]$Source, [string]$Destination)
+
+    Add-Type -AssemblyName System.IO.Compression
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $sourceRoot = (Resolve-Path -LiteralPath $Source).Path.TrimEnd("\")
+    $attempts = 5
+    for ($attempt = 1; $attempt -le $attempts; $attempt++) {
+        if (Test-Path -LiteralPath $Destination) {
+            Remove-Item -LiteralPath $Destination -Force
+        }
+        try {
+            $archive = [System.IO.Compression.ZipFile]::Open($Destination, "Create")
+            try {
+                foreach ($file in Get-ChildItem -LiteralPath $sourceRoot -Recurse -File) {
+                    $entryName = $file.FullName.Substring($sourceRoot.Length + 1).Replace("\", "/")
+                    $entry = $archive.CreateEntry($entryName, [System.IO.Compression.CompressionLevel]::Optimal)
+                    $input = [System.IO.File]::Open(
+                        $file.FullName,
+                        [System.IO.FileMode]::Open,
+                        [System.IO.FileAccess]::Read,
+                        [System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete)
+                    try {
+                        $output = $entry.Open()
+                        try { $input.CopyTo($output) } finally { $output.Dispose() }
+                    }
+                    finally { $input.Dispose() }
+                }
+            }
+            finally { $archive.Dispose() }
+            return
+        }
+        catch {
+            if ($attempt -eq $attempts) { throw }
+            Write-Warning "Falha ao gerar o ZIP (tentativa $attempt de $attempts): $($_.Exception.Message)"
+            Start-Sleep -Seconds 3
+        }
+    }
+}
+
 Push-Location $root
 try {
     $files = @("main.py") + (
@@ -42,7 +85,7 @@ try {
     # Iniciador: abre o sistema de uma copia local, sem travar a pasta de rede.
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot "Iniciar_VarreduraSistema.bat") -Destination $package -Force
     $zip = Join-Path $root "dist\VarreduraSistema-$version.zip"
-    Compress-Archive -Path (Join-Path $package "*") -DestinationPath $zip -Force
+    New-PackageZip -Source $package -Destination $zip
     $hash = Get-FileHash -Algorithm SHA256 -LiteralPath $zip
     $hash.Hash | Set-Content -Encoding ascii -LiteralPath "$zip.sha256"
     Write-Output "Pacote: $zip"

@@ -7,6 +7,11 @@ Semantico (`MAIOR.MENOR.CORRECAO`).
 
 ## [Nao lancado]
 
+### Corrigido
+- O build nao falha mais ao gerar o ZIP quando antivirus/indexador esta com um
+  arquivo do pacote aberto: o ZIP e feito com leitura compartilhada e refeito
+  algumas vezes antes de desistir.
+
 ## [2.6.6] - 2026-10-26
 
 ### Adicionado
