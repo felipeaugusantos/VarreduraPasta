@@ -45,6 +45,12 @@ dist\VarreduraSistema\VarreduraSistema.exe
 
 O script tambem gera o ZIP versionado e seu arquivo `.sha256`.
 
+O build tambem grava `versao.txt` (so o numero) dentro de `dist\VarreduraSistema`.
+Para publicar, copie o conteudo dessa pasta para `\\citel-fileserve\Modem\SISTEMA_COPIA`
+(o `versao.txt` vai junto): os sistemas abertos avisam "Versao X disponivel"
+(`app/update_check.py`). Nao da para sobrescrever o exe/`_internal` enquanto
+algum operador estiver com o sistema aberto a partir dessa pasta.
+
 O icone (`assets/app-icon.png` e `.ico`) e gerado por
 `.\.venv\Scripts\python.exe scripts\generate_icon.py` (usa o Pillow da .venv,
 so para gerar o arquivo; o sistema continua so com biblioteca padrao).
@@ -66,6 +72,7 @@ Nao distribuir `settings.json` junto do pacote. Dados persistentes ficam em
 | `app/zip_memory.py` | Maior total de ZIPs ja gerado por pasta (`zip_memory.json`). |
 | `app/project_lock.py` | Trava por projeto entre operadores do TS (`.varredura.lock` na pasta). |
 | `app/error_handler.py` | Erros inesperados: `logs\erros.log`, Auditoria e mensagem na tela. |
+| `app/update_check.py` | Aviso de versao nova (le `versao.txt` da pasta oficial do exe). |
 | `app/autcom_test.py` | Preparo da pasta de teste e validacao da abertura do Autcom. |
 | `app/pattern.py` | Padrao de arquivos por projeto. |
 | `app/settings.py` | Persistencia em `settings.json`. |

@@ -7,6 +7,13 @@ Semantico (`MAIOR.MENOR.CORRECAO`).
 
 ## [Nao lancado]
 
+### Adicionado
+- Aviso de versao nova: o build gera `versao.txt` dentro do pacote; ao abrir (e
+  a cada hora) o sistema le o `versao.txt` de `\\citel-fileserve\Modem\SISTEMA_COPIA`
+  (configuravel em `update_directory` no `settings.json`) e, se a versao
+  publicada for mais nova que a do exe em uso, mostra "▲ Versao X disponivel" no
+  cabecalho (clique mostra onde esta). Falha ao ler a pasta e silenciosa.
+
 ### Corrigido
 - Erros inesperados no exe (que roda sem console) sumiam sem deixar rastro: o
   botao "nao fazia nada". Agora todo erro nao tratado em tela, em thread ou na

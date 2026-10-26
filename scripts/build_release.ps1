@@ -36,6 +36,9 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "Nao foi possivel identificar a versao."
     }
+    # versao.txt acompanha o exe: ao publicar o pacote na pasta oficial, os
+    # sistemas abertos comparam este numero e avisam que ha versao nova.
+    Set-Content -Encoding ascii -LiteralPath (Join-Path $package "versao.txt") -Value $version
     $zip = Join-Path $root "dist\VarreduraSistema-$version.zip"
     Compress-Archive -Path (Join-Path $package "*") -DestinationPath $zip -Force
     $hash = Get-FileHash -Algorithm SHA256 -LiteralPath $zip

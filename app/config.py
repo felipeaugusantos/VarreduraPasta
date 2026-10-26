@@ -54,6 +54,10 @@ SCRIPT_CONTROL_DIRECTORY = Path(r"\\citel-fileserve\Modem\_CONTROLE_VARREDURA")
 SCRIPT_LEDGER_FILE_NAME = "scripts_banco_modelo.log"
 SCRIPT_CHECK_INTERVAL_MS = 30 * 60 * 1000
 SCRIPT_RETRY_INTERVAL_MS = 15 * 60 * 1000
+# Pasta oficial do exe no fileserver; o pacote traz versao.txt com o numero.
+UPDATE_DIRECTORY = Path(r"\\citel-fileserve\Modem\SISTEMA_COPIA")
+UPDATE_VERSION_FILE_NAME = "versao.txt"
+UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000
 SVN_BASE_PATH = ""
 
 IGNORED_PROJECT_FOLDERS = {

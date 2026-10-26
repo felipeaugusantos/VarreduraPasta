@@ -18,6 +18,7 @@ from app.config import (
     SCRIPT_CHECK_INTERVAL_MS,
     SCRIPT_MONITOR_DIRECTORY,
     SCRIPT_RETRY_INTERVAL_MS,
+    UPDATE_CHECK_INTERVAL_MS,
 )
 from app.error_handler import ErrorReporter
 from app.jenkins import (
@@ -48,6 +49,7 @@ from app.settings import (
     save_svn_base_path,
 )
 from app.svn_search import search_svn
+from app.update_check import check_for_update
 
 
 CLOSING_POLL_MS = 1000
@@ -82,6 +84,7 @@ class VersionScannerApp(tk.Tk):
         self.closing_finished_seen = 0
         self.pending_scripts_count = None
         self.scripts_check_error = ""
+        self.update_info = None
         self.first_scan_done = False
         self.projects_shown_once = False
         self.script_monitor_window = None
@@ -90,6 +93,7 @@ class VersionScannerApp(tk.Tk):
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.after(100, self.refresh)
         self.after(2000, self.check_scripts_periodically)
+        self.after(3000, self.check_for_update_periodically)
         self.after(CLOSING_POLL_MS, self._update_closing_column)
 
     def _set_window_icon(self):
@@ -205,6 +209,9 @@ class VersionScannerApp(tk.Tk):
             textvariable=self.base_directory_var,
             style="HeaderMuted.TLabel",
         ).pack(side="left", padx=(4, 0))
+        # Aviso de versao nova (aparece so quando ha versao mais nova publicada).
+        self.update_label = ttk.Label(subtitle, style="HeaderUpdate.TLabel", cursor="hand2")
+        self.update_label.bind("<Button-1>", lambda _event: self._show_update_details())
 
         self.refresh_button = ttk.Button(
             header,
@@ -1593,6 +1600,51 @@ class VersionScannerApp(tk.Tk):
         result_combo.bind("<<ComboboxSelected>>", apply_log_filter)
         refresh_logs()
         audit_window.after(2000, auto_refresh_logs)
+
+    def check_for_update_periodically(self):
+        """Le versao.txt da pasta oficial (em thread) e avisa se houver versao mais nova."""
+        result_queue = queue.Queue()
+
+        def worker():
+            try:
+                result_queue.put(check_for_update())
+            except Exception:
+                result_queue.put(None)  # falha de rede nunca atrapalha o uso
+
+        def poll():
+            if not self.winfo_exists():
+                return
+            try:
+                info = result_queue.get_nowait()
+            except queue.Empty:
+                self.after(200, poll)
+                return
+            self._apply_update_info(info)
+            self.after(UPDATE_CHECK_INTERVAL_MS, self.check_for_update_periodically)
+
+        threading.Thread(target=worker, daemon=True).start()
+        self.after(200, poll)
+
+    def _apply_update_info(self, info):
+        self.update_info = info if info is not None and info.available else None
+        if self.update_info is None:
+            self.update_label.pack_forget()
+            return
+        self.update_label.config(text=f"▲  Versão {info.published} disponível")
+        self.update_label.pack(side="left", padx=(18, 0))
+
+    def _show_update_details(self):
+        info = self.update_info
+        if info is None:
+            return
+        messagebox.showinfo(
+            "Nova versão disponível",
+            f"Você está usando a versão {info.current}.\n"
+            f"A versão {info.published} já está publicada em:\n\n"
+            f"{info.directory}\n\n"
+            "Salve o que estiver em andamento, feche o sistema e abra o executável "
+            "dessa pasta para usar a versão nova.",
+        )
 
     def check_scripts_periodically(self):
         """Verifica a pasta de scripts a cada 30 min (15 min se a rede falhar)."""

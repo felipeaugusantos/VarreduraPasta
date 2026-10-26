@@ -44,6 +44,7 @@ def apply_theme(root):
     fonts = {
         "title": tkfont.Font(root, family=FONT_FAMILY, size=15, weight="bold"),
         "subtitle": tkfont.Font(root, family=FONT_FAMILY, size=9),
+        "subtitle_bold": tkfont.Font(root, family=FONT_FAMILY, size=9, weight="bold"),
         "card_value": tkfont.Font(root, family=FONT_FAMILY, size=18, weight="bold"),
         "card_label": tkfont.Font(root, family=FONT_FAMILY, size=9),
         "card_detail": tkfont.Font(root, family=FONT_FAMILY, size=9),
@@ -67,6 +68,7 @@ def apply_theme(root):
     style.configure("Header.TLabel", background=c["header"], foreground=c["header_text"])
     style.configure("HeaderTitle.TLabel", background=c["header"], foreground=c["header_text"], font=fonts["title"])
     style.configure("HeaderMuted.TLabel", background=c["header"], foreground=c["header_muted"], font=fonts["subtitle"])
+    style.configure("HeaderUpdate.TLabel", background=c["header"], foreground="#fbbf24", font=fonts["subtitle_bold"])
 
     # Cartoes de contadores e painel de detalhes.
     style.configure("Card.TFrame", background=c["surface"], relief="solid", borderwidth=1)

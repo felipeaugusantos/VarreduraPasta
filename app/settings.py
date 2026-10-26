@@ -12,6 +12,7 @@ from app.config import (
     IGNORED_PROJECT_FOLDERS,
     SCRIPT_CONTROL_DIRECTORY,
     SVN_BASE_PATH,
+    UPDATE_DIRECTORY,
 )
 from app.runtime import user_data_file
 from app.credentials import load_jenkins_password, save_jenkins_password
@@ -194,6 +195,12 @@ def save_script_control_directory(directory):
     else:
         data.pop("script_control_directory", None)
     _save_settings(data)
+
+
+def load_update_directory():
+    data = _load_settings()
+    value = str(data.get("update_directory") or "").strip()
+    return Path(value) if value else UPDATE_DIRECTORY
 
 
 def load_ignored_project_folders():
