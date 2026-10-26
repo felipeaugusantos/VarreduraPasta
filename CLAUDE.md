@@ -95,7 +95,10 @@ Nao distribuir `settings.json` junto do pacote. Dados persistentes ficam em
 - `Copiar Local`: `Autcom` precisa estar abaixo de 100 MB.
 - `Copiar Cloud`: `Autcom` precisa ter pelo menos 150 MB.
 - `Testar Autcom` mapeia as partes 5 e 6 da versao para
-  `PastaTesteCopia_<parte5>_<parte6>`.
+  `PastaTesteCopia_<parte5>_<parte6>`. O login de teste (padrao `998`/`998`/`001`
+  em `app/config.py`) e configuravel por operador em `settings.json`
+  (`autcom_test_login`, tela Configuracoes); so letras e numeros, digitados com
+  `VkKeyScanW` (respeita Shift). Nunca gravar a senha em log.
 - A copia envia somente arquivos `.zip`.
 - A copia nao envia `comandosCMD`.
 - A limpeza pos-copia remove da origem somente os ZIPs copiados (e nao

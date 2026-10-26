@@ -5,6 +5,21 @@ Todas as alteracoes relevantes deste projeto sao documentadas neste arquivo.
 O formato e baseado em Keep a Changelog e o projeto segue Versionamento
 Semantico (`MAIOR.MENOR.CORRECAO`).
 
+## [Nao lancado]
+
+### Alterado
+- O login de teste do Autcom (usuario, senha e empresa) deixa de ser fixo no
+  codigo: cada operador pode configurar em `Configuracoes > Teste do Autcom`
+  (senha mascarada, so letras e numeros, campo vazio volta ao padrao
+  `998`/`998`/`001`). A validacao acontece antes de gravar qualquer
+  configuracao.
+
+### Corrigido
+- O login automatico digitava cada caractere pelo codigo bruto da tecla, o que
+  so funcionava para numeros: letras saiam trocadas (`senha1` virava `5,811`,
+  maiusculas viravam minusculas). Agora a digitacao usa o mapa do teclado
+  (`VkKeyScanW`) e respeita Shift.
+
 ## [2.6.4] - 2026-10-26
 
 ### Alterado

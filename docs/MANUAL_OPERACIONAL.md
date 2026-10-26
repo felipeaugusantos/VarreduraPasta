@@ -266,6 +266,11 @@ executa `exe\CopiaArquivos.bat`, volta para a raiz da pasta de teste e inicia
 `Autcom.exe`. Na tela de login, preenche usuario `998`, senha `998` e empresa
 `001` e aciona `LOGIN`.
 
+Esses tres valores sao os padroes e podem ser trocados por cada operador em
+`Configuracoes > Teste do Autcom (login automatico)` (a senha aparece
+mascarada). Use apenas letras e numeros; campo vazio volta ao padrao. A senha
+nunca e gravada em log nem aparece nas mensagens do teste.
+
 O resultado sera:
 
 - `OK`: login realizado e tela principal visivel, responsiva e estavel por

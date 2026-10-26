@@ -128,7 +128,8 @@ tamanhos fora do padrao observado. Consulte
 - `Testar Autcom`: para uma versao como `379.48.2.30.74.111.181`, sincroniza
   os ZIPs em `C:\VERSOES_FECHADAS\PastaTesteCopia_74_111\exe`, executa
   `CopiaArquivos.bat`, abre o `Autcom.exe` da raiz e preenche o login de teste
-  com usuario `998`, senha `998` e empresa `001`. O resultado diferencia
+  com usuario `998`, senha `998` e empresa `001` (padroes; cada operador pode
+  trocar em `Configuracoes > Teste do Autcom`). O resultado diferencia
   abertura autenticada, falha e verificacao inconclusiva. Ao final (qualquer
   que seja o resultado) o Autcom e fechado automaticamente, pois um Autcom
   aberto trava os arquivos da pasta de teste.

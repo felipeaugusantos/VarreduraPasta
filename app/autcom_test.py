@@ -7,6 +7,9 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from uuid import uuid4
 
+from app.config import AUTCOM_TEST_COMPANY, AUTCOM_TEST_PASSWORD, AUTCOM_TEST_USERNAME
+from app.settings import load_autcom_test_login
+
 
 BAT_TIMEOUT_SECONDS = 10 * 60
 STARTUP_TIMEOUT_SECONDS = 60
@@ -14,9 +17,9 @@ LOGIN_TIMEOUT_SECONDS = 60
 WINDOW_POLL_SECONDS = 0.5
 WINDOW_STABILITY_SECONDS = 5
 CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-LOGIN_USERNAME = "998"
-LOGIN_PASSWORD = "998"
-LOGIN_COMPANY = "001"
+LOGIN_USERNAME = AUTCOM_TEST_USERNAME
+LOGIN_PASSWORD = AUTCOM_TEST_PASSWORD
+LOGIN_COMPANY = AUTCOM_TEST_COMPANY
 WM_CLOSE = 0x0010
 CLOSE_GRACE_SECONDS = 8
 
@@ -246,8 +249,14 @@ def _validate_started_autcom(process, completed, copied_files, progress_callback
         )
 
     _notify(progress_callback, "Preenchendo login de teste")
+    login = load_autcom_test_login()
     try:
-        login_handle = automate_autcom_login(process)
+        login_handle = automate_autcom_login(
+            process,
+            username=login["username"],
+            password=login["password"],
+            company=login["company"],
+        )
     except OSError as error:
         return AutcomTestResult(
             status="FALHA",
@@ -696,10 +705,33 @@ def _replace_focused_text(user32, value):
     user32.keybd_event(0x08, 0, 0, 0)
     user32.keybd_event(0x08, 0, 0x0002, 0)
     for character in str(value):
-        virtual_key = ord(character)
-        user32.keybd_event(virtual_key, 0, 0, 0)
-        user32.keybd_event(virtual_key, 0, 0x0002, 0)
+        _type_character(user32, character)
     time.sleep(0.15)
+
+
+def _type_character(user32, character):
+    """Digita um caractere respeitando o teclado (Shift para maiusculas)."""
+    scan = user32.VkKeyScanW(ord(character))
+    if scan == -1:
+        raise OSError(f"O caractere {character!r} nao pode ser digitado no login.")
+    virtual_key = scan & 0xFF
+    needs_shift = bool((scan >> 8) & 1)
+    if needs_shift:
+        user32.keybd_event(0x10, 0, 0, 0)
+    user32.keybd_event(virtual_key, 0, 0, 0)
+    user32.keybd_event(virtual_key, 0, 0x0002, 0)
+    if needs_shift:
+        user32.keybd_event(0x10, 0, 0x0002, 0)
+
+
+def login_value_error(label, value):
+    """Mensagem de erro para um valor de login invalido ("" = valido ou vazio/padrao)."""
+    value = str(value or "").strip()
+    if not value:
+        return ""
+    if not (value.isascii() and value.isalnum()):
+        return f"{label}: use apenas letras e numeros (sem espacos, acentos ou simbolos)."
+    return ""
 
 
 def _sha256(file_path):

@@ -10,6 +10,7 @@ from tkinter import filedialog, messagebox, ttk
 
 from app import __version__, actions, logging_utils, project_view, theme, zip_memory
 from app.audit import filter_log_entries, list_log_files, parse_log_entries, read_log_file
+from app.autcom_test import login_value_error
 from app.config import (
     CLOSING_MAX_CONCURRENT,
     CLOUD_MIN_AUTCOM_MB,
@@ -36,11 +37,13 @@ from app.scanner import enrich_project_file_versions, scan_projects
 from app.script_monitor import ScriptMonitorResult, check_scripts, mark_scripts_done
 from app.settings import (
     load_additional_copy_target_directories,
+    load_autcom_test_login,
     load_base_directory,
     load_ignored_project_folders,
     load_jenkins_config,
     load_script_control_directory,
     load_svn_base_path,
+    save_autcom_test_login,
     save_base_directory,
     save_copy_target_directories,
     save_ignored_project_folders,
@@ -777,6 +780,10 @@ class VersionScannerApp(tk.Tk):
         settings_copy_var = tk.StringVar()
         settings_svn_var = tk.StringVar(value=load_svn_base_path())
         settings_control_var = tk.StringVar(value=str(load_script_control_directory()))
+        autcom_login = load_autcom_test_login()
+        settings_autcom_user_var = tk.StringVar(value=autcom_login["username"])
+        settings_autcom_password_var = tk.StringVar(value=autcom_login["password"])
+        settings_autcom_company_var = tk.StringVar(value=autcom_login["company"])
 
         ttk.Label(frame, text="Diretório-base:").grid(row=0, column=0, sticky="w")
         ttk.Entry(frame, textvariable=settings_base_var).grid(
@@ -909,8 +916,35 @@ class VersionScannerApp(tk.Tk):
             pady=(8, 0),
         )
 
+        autcom_group = ttk.LabelFrame(
+            frame,
+            text=" Teste do Autcom (login automático) ",
+            style="Group.TLabelframe",
+            padding=(10, 6, 10, 8),
+        )
+        autcom_group.grid(row=7, column=0, columnspan=3, sticky="ew", pady=(14, 0))
+        for column, (caption, variable, masked) in enumerate(
+            (
+                ("Usuário", settings_autcom_user_var, False),
+                ("Senha", settings_autcom_password_var, True),
+                ("Empresa", settings_autcom_company_var, False),
+            )
+        ):
+            ttk.Label(autcom_group, text=caption).grid(row=0, column=column * 2, sticky="w")
+            ttk.Entry(
+                autcom_group,
+                textvariable=variable,
+                width=12,
+                show="*" if masked else "",
+            ).grid(row=0, column=column * 2 + 1, padx=(6, 18))
+        ttk.Label(
+            autcom_group,
+            text="Letras e números. Campo vazio volta ao padrão.",
+            style="Muted.TLabel",
+        ).grid(row=0, column=6, sticky="w")
+
         button_bar = ttk.Frame(frame)
-        button_bar.grid(row=7, column=0, columnspan=3, sticky="e", pady=(16, 0))
+        button_bar.grid(row=8, column=0, columnspan=3, sticky="e", pady=(16, 0))
         ttk.Button(
             button_bar,
             text="Salvar",
@@ -919,6 +953,11 @@ class VersionScannerApp(tk.Tk):
                 [target_list.get(index) for index in range(target_list.size())],
                 settings_svn_var.get(),
                 settings_control_var.get(),
+                autcom_login=(
+                    settings_autcom_user_var.get(),
+                    settings_autcom_password_var.get(),
+                    settings_autcom_company_var.get(),
+                ),
             ),
         ).grid(row=0, column=0, padx=(0, 8))
         ttk.Button(
@@ -2496,12 +2535,32 @@ class VersionScannerApp(tk.Tk):
         copy_target_directories,
         svn_base_path="",
         script_control_directory="",
+        autcom_login=None,
     ):
+        if autcom_login is not None:
+            errors = [
+                error
+                for error in (
+                    login_value_error("Usuário do Autcom", autcom_login[0]),
+                    login_value_error("Senha do Autcom", autcom_login[1]),
+                    login_value_error("Empresa do Autcom", autcom_login[2]),
+                )
+                if error
+            ]
+            if errors:
+                messagebox.showerror(
+                    "Configurações",
+                    "\n".join(errors),
+                    parent=self.config_window,
+                )
+                return
         self.base_directory_var.set(base_directory.strip())
         save_base_directory(self.base_directory_var.get())
         save_copy_target_directories(copy_target_directories)
         save_svn_base_path(svn_base_path)
         save_script_control_directory(script_control_directory)
+        if autcom_login is not None:
+            save_autcom_test_login(*autcom_login)
         if self.config_window and self.config_window.winfo_exists():
             self.config_window.destroy()
         self.refresh()

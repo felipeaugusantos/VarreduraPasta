@@ -10,6 +10,9 @@ from app.config import (
     COPY_TARGET_DIRECTORIES,
     COPY_TARGET_DIRECTORY,
     IGNORED_PROJECT_FOLDERS,
+    AUTCOM_TEST_COMPANY,
+    AUTCOM_TEST_PASSWORD,
+    AUTCOM_TEST_USERNAME,
     SCRIPT_CONTROL_DIRECTORY,
     SVN_BASE_PATH,
     UPDATE_DIRECTORY,
@@ -194,6 +197,35 @@ def save_script_control_directory(directory):
         data["script_control_directory"] = str(Path(value))
     else:
         data.pop("script_control_directory", None)
+    _save_settings(data)
+
+
+def load_autcom_test_login():
+    """Login do teste do Autcom; campo vazio ou ausente usa o padrao de config.py."""
+    data = _load_settings()
+    value = data.get("autcom_test_login")
+    if not isinstance(value, dict):
+        value = {}
+    return {
+        "username": str(value.get("username") or AUTCOM_TEST_USERNAME).strip(),
+        "password": str(value.get("password") or AUTCOM_TEST_PASSWORD).strip(),
+        "company": str(value.get("company") or AUTCOM_TEST_COMPANY).strip(),
+    }
+
+
+@_synchronized
+def save_autcom_test_login(username, password, company):
+    """Salva so o que foi informado; tudo vazio volta aos padroes."""
+    data = _load_settings()
+    login = {
+        key: str(value or "").strip()
+        for key, value in (("username", username), ("password", password), ("company", company))
+    }
+    login = {key: value for key, value in login.items() if value}
+    if login:
+        data["autcom_test_login"] = login
+    else:
+        data.pop("autcom_test_login", None)
     _save_settings(data)
 
 

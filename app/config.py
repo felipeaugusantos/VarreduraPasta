@@ -58,6 +58,10 @@ SCRIPT_RETRY_INTERVAL_MS = 15 * 60 * 1000
 UPDATE_DIRECTORY = Path(r"\\citel-fileserve\Modem\SISTEMA_COPIA")
 UPDATE_VERSION_FILE_NAME = "versao.txt"
 UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000
+# Login de teste do Autcom (Testar Autcom); cada operador pode trocar em Configuracoes.
+AUTCOM_TEST_USERNAME = "998"
+AUTCOM_TEST_PASSWORD = "998"
+AUTCOM_TEST_COMPANY = "001"
 SVN_BASE_PATH = ""
 
 IGNORED_PROJECT_FOLDERS = {
