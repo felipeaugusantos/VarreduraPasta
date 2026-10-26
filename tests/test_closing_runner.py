@@ -95,6 +95,16 @@ class ClosingManagerTests(unittest.TestCase):
         self.assertEqual(manager.job_for(second).message, "falhou")
         self.assertEqual(manager.active_count(), 0)
 
+    def test_running_and_queued_counts(self):
+        manager, started, _clock = self.make_manager(max_concurrent=1)
+        for name in ("p1", "p2", "p3"):
+            manager.enqueue(make_project(name), "Fechamento Local", "x.bat")
+
+        self.assertEqual(manager.running_and_queued(), (1, 2))
+        target, job = started[0]
+        target(job)
+        self.assertEqual(manager.running_and_queued(), (1, 1))
+
     def test_unknown_project_has_empty_progress(self):
         manager, _started, _clock = self.make_manager()
         self.assertEqual(manager.progress_text(make_project("p1")), "")

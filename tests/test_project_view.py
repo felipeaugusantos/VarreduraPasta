@@ -66,5 +66,61 @@ class DisplayHelpersTests(unittest.TestCase):
         self.assertEqual(counts, {"total": 3, "ok": 2, "pending": 1})
 
 
+class DashboardCardsTests(unittest.TestCase):
+    def projects(self):
+        return [
+            project(folder_name="379.1"),
+            project(folder_name="379.2_CLOUD"),
+            project(folder_name="379.3", status="Ausente: libAutban.dll"),
+            project(folder_name="379.4", status="FileVersion esperado x; encontrado y"),
+            project(folder_name="379.5", status="ZIP invalido: libNfe.zip"),
+        ]
+
+    def test_cards_show_value_and_useful_detail(self):
+        cards = project_view.dashboard_cards(
+            self.projects(), closing_running=1, closing_queued=2, zip_alerts=1, pending_scripts=4
+        )
+
+        self.assertEqual(cards["total"], ("5", "4 Local • 1 Cloud", True))
+        self.assertEqual(cards["ok"], ("2", "40% do total", True))
+        self.assertEqual(cards["pending"], ("3", "1 versão • 1 ausente • 1 ZIP", True))
+        self.assertEqual(cards["closing"], ("3", "1 rodando • 2 na fila", True))
+        self.assertEqual(cards["zip_alert"], ("1", "menos ZIPs que o máximo", True))
+        self.assertEqual(cards["scripts"], ("4", "clique para ver ›", True))
+
+    def test_zero_alerts_are_not_emphasized(self):
+        cards = project_view.dashboard_cards([project()], pending_scripts=0)
+
+        self.assertEqual(cards["pending"], ("0", "nenhuma pendência", False))
+        self.assertEqual(cards["closing"], ("0", "nenhum agora", False))
+        self.assertEqual(cards["zip_alert"], ("0", "nenhum alerta", False))
+        self.assertEqual(cards["scripts"], ("0", "nenhum pendente", False))
+        # Total e OK sempre ficam com cor.
+        self.assertTrue(cards["total"][2])
+        self.assertTrue(cards["ok"][2])
+
+    def test_loading_and_unknown_states_do_not_show_zero(self):
+        cards = project_view.dashboard_cards([], loaded=False)
+        for key in ("total", "ok", "pending", "zip_alert"):
+            self.assertEqual(cards[key][:2], ("…", "analisando…"))
+        self.assertEqual(cards["scripts"], ("—", "verificando…", False))
+
+        offline = project_view.dashboard_cards([], scripts_error="Pasta de scripts nao encontrada")
+        self.assertEqual(offline["scripts"], ("—", "sem acesso à pasta", False))
+        self.assertEqual(offline["ok"], ("0", "nenhum projeto", True))
+
+    def test_every_project_card_maps_to_a_filter(self):
+        self.assertEqual(
+            project_view.CARD_FILTERS,
+            {
+                "total": "Todos",
+                "ok": "Somente OK",
+                "pending": "Com erro",
+                "closing": "Em fechamento",
+                "zip_alert": "Alerta de ZIPs",
+            },
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

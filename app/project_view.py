@@ -93,3 +93,78 @@ def dashboard_counts(projects):
     total = len(projects)
     ok = sum(1 for project in projects if project.status == "OK")
     return {"total": total, "ok": ok, "pending": total - ok}
+
+
+# Cartoes do cabecalho: (valor, detalhe, destaque). "destaque" False deixa o
+# numero em cinza (zero nos cartoes de alerta nao deve chamar atencao).
+CARD_FILTERS = {
+    "total": "Todos",
+    "ok": "Somente OK",
+    "pending": "Com erro",
+    "closing": "Em fechamento",
+    "zip_alert": "Alerta de ZIPs",
+}
+_PENDING_LABELS = (
+    ("version", "versão"),
+    ("missing", "ausente"),
+    ("zip", "ZIP"),
+    ("other", "outra"),
+)
+
+
+def dashboard_cards(
+    projects,
+    loaded=True,
+    closing_running=0,
+    closing_queued=0,
+    zip_alerts=0,
+    pending_scripts=None,
+    scripts_error="",
+):
+    """Texto de cada cartao do cabecalho a partir da situacao atual."""
+    cards = {}
+    if not loaded:
+        for key in CARD_FILTERS:
+            cards[key] = ("…", "analisando…", True)
+    else:
+        total = len(projects)
+        counts = {name: 0 for name, _label in _PENDING_LABELS}
+        cloud = 0
+        for project in projects:
+            if is_cloud_project(project):
+                cloud += 1
+            category = status_category(project)
+            if category != "ok":
+                counts[category] += 1
+        ok = total - sum(counts.values())
+        pending = total - ok
+
+        cards["total"] = (str(total), f"{total - cloud} Local • {cloud} Cloud", True)
+        percent = round(ok * 100 / total) if total else 0
+        cards["ok"] = (str(ok), f"{percent}% do total" if total else "nenhum projeto", True)
+        breakdown = " • ".join(
+            f"{counts[name]} {label}" for name, label in _PENDING_LABELS if counts[name]
+        )
+        cards["pending"] = (str(pending), breakdown or "nenhuma pendência", pending > 0)
+        zip_detail = "menos ZIPs que o máximo" if zip_alerts else "nenhum alerta"
+        cards["zip_alert"] = (str(zip_alerts), zip_detail, zip_alerts > 0)
+
+    active = closing_running + closing_queued
+    if active:
+        parts = []
+        if closing_running:
+            parts.append(f"{closing_running} rodando")
+        if closing_queued:
+            parts.append(f"{closing_queued} na fila")
+        closing_detail = " • ".join(parts)
+    else:
+        closing_detail = "nenhum agora"
+    cards["closing"] = (str(active), closing_detail, active > 0)
+
+    if pending_scripts is None:
+        detail = "sem acesso à pasta" if scripts_error else "verificando…"
+        cards["scripts"] = ("—", detail, False)
+    else:
+        detail = "clique para ver ›" if pending_scripts else "nenhum pendente"
+        cards["scripts"] = (str(pending_scripts), detail, pending_scripts > 0)
+    return cards

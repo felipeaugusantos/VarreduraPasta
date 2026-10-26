@@ -78,6 +78,9 @@ class VersionScannerApp(tk.Tk):
         self.svn_search_window = None
         self.closing_finished_seen = 0
         self.pending_scripts_count = None
+        self.scripts_check_error = ""
+        self.first_scan_done = False
+        self.projects_shown_once = False
         self.script_monitor_window = None
         self._build_menu()
         self._build_layout()
@@ -211,14 +214,14 @@ class VersionScannerApp(tk.Tk):
     def _build_counter_cards(self):
         cards = ttk.Frame(self, padding=(16, 14, 16, 4))
         cards.grid(row=1, column=0, sticky="ew")
-        self.counter_labels = {}
+        self.counter_cards = {}
         definitions = (
             ("total", "Projetos analisados", "primary"),
             ("ok", "OK", "ok"),
             ("pending", "Com pendência", "error"),
             ("closing", "Em fechamento", "closing"),
             ("zip_alert", "Alerta de ZIPs", "zip"),
-            ("scripts", "Scripts pendentes  ›", "warn"),
+            ("scripts", "Scripts pendentes", "warn"),
         )
         for column, (key, caption, color) in enumerate(definitions):
             cards.columnconfigure(column, weight=1, uniform="cards")
@@ -227,20 +230,41 @@ class VersionScannerApp(tk.Tk):
                 background=theme.COLORS["surface"],
                 highlightthickness=1,
                 highlightbackground=theme.COLORS["border"],
+                highlightcolor=theme.COLORS["border"],
             )
             card.grid(row=0, column=column, sticky="ew", padx=(0 if column == 0 else 10, 0))
-            tk.Frame(card, background=theme.COLORS[color], width=4).pack(side="left", fill="y")
-            body = ttk.Frame(card, style="CardBody.TFrame", padding=(14, 8, 14, 10))
+            strip = tk.Frame(card, background=theme.COLORS[color], width=4)
+            strip.pack(side="left", fill="y")
+            body = ttk.Frame(card, style="CardBody.TFrame", padding=(14, 8, 12, 10))
             body.pack(side="left", fill="both", expand=True)
-            value = ttk.Label(body, text="0", style=f"CardValue{color.title()}.TLabel")
-            value.pack(anchor="w")
-            caption_label = ttk.Label(body, text=caption, style="CardMuted.TLabel")
+            caption_label = ttk.Label(body, text=caption, style="CardCaption.TLabel")
             caption_label.pack(anchor="w")
-            self.counter_labels[key] = value
+            value = ttk.Label(body, text="…", style=f"CardValue{color.title()}.TLabel")
+            value.pack(anchor="w")
+            detail = ttk.Label(body, text="analisando…", style="CardDetail.TLabel")
+            detail.pack(anchor="w")
+            self.counter_cards[key] = {
+                "card": card,
+                "strip": strip,
+                "value": value,
+                "detail": detail,
+                "color": color,
+            }
             if key == "scripts":
-                for widget in (card, body, value, caption_label):
-                    widget.configure(cursor="hand2")
-                    widget.bind("<Button-1>", lambda _event: self.open_script_monitor_window())
+                action = lambda _event: self.open_script_monitor_window()
+            else:
+                action = lambda _event, card_key=key: self._toggle_card_filter(card_key)
+            for widget in (card, strip, body, caption_label, value, detail):
+                widget.configure(cursor="hand2")
+                widget.bind("<Button-1>", action)
+
+    def _toggle_card_filter(self, key):
+        """Clique no cartao filtra a tabela; clicar de novo volta para Todos."""
+        target = project_view.CARD_FILTERS[key]
+        if self.filter_var.get() == target:
+            target = "Todos"
+        self.filter_var.set(target)
+        self._render_projects()
 
     def _build_filter_bar(self):
         filter_bar = ttk.Frame(self, padding=(16, 10, 16, 8))
@@ -253,7 +277,7 @@ class VersionScannerApp(tk.Tk):
             textvariable=self.filter_var,
             state="readonly",
             width=16,
-            values=("Todos", "Somente OK", "Com erro", "Local", "Cloud"),
+            values=("Todos", "Somente OK", "Com erro", "Em fechamento", "Alerta de ZIPs", "Local", "Cloud"),
         )
         filter_combo.grid(row=0, column=1, sticky="w", padx=(8, 20))
         filter_combo.bind("<<ComboboxSelected>>", lambda _event: self._render_projects())
@@ -543,6 +567,7 @@ class VersionScannerApp(tk.Tk):
             return
 
         self.is_scanning = False
+        self.first_scan_done = True
         self.refresh_button.config(state="normal")
 
         if error:
@@ -603,21 +628,43 @@ class VersionScannerApp(tk.Tk):
             )
 
         self.status_label.config(text=self._summary_text(filtered_projects))
+        self.projects_shown_once = self.projects_shown_once or self.first_scan_done
         self._update_counters()
         self._sync_buttons()
 
     def _update_counters(self):
-        if self.is_scanning:
-            return
-        counts = project_view.dashboard_counts(self.projects)
-        counts["closing"] = actions.CLOSING_MANAGER.active_count()
-        counts["zip_alert"] = sum(
-            1 for project in self.projects if self._zip_record_below_max(project)
+        running, queued = actions.CLOSING_MANAGER.running_and_queued()
+        loaded = self.first_scan_done and not (self.is_scanning and not self.projects_shown_once)
+        cards = project_view.dashboard_cards(
+            self.projects,
+            loaded=loaded,
+            closing_running=running,
+            closing_queued=queued,
+            zip_alerts=sum(1 for project in self.projects if self._zip_record_below_max(project)),
+            pending_scripts=self.pending_scripts_count,
+            scripts_error=self.scripts_check_error,
         )
-        # "—" ate a primeira verificacao concluir (ou se a pasta estiver fora).
-        counts["scripts"] = "—" if self.pending_scripts_count is None else self.pending_scripts_count
-        for key, label in self.counter_labels.items():
-            label.config(text=str(counts[key]))
+        active_filter = self.filter_var.get()
+        for key, widgets in self.counter_cards.items():
+            if self.is_scanning and self.projects_shown_once and key in ("total", "ok", "pending", "zip_alert"):
+                # Durante as varreduras seguintes, mantem os numeros anteriores.
+                continue
+            value_text, detail_text, emphasized = cards[key]
+            color = widgets["color"]
+            widgets["value"].config(
+                text=value_text,
+                style=f"CardValue{color.title()}.TLabel" if emphasized else "CardValueMuted.TLabel",
+            )
+            widgets["detail"].config(text=detail_text)
+            widgets["strip"].config(
+                background=theme.COLORS[color] if emphasized else theme.COLORS["border_strong"]
+            )
+        for key, widgets in self.counter_cards.items():
+            selected = project_view.CARD_FILTERS.get(key) == active_filter and active_filter != "Todos"
+            widgets["card"].config(
+                highlightthickness=2 if selected else 1,
+                highlightbackground=theme.COLORS["primary"] if selected else theme.COLORS["border"],
+            )
 
     def _clear_search(self):
         self.search_var.set("")
@@ -626,7 +673,12 @@ class VersionScannerApp(tk.Tk):
         return project_view.matches_search(project, self.search_var.get())
 
     def _matches_filter(self, project):
-        return project_view.matches_filter(project, self.filter_var.get())
+        selected = self.filter_var.get()
+        if selected == "Em fechamento":
+            return actions.CLOSING_MANAGER.is_active(project)
+        if selected == "Alerta de ZIPs":
+            return self._zip_record_below_max(project) is not None
+        return project_view.matches_filter(project, selected)
 
     def _short_status(self, project):
         return project_view.short_status(project)
@@ -1572,9 +1624,10 @@ class VersionScannerApp(tk.Tk):
             finish(result)
 
         def finish(result):
+            self.scripts_check_error = result.error
             if not result.error:
                 self.pending_scripts_count = len(result.pending)
-                self._update_counters()
+            self._update_counters()
             if on_result:
                 on_result(result)
             if result.error:

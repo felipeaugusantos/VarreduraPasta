@@ -8,6 +8,7 @@ COLORS = {
     "bg": "#f3f5f9",
     "surface": "#ffffff",
     "border": "#d8dee8",
+    "border_strong": "#b6bfcc",
     "text": "#1f2937",
     "muted": "#6b7280",
     "primary": "#2563eb",
@@ -45,6 +46,8 @@ def apply_theme(root):
         "subtitle": tkfont.Font(root, family=FONT_FAMILY, size=9),
         "card_value": tkfont.Font(root, family=FONT_FAMILY, size=18, weight="bold"),
         "card_label": tkfont.Font(root, family=FONT_FAMILY, size=9),
+        "card_detail": tkfont.Font(root, family=FONT_FAMILY, size=9),
+        "card_caption": tkfont.Font(root, family=FONT_FAMILY, size=9, weight="bold"),
         "section": tkfont.Font(root, family=FONT_FAMILY, size=10, weight="bold"),
         "panel_title": tkfont.Font(root, family=FONT_FAMILY, size=11, weight="bold"),
     }
@@ -73,6 +76,10 @@ def apply_theme(root):
     style.configure("PanelTitle.TLabel", background=c["surface"], foreground=c["text"], font=fonts["panel_title"])
     style.configure("PanelSection.TLabel", background=c["surface"], foreground=c["muted"], font=fonts["section"])
     style.configure("CardBody.TFrame", background=c["surface"])
+    style.configure("CardCaption.TLabel", background=c["surface"], foreground=c["text"], font=fonts["card_caption"])
+    # Numero em cinza quando o cartao de alerta esta zerado.
+    style.configure("CardValueMuted.TLabel", background=c["surface"], foreground=c["border_strong"], font=fonts["card_value"])
+    style.configure("CardDetail.TLabel", background=c["surface"], foreground=c["muted"], font=fonts["card_detail"])
     for name in ("ok", "warn", "error", "closing", "zip", "primary"):
         style.configure(f"Card{name.title()}.TLabel", background=c["surface"], foreground=c[name])
         style.configure(

@@ -175,6 +175,12 @@ class ClosingManager:
         with self._lock:
             return sum(1 for job in self._jobs.values() if job.status in ACTIVE_STATUSES)
 
+    def running_and_queued(self):
+        with self._lock:
+            running = sum(1 for job in self._jobs.values() if job.status == STATUS_RUNNING)
+            queued = sum(1 for job in self._jobs.values() if job.status == STATUS_QUEUED)
+        return running, queued
+
     def enqueue(self, project, title, bat_path):
         key = project_key(project)
         with self._lock:

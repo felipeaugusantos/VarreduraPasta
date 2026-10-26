@@ -8,6 +8,13 @@ Semantico (`MAIOR.MENOR.CORRECAO`).
 ## [Nao lancado]
 
 ### Alterado
+- Cartoes do cabecalho: mostram "…/analisando…" ate a primeira varredura (em
+  vez de zeros) e mantem os numeros durante as varreduras seguintes; zero nos
+  cartoes de alerta fica em cinza; cada cartao tem uma linha de detalhe (ex.:
+  "62% do total", "1 versao • 1 ausente • 1 ZIP", "1 rodando • 1 na fila").
+- Clicar num cartao filtra a tabela (OK, Com pendencia, Em fechamento, Alerta
+  de ZIPs) e o cartao ativo fica destacado; clicar de novo volta para Todos.
+  Filtros "Em fechamento" e "Alerta de ZIPs" tambem no combo de filtro.
 - Icone com cantos transparentes (o PNG original era RGB e mostrava um
   quadrado branco na barra de tarefas escura) e versao simplificada (pasta +
   lupa) em 16 e 24 px, onde o desenho completo ficava ilegivel. Gerado por
