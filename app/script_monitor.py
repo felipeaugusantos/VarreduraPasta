@@ -9,15 +9,17 @@ apagam. Um script e pendente enquanto nao tiver evento de "base", "feito" ou
 """
 
 import os
+import re
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from app.config import SCRIPT_LEDGER_FILE_NAME, SCRIPT_MONITOR_DIRECTORY
+from app.config import SCRIPT_LEDGER_FILE_NAME
 from app.logging_utils import write_log
 from app.settings import (
     load_script_control_directory,
+    load_script_directory,
     load_script_monitor_state,
     save_script_monitor_state,
 )
@@ -31,6 +33,9 @@ DONE_EVENTS = {EVENT_BASELINE, EVENT_DONE, EVENT_EXECUTED}
 HISTORY_LIMIT = 15
 APPEND_RETRY_ATTEMPTS = 5
 APPEND_RETRY_DELAY_SECONDS = 0.3
+# Diferenca minima (s) entre o arquivo e o que foi marcado para contar como alterado.
+MODIFIED_TOLERANCE_SECONDS = 2
+_MOD_PATTERN = re.compile(r"\(mod=(\d+)\)")
 
 
 @dataclass(frozen=True)
@@ -46,6 +51,7 @@ class LedgerEvent:
 class PendingScript:
     name: str
     modified: str
+    changed: bool = False  # ja marcado como feito, mas o arquivo mudou depois
 
 
 @dataclass
@@ -55,6 +61,7 @@ class ScriptMonitorResult:
     total_files: int = 0
     pending: list = field(default_factory=list)
     new_pending: list = field(default_factory=list)
+    changed: list = field(default_factory=list)
     history: list = field(default_factory=list)
     error: str = ""
 
@@ -124,6 +131,45 @@ def done_scripts(events):
     return {event.script.lower() for event in events if event.event in DONE_EVENTS}
 
 
+def _file_mod(directory, relative_name):
+    """Data de modificacao (segundos inteiros) do script, ou None se nao der para ler."""
+    try:
+        return int((Path(directory) / relative_name).stat().st_mtime)
+    except OSError:
+        return None
+
+
+def _with_mod(text, directory, name):
+    """Anexa '(mod=<segundos>)' ao detalhe: base para detectar alteracao futura."""
+    mod = _file_mod(directory, name)
+    return f"{text} (mod={mod})" if mod is not None else text
+
+
+def recorded_mod(event):
+    match = _MOD_PATTERN.search(event.detail or "")
+    return int(match.group(1)) if match else None
+
+
+def _latest_done_events(events):
+    return {event.script.lower(): event for event in events if event.event in DONE_EVENTS}
+
+
+def changed_after_done(events, directory):
+    """Nomes (minusculos) de scripts marcados que foram alterados depois da marcacao.
+
+    Registros antigos, sem '(mod=...)', nunca contam como alterados.
+    """
+    changed = set()
+    for name, event in _latest_done_events(events).items():
+        recorded = recorded_mod(event)
+        if recorded is None:
+            continue
+        current = _file_mod(directory, event.script)
+        if current is not None and current > recorded + MODIFIED_TOLERANCE_SECONDS:
+            changed.add(name)
+    return changed
+
+
 def _relative_file_list(directory):
     directory = Path(directory)
     files = []
@@ -150,7 +196,7 @@ def _now_text(now=None):
     return (now or datetime.now()).strftime("%Y-%m-%d %H:%M:%S")
 
 
-def _baseline_events(current_files, now=None):
+def _baseline_events(current_files, directory, now=None):
     """Primeiro uso do registro: o que ja existia vira base, exceto o que este
     operador ainda tinha como pendente na versao anterior (local)."""
     state = load_script_monitor_state()
@@ -163,7 +209,10 @@ def _baseline_events(current_files, now=None):
     # mesmo com a pasta de scripts vazia (senao o proximo script viraria base).
     marker = LedgerEvent(timestamp, user, "-", EVENT_START, "inicio do controle compartilhado")
     return [marker] + [
-        LedgerEvent(timestamp, user, name, EVENT_BASELINE, "existia antes do controle compartilhado")
+        LedgerEvent(
+            timestamp, user, name, EVENT_BASELINE,
+            _with_mod("existia antes do controle compartilhado", directory, name),
+        )
         for name in current_files
         if name.lower() not in still_pending
     ]
@@ -171,7 +220,7 @@ def _baseline_events(current_files, now=None):
 
 def check_scripts(directory=None, control_directory=None, now=None):
     """Lista os scripts pendentes e os que surgiram desde o ultimo aviso deste operador."""
-    directory = Path(directory or SCRIPT_MONITOR_DIRECTORY)
+    directory = Path(directory or load_script_directory())
     control_directory = Path(control_directory or load_script_control_directory())
     result = ScriptMonitorResult(directory=directory, control_directory=control_directory)
 
@@ -184,7 +233,7 @@ def check_scripts(directory=None, control_directory=None, now=None):
         current_files = _relative_file_list(directory)
         events = read_ledger(control_directory)
         if not events:
-            baseline = _baseline_events(current_files, now)
+            baseline = _baseline_events(current_files, directory, now)
             append_events(baseline, control_directory)
             events = baseline
     except OSError as error:
@@ -193,12 +242,14 @@ def check_scripts(directory=None, control_directory=None, now=None):
         return result
 
     done = done_scripts(events)
+    changed = changed_after_done(events, directory)
     result.total_files = len(current_files)
     result.pending = [
-        PendingScript(name, _modified_text(directory, name))
+        PendingScript(name, _modified_text(directory, name), changed=name.lower() in changed)
         for name in current_files
-        if name.lower() not in done
+        if name.lower() not in done or name.lower() in changed
     ]
+    result.changed = [script.name for script in result.pending if script.changed]
     meaningful = [event for event in events if event.event not in (EVENT_START, EVENT_BASELINE)]
     result.history = list(reversed(meaningful[-HISTORY_LIMIT:]))
 
@@ -210,26 +261,43 @@ def check_scripts(directory=None, control_directory=None, now=None):
     # O estado local guarda so o que ja foi avisado a este operador.
     save_script_monitor_state(_now_text(now)[:10], [], result.pending_names)
 
-    if result.new_pending:
+    new_changed = [name for name in result.new_pending if name in result.changed]
+    new_scripts = [name for name in result.new_pending if name not in result.changed]
+    if new_scripts:
         _write_monitor_log(
             "novo_script",
             directory,
-            f"{len(result.new_pending)} script(s) novo(s): {', '.join(result.new_pending[:10])}",
+            f"{len(new_scripts)} script(s) novo(s): {', '.join(new_scripts[:10])}",
+        )
+    if new_changed:
+        _write_monitor_log(
+            "script_alterado",
+            directory,
+            f"{len(new_changed)} script(s) alterado(s) depois de marcado: {', '.join(new_changed[:10])}",
         )
     return result
 
 
-def mark_scripts_done(scripts, control_directory=None, now=None):
-    """Registra os scripts como feitos. Devolve (marcados, ja_feitos_por_outro)."""
+def mark_scripts_done(scripts, control_directory=None, now=None, directory=None):
+    """Registra os scripts como feitos. Devolve (marcados, ja_feitos_por_outro).
+
+    Um script alterado depois de marcado volta a ser pendente e pode ser marcado
+    de novo; a data do arquivo e gravada para detectar a proxima alteracao.
+    """
     control_directory = Path(control_directory or load_script_control_directory())
-    already_done = done_scripts(read_ledger(control_directory))
+    directory = Path(directory or load_script_directory())
+    events = read_ledger(control_directory)
+    already_done = done_scripts(events) - changed_after_done(events, directory)
     to_mark = [name for name in scripts if name.lower() not in already_done]
     skipped = [name for name in scripts if name.lower() in already_done]
 
     timestamp = _now_text(now)
     user = current_user()
     append_events(
-        [LedgerEvent(timestamp, user, name, EVENT_DONE, "marcado manualmente") for name in to_mark],
+        [
+            LedgerEvent(timestamp, user, name, EVENT_DONE, _with_mod("marcado manualmente", directory, name))
+            for name in to_mark
+        ],
         control_directory,
     )
     if to_mark:

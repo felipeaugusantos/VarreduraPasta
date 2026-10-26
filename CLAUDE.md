@@ -210,7 +210,11 @@ operador do TS tem seu proprio `%LOCALAPPDATA%`. Cada evento e uma linha
 acrescentada (`data | usuario | script | evento | detalhe`), nunca reescrita.
 Pendente = script da pasta sem evento `base`, `feito` ou `executado`. O operador
 marca scripts selecionados como feito; vale para todos. O cabecalho mostra o
-contador `Scripts pendentes`. Logica em `app/script_monitor.py` (sem Tkinter).
+contador `Scripts pendentes`. Os eventos `base` e `feito` gravam a data do arquivo
+(`(mod=<segundos>)` no detalhe): se o arquivo for alterado depois (mais de 2 s), o
+script volta a pendente como `Alterado depois de marcado`; registros sem a data
+nunca contam como alterados. A pasta de scripts e configuravel em Configuracoes
+(`script_directory`). Logica em `app/script_monitor.py` (sem Tkinter).
 
 ### Consulta SVN
 

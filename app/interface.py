@@ -17,7 +17,6 @@ from app.config import (
     COPY_TARGET_DIRECTORIES,
     SCAN_INTERVAL_MS,
     SCRIPT_CHECK_INTERVAL_MS,
-    SCRIPT_MONITOR_DIRECTORY,
     SCRIPT_RETRY_INTERVAL_MS,
     UPDATE_CHECK_INTERVAL_MS,
 )
@@ -45,6 +44,7 @@ from app.settings import (
     load_ignored_project_folders,
     load_jenkins_config,
     load_script_control_directory,
+    load_script_directory,
     load_svn_base_path,
     save_autcom_test_login,
     save_base_directory,
@@ -52,6 +52,7 @@ from app.settings import (
     save_ignored_project_folders,
     save_jenkins_config,
     save_script_control_directory,
+    save_script_directory,
     save_svn_base_path,
 )
 from app.shared_audit import list_shared_log_files
@@ -778,7 +779,7 @@ class VersionScannerApp(tk.Tk):
 
         self.config_window = tk.Toplevel(self)
         self.config_window.title("Configurações")
-        theme.size_window(self.config_window, 820, 420)
+        theme.size_window(self.config_window, 820, 480)
         self.config_window.resizable(False, False)
         self.config_window.transient(self)
 
@@ -790,6 +791,7 @@ class VersionScannerApp(tk.Tk):
         settings_copy_var = tk.StringVar()
         settings_svn_var = tk.StringVar(value=load_svn_base_path())
         settings_control_var = tk.StringVar(value=str(load_script_control_directory()))
+        settings_scripts_var = tk.StringVar(value=str(load_script_directory()))
         autcom_login = load_autcom_test_login()
         settings_autcom_user_var = tk.StringVar(value=autcom_login["username"])
         settings_autcom_password_var = tk.StringVar(value=autcom_login["password"])
@@ -852,8 +854,23 @@ class VersionScannerApp(tk.Tk):
             style="Muted.TLabel",
         ).grid(row=3, column=1, columnspan=2, sticky="w", padx=(8, 0), pady=(2, 0))
 
+        ttk.Label(frame, text="Pasta de scripts:").grid(row=4, column=0, sticky="w", pady=(12, 0))
+        ttk.Entry(frame, textvariable=settings_scripts_var).grid(
+            row=4, column=1, sticky="ew", padx=(8, 8), pady=(12, 0)
+        )
+        ttk.Button(
+            frame,
+            text="Procurar",
+            command=lambda: self.choose_base_directory(settings_scripts_var),
+        ).grid(row=4, column=2, sticky="e", pady=(12, 0))
+        ttk.Label(
+            frame,
+            text="Pasta monitorada pelo Banco Modelo. Vazio volta ao caminho padrão.",
+            style="Muted.TLabel",
+        ).grid(row=5, column=1, columnspan=2, sticky="w", padx=(8, 0), pady=(2, 0))
+
         ttk.Label(frame, text="Destinos padrão:").grid(
-            row=4,
+            row=6,
             column=0,
             sticky="nw",
             pady=(12, 0),
@@ -862,16 +879,16 @@ class VersionScannerApp(tk.Tk):
             frame,
             text="\n".join(str(path) for path in COPY_TARGET_DIRECTORIES),
             wraplength=620,
-        ).grid(row=4, column=1, columnspan=2, sticky="w", pady=(12, 0))
+        ).grid(row=6, column=1, columnspan=2, sticky="w", pady=(12, 0))
 
         ttk.Label(frame, text="Destino adicional:").grid(
-            row=5,
+            row=7,
             column=0,
             sticky="w",
             pady=(12, 0),
         )
         ttk.Entry(frame, textvariable=settings_copy_var).grid(
-            row=5,
+            row=7,
             column=1,
             sticky="ew",
             padx=(8, 8),
@@ -882,21 +899,21 @@ class VersionScannerApp(tk.Tk):
             frame,
             text="Procurar",
             command=lambda: self.choose_base_directory(settings_copy_var),
-        ).grid(row=5, column=2, sticky="e", pady=(12, 0))
+        ).grid(row=7, column=2, sticky="e", pady=(12, 0))
 
         ttk.Label(frame, text="Destinos extras:").grid(
-            row=6,
+            row=8,
             column=0,
             sticky="nw",
             pady=(8, 0),
         )
         target_list = tk.Listbox(frame, height=5)
-        target_list.grid(row=6, column=1, sticky="ew", padx=(8, 8), pady=(8, 0))
+        target_list.grid(row=8, column=1, sticky="ew", padx=(8, 8), pady=(8, 0))
         for target in load_additional_copy_target_directories():
             target_list.insert(tk.END, str(target))
 
         target_buttons = ttk.Frame(frame)
-        target_buttons.grid(row=6, column=2, sticky="n", pady=(8, 0))
+        target_buttons.grid(row=8, column=2, sticky="n", pady=(8, 0))
 
         def add_target():
             value = settings_copy_var.get().strip()
@@ -932,7 +949,7 @@ class VersionScannerApp(tk.Tk):
             style="Group.TLabelframe",
             padding=(10, 6, 10, 8),
         )
-        autcom_group.grid(row=7, column=0, columnspan=3, sticky="ew", pady=(14, 0))
+        autcom_group.grid(row=9, column=0, columnspan=3, sticky="ew", pady=(14, 0))
         for column, (caption, variable, masked) in enumerate(
             (
                 ("Usuário", settings_autcom_user_var, False),
@@ -954,7 +971,7 @@ class VersionScannerApp(tk.Tk):
         ).grid(row=0, column=6, sticky="w")
 
         button_bar = ttk.Frame(frame)
-        button_bar.grid(row=8, column=0, columnspan=3, sticky="e", pady=(16, 0))
+        button_bar.grid(row=10, column=0, columnspan=3, sticky="e", pady=(16, 0))
         ttk.Button(
             button_bar,
             text="Salvar",
@@ -968,6 +985,7 @@ class VersionScannerApp(tk.Tk):
                     settings_autcom_password_var.get(),
                     settings_autcom_company_var.get(),
                 ),
+                script_directory=settings_scripts_var.get(),
             ),
         ).grid(row=0, column=0, padx=(0, 8))
         ttk.Button(
@@ -2002,7 +2020,7 @@ class VersionScannerApp(tk.Tk):
                 result = check_scripts()
             except Exception as error:
                 result = ScriptMonitorResult(
-                    directory=SCRIPT_MONITOR_DIRECTORY,
+                    directory=load_script_directory(),
                     control_directory=load_script_control_directory(),
                     error=f"Erro ao verificar scripts: {error}",
                 )
@@ -2029,13 +2047,22 @@ class VersionScannerApp(tk.Tk):
                     messagebox.showerror("Scripts Banco Modelo", result.error)
                 return
             if result.new_pending:
-                preview = "\n".join(result.new_pending[:20])
-                if len(result.new_pending) > 20:
-                    preview += f"\n... +{len(result.new_pending) - 20} script(s)"
+                changed = [name for name in result.new_pending if name in result.changed]
+                fresh = [name for name in result.new_pending if name not in result.changed]
+                sections = []
+                for title, names in (
+                    ("Novos scripts para rodar no banco modelo:", fresh),
+                    ("Scripts alterados depois de marcados (rodar de novo):", changed),
+                ):
+                    if not names:
+                        continue
+                    preview = "\n".join(names[:20])
+                    if len(names) > 20:
+                        preview += f"\n... +{len(names) - 20} script(s)"
+                    sections.append(f"{title}\n\n{preview}")
                 messagebox.showwarning(
                     "Scripts Banco Modelo",
-                    "Novos scripts para rodar no banco modelo:\n\n"
-                    f"{preview}\n\n"
+                    "\n\n".join(sections) + "\n\n"
                     "Abra Monitoramento > Scripts Banco Modelo para marcar cada um "
                     "como feito.",
                 )
@@ -2060,7 +2087,7 @@ class VersionScannerApp(tk.Tk):
         frame.rowconfigure(3, weight=3)
         frame.rowconfigure(6, weight=2)
 
-        path_var = tk.StringVar(value=str(SCRIPT_MONITOR_DIRECTORY))
+        path_var = tk.StringVar(value=str(load_script_directory()))
         control_var = tk.StringVar(value=str(load_script_control_directory()))
         status_var = tk.StringVar(value="Verificando scripts...")
 
@@ -2094,9 +2121,9 @@ class VersionScannerApp(tk.Tk):
 
         pending_table = build_table(
             3,
-            ("script", "modified"),
-            {"script": "Script pendente", "modified": "Data do arquivo"},
-            {"script": 680, "modified": 150},
+            ("script", "modified", "state"),
+            {"script": "Script pendente", "modified": "Data do arquivo", "state": "Situação"},
+            {"script": 520, "modified": 150, "state": 180},
             10,
             "extended",
         )
@@ -2119,6 +2146,8 @@ class VersionScannerApp(tk.Tk):
             "none",
         )
 
+        pending_table.tag_configure("changed", background=theme.COLORS["row_warning"])
+
         def update_result(result):
             if not monitor_window.winfo_exists():
                 return
@@ -2130,7 +2159,17 @@ class VersionScannerApp(tk.Tk):
                 status_var.set(result.error)
                 return
             for script in result.pending:
-                pending_table.insert("", "end", iid=script.name, values=(script.name, script.modified))
+                pending_table.insert(
+                    "",
+                    "end",
+                    iid=script.name,
+                    values=(
+                        script.name,
+                        script.modified,
+                        "Alterado depois de marcado" if script.changed else "Novo",
+                    ),
+                    tags=("changed",) if script.changed else (),
+                )
             for event in result.history:
                 history_table.insert(
                     "", "end", values=(event.timestamp, event.user, event.script, event.event)
@@ -2163,7 +2202,7 @@ class VersionScannerApp(tk.Tk):
             ):
                 return
             try:
-                marked, skipped = mark_scripts_done(selected)
+                marked, skipped = mark_scripts_done(selected, directory=Path(path_var.get()))
             except OSError as error:
                 messagebox.showerror(
                     "Scripts Banco Modelo",
@@ -2744,6 +2783,7 @@ class VersionScannerApp(tk.Tk):
         svn_base_path="",
         script_control_directory="",
         autcom_login=None,
+        script_directory=None,
     ):
         if autcom_login is not None:
             errors = [
@@ -2767,6 +2807,8 @@ class VersionScannerApp(tk.Tk):
         save_copy_target_directories(copy_target_directories)
         save_svn_base_path(svn_base_path)
         save_script_control_directory(script_control_directory)
+        if script_directory is not None:
+            save_script_directory(script_directory)
         if autcom_login is not None:
             save_autcom_test_login(*autcom_login)
         if self.config_window and self.config_window.winfo_exists():

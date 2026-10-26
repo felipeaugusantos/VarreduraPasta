@@ -14,6 +14,7 @@ from app.config import (
     AUTCOM_TEST_PASSWORD,
     AUTCOM_TEST_USERNAME,
     SCRIPT_CONTROL_DIRECTORY,
+    SCRIPT_MONITOR_DIRECTORY,
     SVN_BASE_PATH,
     UPDATE_DIRECTORY,
 )
@@ -180,6 +181,24 @@ def load_svn_base_path():
 def save_svn_base_path(svn_base_path):
     data = _load_settings()
     data["svn_base_path"] = str(svn_base_path or "").strip()
+    _save_settings(data)
+
+
+def load_script_directory():
+    """Pasta dos scripts do banco modelo; vazio/ausente usa o padrao de config.py."""
+    data = _load_settings()
+    value = str(data.get("script_directory") or "").strip()
+    return Path(value) if value else SCRIPT_MONITOR_DIRECTORY
+
+
+@_synchronized
+def save_script_directory(directory):
+    data = _load_settings()
+    value = str(directory or "").strip()
+    if value:
+        data["script_directory"] = str(Path(value))
+    else:
+        data.pop("script_directory", None)
     _save_settings(data)
 
 

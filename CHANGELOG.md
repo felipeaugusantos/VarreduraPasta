@@ -8,6 +8,13 @@ Semantico (`MAIOR.MENOR.CORRECAO`).
 ## [Nao lancado]
 
 ### Adicionado
+- Scripts do banco modelo: um script ja marcado como feito que for alterado
+  depois (data do arquivo) volta a ficar pendente, destacado como `Alterado
+  depois de marcado`, e o aviso diferencia novos de alterados. Marcar de novo
+  vale para todos os operadores. Registros antigos, sem a data gravada, nunca
+  contam como alterados.
+- Scripts do banco modelo: a pasta de scripts agora e configuravel em
+  `Configuracoes > Pasta de scripts` (vazio volta ao padrao).
 - Jenkins: a tela de status mostra tambem os jobs dentro de pastas (ate 3
   niveis, como `Pasta/job`).
 - Jenkins: botao `Ver Log` mostra o final do log do ultimo build (onde a falha
