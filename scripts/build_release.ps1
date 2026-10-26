@@ -39,6 +39,8 @@ try {
     # versao.txt acompanha o exe: ao publicar o pacote na pasta oficial, os
     # sistemas abertos comparam este numero e avisam que ha versao nova.
     Set-Content -Encoding ascii -LiteralPath (Join-Path $package "versao.txt") -Value $version
+    # Iniciador: abre o sistema de uma copia local, sem travar a pasta de rede.
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot "Iniciar_VarreduraSistema.bat") -Destination $package -Force
     $zip = Join-Path $root "dist\VarreduraSistema-$version.zip"
     Compress-Archive -Path (Join-Path $package "*") -DestinationPath $zip -Force
     $hash = Get-FileHash -Algorithm SHA256 -LiteralPath $zip

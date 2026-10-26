@@ -1778,7 +1778,8 @@ class VersionScannerApp(tk.Tk):
             f"Você está usando a versão {info.current}.\n"
             f"A versão {info.published} já está publicada em:\n\n"
             f"{info.directory}\n\n"
-            "Salve o que estiver em andamento, feche o sistema e abra o executável "
+            "Salve o que estiver em andamento, feche o sistema e abra de novo pelo "
+            "Iniciar_VarreduraSistema.bat "
             "dessa pasta para usar a versão nova.",
         )
 
