@@ -7,6 +7,8 @@ Semantico (`MAIOR.MENOR.CORRECAO`).
 
 ## [Nao lancado]
 
+## [2.7.0] - 2026-10-26
+
 ## [2.6.8] - 2026-10-26
 
 ### Adicionado
