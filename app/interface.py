@@ -311,14 +311,13 @@ class VersionScannerApp(tk.Tk):
             "closing": 165,
         }
         for column in columns:
-            anchor = "w" if column == "folder" else "center"
             self.tree.heading(
                 column,
                 text=headings[column],
-                anchor=anchor,
+                anchor="center",
                 command=lambda current_column=column: self._sort_by_column(current_column),
             )
-            self.tree.column(column, width=widths[column], minwidth=60, anchor=anchor)
+            self.tree.column(column, width=widths[column], minwidth=60, anchor="center")
 
         self.tree.tag_configure("ok", background=theme.COLORS["surface"])
         self.tree.tag_configure("warning", background=theme.COLORS["row_warning"])
