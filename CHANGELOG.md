@@ -9,8 +9,6 @@ Semantico (`MAIOR.MENOR.CORRECAO`).
 
 ## [2.7.0] - 2026-10-26
 
-## [2.6.8] - 2026-10-26
-
 ### Adicionado
 - Scripts do banco modelo: `Executar no banco` roda no MySQL os scripts
   selecionados, em ordem, parando no primeiro erro. Usuario e senha sao
@@ -19,6 +17,10 @@ Semantico (`MAIOR.MENOR.CORRECAO`).
   script e uma transacao (DML desfeito em erro; DDL o MySQL confirma sozinho).
   Servidor, porta e banco em `Banco...` (com teste de conexao). Usa o PyMySQL,
   embutido no exe (unica dependencia alem da biblioteca padrao).
+
+## [2.6.8] - 2026-10-26
+
+### Adicionado
 - Scripts do banco modelo: um script ja marcado como feito que for alterado
   depois (data do arquivo) volta a ficar pendente, destacado como `Alterado
   depois de marcado`, e o aviso diferencia novos de alterados. Marcar de novo
