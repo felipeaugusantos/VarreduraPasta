@@ -717,7 +717,8 @@ def testar_autcom(project):
         title,
         "Os arquivos ZIP da versao serao sincronizados com a pasta de teste.\n"
         "Os ZIPs antigos existentes na pasta exe serao substituidos.\n\n"
-        "O Autcom sera aberto e autenticado com as credenciais de teste.\n\n"
+        "O Autcom sera aberto, autenticado com as credenciais de teste e fechado\n"
+        "automaticamente ao final do teste.\n\n"
         f"Projeto:\n{project.path}\n\n"
         f"Pasta de teste:\n{layout.root}\n\n"
         "Deseja continuar?",

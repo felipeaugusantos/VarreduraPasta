@@ -7,6 +7,12 @@ Semantico (`MAIOR.MENOR.CORRECAO`).
 
 ## [Nao lancado]
 
+### Alterado
+- `Testar Autcom` fecha o Autcom ao final do teste, em qualquer resultado:
+  primeiro pede para as janelas fecharem e, se nao sair em 8 s, encerra o
+  processo e seus filhos. A mensagem informa como foi fechado. Antes o Autcom
+  ficava aberto e travava os arquivos da pasta de teste para o teste seguinte.
+
 ### Adicionado
 - Botao `Cancelar Fechamento`: tira da fila ou encerra o BAT em andamento (com
   todos os processos que ele abriu), solta a trava do projeto e registra

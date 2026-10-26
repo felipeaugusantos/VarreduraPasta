@@ -1,3 +1,7 @@
+import os
+import subprocess
+import sys
+import time
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -5,8 +9,11 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from app.autcom_test import (
+    _closing_note,
     _select_login_window,
+    _window_details_for_process,
     AutcomTestResult,
+    close_autcom,
     login_points,
     resolve_test_layout,
     run_autcom_test,
@@ -200,6 +207,7 @@ class LoginCompletionTests(unittest.TestCase):
 
 
 class CompleteAutcomTestTests(unittest.TestCase):
+    @patch("app.autcom_test.close_autcom", return_value="fechado")
     @patch("app.autcom_test.validate_login_completion")
     @patch("app.autcom_test.automate_autcom_login")
     @patch("app.autcom_test.validate_process_startup")
@@ -212,6 +220,7 @@ class CompleteAutcomTestTests(unittest.TestCase):
         startup_mock,
         login_mock,
         completion_mock,
+        close_mock,
     ):
         with TemporaryDirectory() as temporary_directory:
             base = Path(temporary_directory)
@@ -252,3 +261,172 @@ class CompleteAutcomTestTests(unittest.TestCase):
         self.assertEqual(result.process_id, 456)
         self.assertEqual(run_mock.call_args.kwargs["cwd"], exe_directory)
         self.assertEqual(popen_mock.call_args.kwargs["cwd"], test_root)
+        close_mock.assert_called_once_with(popen_mock.return_value)
+        self.assertIn("O Autcom foi fechado ao final do teste.", result.message)
+
+
+
+class CloseAutcomTests(unittest.TestCase):
+    def fake_process(self, poll=None, wait_error=None):
+        calls = []
+
+        class FakeProcess:
+            pid = 777
+
+            def poll(self):
+                return poll
+
+            def wait(self, timeout=None):
+                calls.append(("wait", timeout))
+                if wait_error is not None:
+                    raise wait_error
+                return 0
+
+            def kill(self):
+                calls.append(("kill",))
+
+        return FakeProcess(), calls
+
+    def test_already_exited_process_is_left_alone(self):
+        process, calls = self.fake_process(poll=0)
+        with patch("app.autcom_test._post_close_to_windows") as post_close:
+            self.assertEqual(close_autcom(process), "ja_encerrado")
+        post_close.assert_not_called()
+        self.assertEqual(calls, [])
+
+    def test_graceful_close_when_process_exits_after_close_request(self):
+        process, calls = self.fake_process()
+        with patch("app.autcom_test._post_close_to_windows") as post_close, \
+             patch("app.autcom_test.subprocess.run") as run:
+            self.assertEqual(close_autcom(process, grace_seconds=5), "fechado")
+        post_close.assert_called_once_with(777)
+        self.assertEqual(calls, [("wait", 5)])
+        run.assert_not_called()  # nao precisou forcar
+
+    def test_unresponsive_process_is_killed_with_its_children(self):
+        import subprocess
+
+        process, calls = self.fake_process(wait_error=subprocess.TimeoutExpired("autcom", 1))
+        with patch("app.autcom_test._post_close_to_windows"), \
+             patch("app.autcom_test.subprocess.run") as run:
+            self.assertEqual(close_autcom(process, grace_seconds=1), "forcado")
+        self.assertEqual(run.call_args.args[0][:3], ["taskkill", "/T", "/F"])
+        self.assertIn(("kill",), calls)
+
+    def test_never_raises(self):
+        class Broken:
+            pid = 1
+
+            def poll(self):
+                raise OSError("handle invalido")
+
+        self.assertEqual(close_autcom(Broken()), "forcado")
+
+    def test_result_note_is_appended_for_every_outcome(self):
+        for closing, expected in (
+            ("fechado", "foi fechado ao final"),
+            ("forcado", "nao respondeu"),
+            ("ja_encerrado", "ja estava encerrado"),
+        ):
+            self.assertIn(expected, _closing_note(closing))
+
+
+class AutcomIsClosedAfterTestTests(unittest.TestCase):
+    def setUp(self):
+        self._temp = TemporaryDirectory(ignore_cleanup_errors=True)
+        self.addCleanup(self._temp.cleanup)
+        base = Path(self._temp.name)
+        self.project = base / "379.48.2.30.74.111.181"
+        test_root = base / "PastaTesteCopia_74_111"
+        exe_directory = test_root / "exe"
+        self.project.mkdir()
+        exe_directory.mkdir(parents=True)
+        (self.project / "Autcom.zip").write_bytes(b"zip")
+        (exe_directory / "CopiaArquivos.bat").write_text("@echo off", encoding="utf-8")
+        (test_root / "Autcom.exe").write_bytes(b"exe")
+
+    def run_test(self, startup=None, login_error=None, completion=None, close_return="fechado"):
+        process = SimpleNamespace(pid=456)
+        with patch("app.autcom_test.subprocess.run") as run, \
+             patch("app.autcom_test.subprocess.Popen", return_value=process), \
+             patch("app.autcom_test.validate_process_startup", return_value=startup), \
+             patch("app.autcom_test.automate_autcom_login", side_effect=login_error, return_value=1234), \
+             patch("app.autcom_test.validate_login_completion", return_value=completion), \
+             patch("app.autcom_test.close_autcom", return_value=close_return) as close:
+            run.return_value = SimpleNamespace(returncode=0, stdout="", stderr="")
+            try:
+                result = run_autcom_test(self.project)
+            except Exception as error:
+                return None, close, error
+        return result, close, None
+
+    def test_closed_when_test_succeeds(self):
+        ok = AutcomTestResult(status="OK", message="tela principal abriu", process_id=456)
+        result, close, _error = self.run_test(startup=ok, completion=ok)
+        close.assert_called_once()
+        self.assertTrue(result.ok)
+
+    def test_closed_when_startup_fails(self):
+        failed = AutcomTestResult(status="FALHA", message="Autcom encerrou cedo", process_id=456)
+        result, close, _error = self.run_test(startup=failed)
+        close.assert_called_once()
+        self.assertEqual(result.status, "FALHA")
+        self.assertIn("Autcom encerrou cedo", result.message)
+        self.assertIn("fechado ao final", result.message)
+
+    def test_closed_when_login_cannot_be_filled(self):
+        ok = AutcomTestResult(status="OK", message="login abriu", process_id=456)
+        result, close, _error = self.run_test(startup=ok, login_error=OSError("sem foco"))
+        close.assert_called_once()
+        self.assertEqual(result.status, "FALHA")
+
+    def test_closed_even_when_validation_raises_unexpectedly(self):
+        process = SimpleNamespace(pid=456)
+        with patch("app.autcom_test.subprocess.run") as run, \
+             patch("app.autcom_test.subprocess.Popen", return_value=process), \
+             patch("app.autcom_test._validate_started_autcom", side_effect=RuntimeError("bug")), \
+             patch("app.autcom_test.close_autcom", return_value="fechado") as close:
+            run.return_value = SimpleNamespace(returncode=0, stdout="", stderr="")
+            with self.assertRaisesRegex(RuntimeError, "bug"):
+                run_autcom_test(self.project)
+
+        close.assert_called_once_with(process)
+
+    def test_forced_close_is_reported_to_the_operator(self):
+        ok = AutcomTestResult(status="OK", message="tela principal abriu", process_id=456)
+        result, _close, _error = self.run_test(startup=ok, completion=ok, close_return="forcado")
+        self.assertIn("nao respondeu ao pedido de fechamento", result.message)
+
+
+@unittest.skipUnless(os.name == "nt", "Fechamento de janela so existe no Windows")
+class CloseRealWindowProcessTests(unittest.TestCase):
+    """Com um processo de verdade: uma janela que fecha ao receber o pedido."""
+
+    def start(self, code):
+        process = subprocess.Popen([sys.executable, "-c", code])
+        self.addCleanup(lambda: process.poll() is None and process.kill())
+        return process
+
+    def wait_for_window(self, process):
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            if _window_details_for_process(process.pid):
+                return True
+            time.sleep(0.2)
+        return False
+
+    def test_window_process_is_closed_gracefully(self):
+        process = self.start(
+            "import tkinter as tk; r = tk.Tk(); r.title('Autcom de teste'); r.mainloop()"
+        )
+        if not self.wait_for_window(process):
+            self.skipTest("sem sessao grafica para abrir a janela de teste")
+
+        self.assertEqual(close_autcom(process, grace_seconds=10), "fechado")
+        self.assertIsNotNone(process.poll())
+
+    def test_process_that_ignores_close_is_killed(self):
+        process = self.start("import time; time.sleep(120)")
+
+        self.assertEqual(close_autcom(process, grace_seconds=0.5), "forcado")
+        self.assertIsNotNone(process.poll())

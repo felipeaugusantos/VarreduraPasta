@@ -129,7 +129,9 @@ tamanhos fora do padrao observado. Consulte
   os ZIPs em `C:\VERSOES_FECHADAS\PastaTesteCopia_74_111\exe`, executa
   `CopiaArquivos.bat`, abre o `Autcom.exe` da raiz e preenche o login de teste
   com usuario `998`, senha `998` e empresa `001`. O resultado diferencia
-  abertura autenticada, falha e verificacao inconclusiva.
+  abertura autenticada, falha e verificacao inconclusiva. Ao final (qualquer
+  que seja o resultado) o Autcom e fechado automaticamente, pois um Autcom
+  aberto trava os arquivos da pasta de teste.
 - A copia procura no destino de rede uma pasta com o mesmo nome do projeto,
   pede confirmacao mostrando origem e destino e envia somente os arquivos
   `.zip` da pasta do projeto.

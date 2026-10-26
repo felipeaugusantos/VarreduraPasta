@@ -3,7 +3,7 @@ import hashlib
 import shutil
 import subprocess
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from uuid import uuid4
 
@@ -17,6 +17,8 @@ CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 LOGIN_USERNAME = "998"
 LOGIN_PASSWORD = "998"
 LOGIN_COMPANY = "001"
+WM_CLOSE = 0x0010
+CLOSE_GRACE_SECONDS = 8
 
 
 @dataclass(frozen=True)
@@ -160,6 +162,77 @@ def run_autcom_test(
             bat_return_code=completed.returncode,
         )
 
+    result = None
+    try:
+        result = _validate_started_autcom(
+            process, completed, copied_files, progress_callback, startup_timeout
+        )
+    finally:
+        # O Autcom do teste trava os arquivos da pasta de teste: nao pode ficar
+        # aberto (o proximo teste nao conseguiria substituir os arquivos).
+        _notify(progress_callback, "Fechando Autcom.exe")
+        closing = close_autcom(process)
+    return replace(result, message=f"{result.message}\n\n{_closing_note(closing)}")
+
+
+def _closing_note(closing):
+    return {
+        "fechado": "O Autcom foi fechado ao final do teste.",
+        "forcado": "O Autcom nao respondeu ao pedido de fechamento e foi encerrado ao final do teste.",
+        "ja_encerrado": "O Autcom ja estava encerrado ao final do teste.",
+    }.get(closing, "")
+
+
+def close_autcom(process, grace_seconds=CLOSE_GRACE_SECONDS):
+    """Fecha o Autcom do teste. Retorna "ja_encerrado", "fechado" ou "forcado".
+
+    Primeiro pede para as janelas fecharem (como o operador faria); se o
+    processo nao sair em `grace_seconds`, encerra a arvore de processos.
+    Nunca levanta excecao: o resultado do teste nao pode se perder aqui.
+    """
+    try:
+        if process.poll() is not None:
+            return "ja_encerrado"
+        _post_close_to_windows(process.pid)
+        try:
+            process.wait(timeout=grace_seconds)
+            return "fechado"
+        except subprocess.TimeoutExpired:
+            pass
+        _kill_process_tree(process)
+        return "forcado"
+    except Exception:
+        return "forcado"
+
+
+def _post_close_to_windows(process_id):
+    try:
+        user32 = ctypes.windll.user32
+        for window in _window_details_for_process(process_id):
+            user32.PostMessageW(window.handle, WM_CLOSE, 0, 0)
+    except Exception:
+        pass
+
+
+def _kill_process_tree(process):
+    try:
+        subprocess.run(
+            ["taskkill", "/T", "/F", "/PID", str(process.pid)],
+            capture_output=True,
+            timeout=30,
+            check=False,
+            creationflags=CREATE_NO_WINDOW,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    try:
+        process.kill()
+        process.wait(timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+
+def _validate_started_autcom(process, completed, copied_files, progress_callback, startup_timeout):
     _notify(progress_callback, "Aguardando janela do Autcom")
     startup = validate_process_startup(process, startup_timeout)
     if not startup.ok:

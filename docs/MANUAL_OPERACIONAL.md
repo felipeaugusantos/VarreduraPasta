@@ -273,6 +273,12 @@ O resultado sera:
 - `FALHA`: BAT com erro, processo encerrado ou janela continuamente travada.
 - `INCONCLUSIVO`: processo aberto sem janela estavel confirmada em 60 segundos.
 
+Em qualquer resultado, o `Autcom.exe` e fechado automaticamente ao final do
+teste: primeiro o sistema pede para as janelas fecharem, como o operador faria,
+e, se o Autcom nao sair em 8 segundos, encerra o processo. A mensagem do
+resultado informa como ele foi fechado. Isso evita que o Autcom fique aberto
+travando os arquivos da pasta de teste.
+
 Quando o resultado for `OK`, feche o Autcom normalmente depois da conferencia.
 
 ## 9. Validacao antes da copia
