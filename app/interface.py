@@ -19,6 +19,7 @@ from app.config import (
     SCRIPT_MONITOR_DIRECTORY,
     SCRIPT_RETRY_INTERVAL_MS,
 )
+from app.error_handler import ErrorReporter
 from app.jenkins import (
     get_jenkins_jobs_status,
     job_label,
@@ -56,6 +57,8 @@ JENKINS_REFRESH_MS = 15 * 1000
 class VersionScannerApp(tk.Tk):
     def __init__(self):
         super().__init__()
+        # Antes de tudo: erro em botao/thread vai para logs\erros.log e aparece na tela.
+        self.error_reporter = ErrorReporter(self).install()
         self.title(f"Sistema de Acompanhamento de Copia v{__version__}")
         self.geometry("1380x820")
         self.minsize(1180, 680)

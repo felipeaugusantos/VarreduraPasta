@@ -65,6 +65,7 @@ Nao distribuir `settings.json` junto do pacote. Dados persistentes ficam em
 | `app/closing_runner.py` | Fila de fechamentos em segundo plano (sem Tkinter). |
 | `app/zip_memory.py` | Maior total de ZIPs ja gerado por pasta (`zip_memory.json`). |
 | `app/project_lock.py` | Trava por projeto entre operadores do TS (`.varredura.lock` na pasta). |
+| `app/error_handler.py` | Erros inesperados: `logs\erros.log`, Auditoria e mensagem na tela. |
 | `app/autcom_test.py` | Preparo da pasta de teste e validacao da abertura do Autcom. |
 | `app/pattern.py` | Padrao de arquivos por projeto. |
 | `app/settings.py` | Persistencia em `settings.json`. |
@@ -109,6 +110,11 @@ Nao distribuir `settings.json` junto do pacote. Dados persistentes ficam em
   `.varredura.lock` na pasta do projeto (criacao atomica, renovada a cada 30 s,
   expira apos 3 min sem renovacao). Outro operador do TS ve "Em uso" na coluna
   Fechamento e fica bloqueado. A limpeza nunca apaga o arquivo de trava.
+- Erro nao tratado (tela, thread ou abertura) vai para
+  `%LOCALAPPDATA%\VarreduraSistema\logs\erros.log` com traceback, versao e
+  usuario, gera `Sistema erro_inesperado` na Auditoria e mostra mensagem
+  (`app/error_handler.py`, instalado no inicio de `VersionScannerApp`).
+  Primeiro lugar a olhar quando um operador relatar que "nada aconteceu".
 - Um ZIP ilegivel (formato nao suportado, senha, gravacao em andamento) vira
   pendencia so daquele projeto; erro inesperado num projeto nao interrompe a
   varredura dos demais (`_failed_project_result` em `app/scanner.py`).

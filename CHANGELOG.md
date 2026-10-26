@@ -5,6 +5,15 @@ Todas as alteracoes relevantes deste projeto sao documentadas neste arquivo.
 O formato e baseado em Keep a Changelog e o projeto segue Versionamento
 Semantico (`MAIOR.MENOR.CORRECAO`).
 
+## [Nao lancado]
+
+### Corrigido
+- Erros inesperados no exe (que roda sem console) sumiam sem deixar rastro: o
+  botao "nao fazia nada". Agora todo erro nao tratado em tela, em thread ou na
+  abertura do sistema e gravado com detalhes em `logs\erros.log`, gera uma
+  linha `Sistema erro_inesperado` na Auditoria e mostra uma mensagem com o
+  caminho do log (o mesmo erro repetido so abre mensagem a cada 30 s).
+
 ## [2.6.3] - 2026-10-26
 
 ### Alterado
