@@ -7,7 +7,19 @@ Semantico (`MAIOR.MENOR.CORRECAO`).
 
 ## [Nao lancado]
 
+### Adicionado
+- Cache em disco das versoes lidas dentro dos ZIPs (`zip_versions.json`): ao
+  reabrir o sistema, ZIPs que nao mudaram (data/tamanho) nao sao extraidos de
+  novo, o que acelera a primeira varredura de cada operador do TS. Leituras com
+  erro nao sao guardadas.
+- Limpeza automatica dos logs de BAT (`logsechamentos_bat`) com mais de 90
+  dias, feita em segundo plano ao abrir o sistema. A Auditoria e o `erros.log`
+  nao sao apagados.
+
 ### Alterado
+- Com varios projetos selecionados, o botao de fechamento so fica desabilitado
+  quando todos estao em uso por outro operador; os livres seguem para a fila e
+  os demais sao recusados com o nome de quem esta usando.
 - O login de teste do Autcom (usuario, senha e empresa) deixa de ser fixo no
   codigo: cada operador pode configurar em `Configuracoes > Teste do Autcom`
   (senha mascarada, so letras e numeros, campo vazio volta ao padrao

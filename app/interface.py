@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from app import __version__, actions, logging_utils, project_view, theme, zip_memory
+from app import __version__, actions, log_cleanup, logging_utils, project_view, theme, zip_memory
 from app.audit import filter_log_entries, list_log_files, parse_log_entries, read_log_file
 from app.autcom_test import login_value_error
 from app.config import (
@@ -100,6 +100,7 @@ class VersionScannerApp(tk.Tk):
         self.after(100, self.refresh)
         self.after(2000, self.check_scripts_periodically)
         self.after(3000, self.check_for_update_periodically)
+        self.after(15000, self._clean_old_logs)
         self.after(CLOSING_POLL_MS, self._update_closing_column)
 
     def _set_window_icon(self):
@@ -1732,6 +1733,10 @@ class VersionScannerApp(tk.Tk):
         refresh_logs()
         audit_window.after(2000, auto_refresh_logs)
 
+    def _clean_old_logs(self):
+        """Apaga logs de BAT com mais de 90 dias, fora da thread da tela."""
+        threading.Thread(target=log_cleanup.remove_old_bat_logs, daemon=True).start()
+
     def check_for_update_periodically(self):
         """Le versao.txt da pasta oficial (em thread) e avisa se houver versao mais nova."""
         result_queue = queue.Queue()
@@ -2763,9 +2768,12 @@ class VersionScannerApp(tk.Tk):
             button.config(state="disabled")
         cloud_count = sum(1 for project in projects if self._is_cloud_project(project))
         local_count = len(projects) - cloud_count
-        if cloud_count == 0:
+        # Projetos em uso por outro operador nao contam: so se todos estiverem
+        # em uso o botao fica desabilitado (os demais seguem para a fila).
+        free = [p for p in projects if self._other_operator_lock(p) is None]
+        if free and cloud_count == 0:
             self.local_close_button.config(state="normal")
-        if local_count == 0:
+        if free and local_count == 0:
             self.cloud_close_button.config(state="normal")
 
         self._show_empty_details(

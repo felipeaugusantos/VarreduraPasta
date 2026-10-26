@@ -69,6 +69,8 @@ Nao distribuir `settings.json` junto do pacote. Dados persistentes ficam em
 | `app/version_reader.py` | Leitura de `FileVersion`/`ProductVersion` via WinAPI. |
 | `app/actions.py` | Fechamento, copia, limpeza de pasta e validacoes operacionais. |
 | `app/closing_runner.py` | Fila de fechamentos em segundo plano (sem Tkinter). |
+| `app/version_cache.py` | Cache em disco das versoes lidas dos ZIPs (`zip_versions.json`). |
+| `app/log_cleanup.py` | Apaga logs de BAT com mais de 90 dias. |
 | `app/zip_memory.py` | Maior total de ZIPs ja gerado por pasta (`zip_memory.json`). |
 | `app/project_lock.py` | Trava por projeto entre operadores do TS (`.varredura.lock` na pasta). |
 | `app/error_handler.py` | Erros inesperados: `logs\erros.log`, Auditoria e mensagem na tela. |

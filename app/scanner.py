@@ -12,6 +12,7 @@ from app.config import (
     LOCAL_MAX_AUTCOM_MB,
     REQUIRED_FILE_GROUPS,
 )
+from app import version_cache
 from app.pattern import is_specific_copy, load_project_file_groups, load_required_file_groups
 from app.settings import load_ignored_project_folders
 from app.version_reader import read_exe_versions
@@ -294,6 +295,10 @@ def _read_version_from_zip(zip_path, file_name, read_version=True):
     cached = _ZIP_VERSION_CACHE.get(cache_key)
     if cached is not None and cached[0] == cache_stamp:
         return cached[1]
+    persisted = version_cache.lookup(zip_path, file_name, read_version, cache_stamp)
+    if persisted is not None:
+        _cache_store(_ZIP_VERSION_CACHE, cache_key, (cache_stamp, persisted))
+        return persisted
 
     try:
         with ZipFile(zip_path) as archive:
@@ -328,6 +333,7 @@ def _read_version_from_zip(zip_path, file_name, read_version=True):
         result = (None, None, None, f"Erro ao ler zip: {error}")
 
     _cache_store(_ZIP_VERSION_CACHE, cache_key, (cache_stamp, result))
+    version_cache.store(zip_path, file_name, read_version, cache_stamp, result)
     return result
 
 
@@ -488,6 +494,7 @@ def scan_projects(base_directory=BASE_DIRECTORY):
         except Exception as error:
             # Um projeto com problema nao pode esvaziar a tabela inteira.
             results.append(_failed_project_result(project_path, error))
+    version_cache.flush()
     return results
 
 
