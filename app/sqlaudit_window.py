@@ -72,6 +72,8 @@ class SqlAuditWindow:
         self.store = AuditStore()
         self.viewing = None  # RunInfo do historico exibido na aba Objetos
         self.history_runs = {}
+        self.server_databases = []  # bancos que o usuario enxerga no servidor (carregados ao conectar)
+        self.database_notes = []  # (versao, aviso): banco sugerido que nao existe no servidor
         self.queue = queue.Queue()
         self.cancel_event = None
         self.busy = ""  # "", "descobrindo", "testando", "analisando", "exportando"
@@ -112,9 +114,15 @@ class SqlAuditWindow:
         server.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(10, 0))
         server.columnconfigure(5, weight=1)
         ttk.Label(server, text="Servidor:").grid(row=0, column=0, sticky="w")
-        ttk.Entry(server, textvariable=self.host_var, width=18).grid(row=0, column=1, padx=(6, 12))
+        self.host_entry = ttk.Entry(server, textvariable=self.host_var, width=18)
+        self.host_entry.grid(row=0, column=1, padx=(6, 12))
         ttk.Label(server, text="Porta:").grid(row=0, column=2, sticky="w")
-        ttk.Entry(server, textvariable=self.port_var, width=7).grid(row=0, column=3, padx=(6, 12))
+        self.port_entry = ttk.Entry(server, textvariable=self.port_var, width=7)
+        self.port_entry.grid(row=0, column=3, padx=(6, 12))
+        for entry in (self.host_entry, self.port_entry):
+            entry.bind("<Return>", lambda _event: self.connect_server())
+        self.connect_button = ttk.Button(server, text="Conectar e listar bancos...", command=self.connect_server)
+        self.connect_button.grid(row=0, column=6, padx=(12, 0), sticky="e")
         ttk.Label(server, text="TLS:").grid(row=0, column=4, sticky="w")
         self.tls_box = ttk.Combobox(server, textvariable=self.tls_var, values=list(TLS_LABELS.values()), state="readonly", width=38)
         self.tls_box.grid(row=0, column=5, sticky="w", padx=(6, 0))
@@ -123,7 +131,8 @@ class SqlAuditWindow:
         ttk.Button(server, text="...", width=3, command=self.choose_ca).grid(row=1, column=6, pady=(6, 0))
         ttk.Label(
             server,
-            text="Usuário e senha são pedidos a cada análise e não são gravados. Use um usuário só com SELECT.",
+            text="Informe servidor e porta e clique em Conectar (ou Enter): pede o usuário e a senha e lista os bancos. "
+            "Usuário e senha não são gravados. Use um usuário só com SELECT.",
             style="Muted.TLabel",
         ).grid(row=2, column=0, columnspan=7, sticky="w", pady=(6, 0))
 
@@ -151,8 +160,9 @@ class SqlAuditWindow:
         version_buttons.grid(row=0, column=2, padx=(8, 0), sticky="n")
         self.edit_button = ttk.Button(version_buttons, text="Editar versão...", command=self.edit_selected)
         self.edit_button.grid(row=0, column=0, pady=(0, 4), sticky="ew")
-        ttk.Button(version_buttons, text="Marcar todas", command=lambda: self._check_all(True)).grid(row=1, column=0, pady=(0, 4), sticky="ew")
-        ttk.Button(version_buttons, text="Desmarcar todas", command=lambda: self._check_all(False)).grid(row=2, column=0, sticky="ew")
+        ttk.Button(version_buttons, text="Bancos...", command=self.choose_databases).grid(row=1, column=0, pady=(0, 4), sticky="ew")
+        ttk.Button(version_buttons, text="Marcar todas", command=lambda: self._check_all(True)).grid(row=2, column=0, pady=(0, 4), sticky="ew")
+        ttk.Button(version_buttons, text="Desmarcar todas", command=lambda: self._check_all(False)).grid(row=3, column=0, sticky="ew")
 
         results = ttk.Frame(frame)
         results.grid(row=4, column=0, columnspan=3, sticky="nsew", pady=(10, 0))
@@ -315,7 +325,7 @@ class SqlAuditWindow:
     def _set_busy(self, busy):
         self.busy = busy
         idle = not busy
-        for button in (self.choose_button, self.discover_button, self.test_button, self.analyze_button, self.edit_button):
+        for button in (self.choose_button, self.discover_button, self.test_button, self.analyze_button, self.edit_button, self.connect_button):
             button.config(state="normal" if idle else "disabled")
         self.export_button.config(state="normal" if idle and self.run is not None else "disabled")
         self.fix_button.config(state="normal" if idle and self._fixable() else "disabled")
@@ -369,6 +379,9 @@ class SqlAuditWindow:
         elif kind == "info":
             self._set_busy("")
             self.status_var.set(message[1])
+        elif kind == "databases":
+            self._set_busy("")
+            self._on_databases(message[1], message[2], message[3])
         elif kind == "shared_history":
             self._set_busy("")
             self._fill_shared_history(message[1], message[2])
@@ -467,6 +480,8 @@ class SqlAuditWindow:
                         return "Erro"
                     if audit.comparison is not None:
                         return report.label(worst(item.status for item in audit.comparison.objects))
+        if self._database_missing(version):
+            return "Banco não encontrado"
         return "Descontinuada" if self.folders[version].discontinued else ""
 
     def _refresh_versions(self):
@@ -522,7 +537,7 @@ class SqlAuditWindow:
         base_var = tk.StringVar(value=node.base or NO_BASE)
         fork_var = tk.StringVar(value="" if node.fork is None else str(node.fork))
         ttk.Label(box, text="Banco:").grid(row=0, column=0, sticky="w")
-        ttk.Entry(box, textvariable=database_var).grid(row=0, column=1, sticky="ew", padx=(8, 0))
+        ttk.Combobox(box, textvariable=database_var, values=self.server_databases).grid(row=0, column=1, sticky="ew", padx=(8, 0))
         ttk.Label(box, text="Versão-base:").grid(row=1, column=0, sticky="w", pady=(8, 0))
         others = [NO_BASE] + [v for v in self.order if v != version]
         ttk.Combobox(box, textvariable=base_var, values=others, state="readonly").grid(row=1, column=1, sticky="ew", padx=(8, 0), pady=(8, 0))
@@ -612,6 +627,149 @@ class SqlAuditWindow:
             parts.append(f"primeiro script ausente no banco: {hint.first_missing}")
         return ", ".join(parts) + ". Confirme antes de usar."
 
+    # ---- bancos do servidor ----
+    def connect_server(self):
+        """Pede usuario e senha, conecta so ao servidor e lista os bancos que o usuario enxerga."""
+        if self.busy:
+            return
+        server = self._server_or_none()
+        if server is None:
+            return
+        self._persist()
+        self.status_var.set(f"Conectando em {server.host}:{server.port}...")
+        self._start("conectando", lambda: ("databases", *audit_runner.list_databases(server)))
+
+    def _on_databases(self, ok, names, text):
+        if not ok:
+            self.status_var.set("✖ " + text)
+            return
+        self.server_databases = names
+        self.status_var.set("✔ " + text)
+        self._match_databases()
+        self._refresh_versions()
+        self._refresh_warnings()
+        if self.order:
+            self.choose_databases()
+        else:
+            messagebox.showinfo(
+                TITLE,
+                f"{len(names)} banco(s) visível(is) para este usuário. Descubra as versões para escolher o banco de cada uma.",
+                parent=self.window,
+            )
+
+    def _database_missing(self, version):
+        wanted = (self.databases.get(version) or "").strip().lower()
+        return bool(self.server_databases) and wanted not in {name.lower() for name in self.server_databases}
+
+    def _match_databases(self):
+        """Casa o banco de cada versao com a lista do servidor (ignora maiusculas) e anota o que nao existe."""
+        by_lower = {name.lower(): name for name in self.server_databases}
+        self.database_notes = []
+        for version in self.order:
+            wanted = (self.databases.get(version) or "").strip()
+            found = by_lower.get(wanted.lower())
+            if found:
+                self.databases[version] = found
+            else:
+                self.database_notes.append(
+                    (version, f"Banco '{wanted or '(vazio)'}' não existe no servidor: escolha em Bancos...")
+                )
+        if self.order:
+            self._persist()
+
+    def choose_databases(self):
+        if not self.server_databases:
+            messagebox.showinfo(
+                TITLE, "Conecte ao servidor primeiro: informe servidor e porta e clique em Conectar e listar bancos.", parent=self.window
+            )
+            return
+        if not self.order:
+            messagebox.showinfo(TITLE, "Descubra as versões antes de escolher o banco de cada uma.", parent=self.window)
+            return
+        names = list(self.server_databases)
+        dialog = tk.Toplevel(self.window)
+        dialog.title("Bancos do servidor")
+        theme.size_window(dialog, 800, min(150 + 38 * len(self.order), 560))
+        dialog.transient(self.window)
+        box = ttk.Frame(dialog, padding=14)
+        box.pack(fill="both", expand=True)
+        box.columnconfigure(0, weight=1)
+        box.rowconfigure(2, weight=1)
+        ttk.Label(
+            box,
+            text=f"{len(names)} banco(s) visível(is) para este usuário em {self.host_var.get().strip()}:{self.port_var.get().strip()}. "
+            "Escolha o banco de cada versão (dá para digitar para procurar).",
+            wraplength=760,
+            justify="left",
+        ).grid(row=0, column=0, sticky="w")
+        filter_var = tk.StringVar()
+        bar = ttk.Frame(box)
+        bar.grid(row=1, column=0, sticky="ew", pady=(8, 8))
+        ttk.Label(bar, text="Filtrar a lista:").grid(row=0, column=0)
+        ttk.Entry(bar, textvariable=filter_var, width=30).grid(row=0, column=1, padx=(6, 0))
+
+        canvas = tk.Canvas(box, highlightthickness=0, background=theme.COLORS["bg"])
+        scroll = ttk.Scrollbar(box, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=scroll.set)
+        canvas.grid(row=2, column=0, sticky="nsew")
+        scroll.grid(row=2, column=1, sticky="ns")
+        rows = ttk.Frame(canvas)
+        rows_window = canvas.create_window((0, 0), window=rows, anchor="nw")
+        rows.bind("<Configure>", lambda _event: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>", lambda event: canvas.itemconfigure(rows_window, width=event.width))  # a linha acompanha a largura
+        rows.columnconfigure(1, weight=1)
+
+        by_lower = {name.lower(): name for name in names}
+        variables, boxes = {}, []
+        for position, version in enumerate(self.order):
+            current = (self.databases.get(version) or "").strip()
+            variable = tk.StringVar(value=by_lower.get(current.lower(), current))
+            indicator = tk.StringVar()
+
+            def refresh(*_args, _variable=variable, _indicator=indicator):
+                found = _variable.get().strip().lower() in by_lower
+                _indicator.set("✔ existe no servidor" if found else "✖ não existe no servidor")
+
+            variable.trace_add("write", refresh)
+            refresh()
+            ttk.Label(rows, text=version).grid(row=position, column=0, sticky="w", pady=3, padx=(0, 10))
+            combo = ttk.Combobox(rows, textvariable=variable, values=names, width=40)
+            combo.grid(row=position, column=1, sticky="ew", pady=3)
+            ttk.Label(rows, textvariable=indicator, style="Muted.TLabel").grid(row=position, column=2, sticky="w", padx=(10, 0))
+            variables[version] = variable
+            boxes.append(combo)
+
+        def narrow(*_args):
+            needle = filter_var.get().strip().lower()
+            shown = [name for name in names if needle in name.lower()]
+            for combo in boxes:
+                combo.configure(values=shown)
+
+        filter_var.trace_add("write", narrow)
+
+        def apply():
+            for version, variable in variables.items():
+                chosen = variable.get().strip()
+                if chosen:
+                    self.databases[version] = chosen
+            self._match_databases()
+            self._persist()
+            self._refresh_versions()
+            self._refresh_warnings()
+            missing = len(self.database_notes)
+            self.status_var.set(
+                f"Bancos aplicados: {len(self.order) - missing} versão(ões) com banco encontrado"
+                + (f", {missing} sem banco no servidor." if missing else ".")
+            )
+            dialog.destroy()
+
+        buttons = ttk.Frame(box)
+        buttons.grid(row=3, column=0, columnspan=2, sticky="e", pady=(10, 0))
+        ttk.Button(buttons, text="Aplicar", style="Primary.TButton", command=apply).grid(row=0, column=0, padx=(0, 8))
+        ttk.Button(buttons, text="Cancelar", command=dialog.destroy).grid(row=0, column=1)
+        dialog.grab_set()
+        self.window.wait_window(dialog)
+
     # ---- conexao e analise ----
     def _server_or_none(self):
         host = self.host_var.get().strip()
@@ -663,6 +821,15 @@ class SqlAuditWindow:
         missing = [v for v in selected if not self.databases.get(v)]
         if missing:
             messagebox.showwarning(TITLE, "Informe o banco de: " + ", ".join(missing), parent=self.window)
+            return
+        unknown = [v for v in selected if self._database_missing(v)]
+        if unknown and not messagebox.askyesno(
+            TITLE,
+            "Estes bancos não estão na lista carregada do servidor:\n\n"
+            + "\n".join(f"  {v}: {self.databases[v]}" for v in unknown)
+            + "\n\nSe o banco realmente não existir, a análise dessas versões falha. Continuar mesmo assim?",
+            parent=self.window,
+        ):
             return
         server = self._server_or_none()
         if server is None:
@@ -820,6 +987,8 @@ class SqlAuditWindow:
         table.delete(*table.get_children())
         for text in self.discovery_warnings:
             table.insert("", "end", values=("—", text), tags=("warn",))
+        for version, text in self.database_notes:
+            table.insert("", "end", values=(version, text), tags=("warn",))
         for audit in (self.run.versions if self.run else []):
             if audit.error:
                 table.insert("", "end", values=(audit.version, "Erro: " + audit.error), tags=("bad",))

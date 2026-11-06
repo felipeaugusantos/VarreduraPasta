@@ -206,6 +206,54 @@ class ReadSchemaTests(ReaderTestCase):
         self.assertTrue(connection.closed)
 
 
+class ListDatabasesTests(ReaderTestCase):
+    def server(self, rows, **kwargs):
+        connection = FakeConnection({db_reader.SQL_DATABASES: [(name,) for name in rows]}, **kwargs)
+        captured = {}
+
+        def connector(**options):
+            captured.update(options)
+            return connection
+
+        audit = connect_readonly("10.0.0.35", 43309, "", "leitura", "segredo", connector=connector, require_database=False)
+        return audit, connection, captured
+
+    def test_connects_without_choosing_a_database_and_lists_the_visible_ones_in_order(self):
+        audit, connection, options = self.server(["BANCO_B", "BANCO_A", "information_schema", "mysql", "performance_schema", "sys"])
+        self.assertNotIn("database", options)
+        self.assertEqual(audit.list_databases(), ["BANCO_B", "BANCO_A"])  # a ordem vem do servidor (ORDER BY)
+        self.assertEqual(connection.executed[0][0], db_reader.SQL_READ_ONLY)
+
+    def test_system_databases_are_hidden_case_insensitively_unless_asked(self):
+        audit, _connection, _options = self.server(["Information_Schema", "MYSQL", "Performance_Schema", "SYS", "BANCO_AUTCOM_379_48_02_30_72"])
+        self.assertEqual(audit.list_databases(), ["BANCO_AUTCOM_379_48_02_30_72"])
+        self.assertEqual(len(audit.list_databases(include_system=True)), 5)
+
+    def test_no_visible_database_gives_an_empty_list(self):
+        audit, _connection, _options = self.server(["information_schema"])
+        self.assertEqual(audit.list_databases(), [])
+
+    def test_uses_only_the_fixed_query_without_parameters(self):
+        audit, connection, _options = self.server(["B"])
+        audit.list_databases()
+        statements = [statement for statement, _params in connection.executed]
+        self.assertIn(db_reader.SQL_DATABASES, statements)
+        self.assertTrue(set(statements) <= ALL_CONSTANTS)
+        self.assertTrue(db_reader.SQL_DATABASES.lstrip().startswith("SELECT"))
+
+    def test_the_database_is_still_required_for_a_normal_audit_connection(self):
+        with self.assertRaises(AuditDbError):
+            connect_readonly("srv", 3306, "", "u", "p", connector=lambda **_: None)
+        with self.assertRaises(AuditDbError):
+            connect_readonly("", 3306, "", "u", "p", connector=lambda **_: None, require_database=False)
+
+    def test_query_failure_is_a_clear_error(self):
+        connection = FakeConnection({}, fail_on={db_reader.SQL_DATABASES: Exception(1142, "SELECT command denied")})
+        audit = connect_readonly("h", 3306, "", "u", "p", connector=lambda **_: connection, require_database=False)
+        with self.assertRaises(AuditDbError):
+            audit.list_databases()
+
+
 class TypeNormalizerTests(unittest.TestCase):
     def same(self, left, right):
         a, b = normalize_type(left), normalize_type(right)

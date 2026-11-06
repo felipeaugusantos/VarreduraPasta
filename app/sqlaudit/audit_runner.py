@@ -115,6 +115,24 @@ def test_connection(server, database, connector=None, cancel_event=None):
     return True, f"{head}: {len(schema.tables)} tabela(s) visivel(is)."
 
 
+def list_databases(server, connector=None):
+    """(ok, bancos, mensagem): conecta so ao servidor e lista os bancos visiveis ao usuario."""
+    try:
+        with connect_readonly(
+            server.host, server.port, "", server.username, server.password,
+            tls=server.tls, ca_file=server.ca_file, connector=connector, require_database=False,
+        ) as connection:
+            names = connection.list_databases()
+    except AuditDbError as error:
+        return False, [], _scrub(error, server.password)
+    if not names:
+        return False, [], (
+            "Conectado, mas nenhum banco visivel para este usuario. "
+            "Confira se ele tem SELECT nos bancos que serao auditados."
+        )
+    return True, names, f"Conectado: {len(names)} banco(s) visivel(is) para o usuario."
+
+
 def run_audit(request, progress=None, cancel_event=None, connector=None):
     """Executa a auditoria. `progress(mensagem, fracao_0_a_1)` e opcional."""
     run = AuditRun(started=datetime.now(), user=os_user(), root=Path(request.root))

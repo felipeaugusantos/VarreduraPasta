@@ -7,6 +7,15 @@ Semantico (`MAIOR.MENOR.CORRECAO`).
 
 ## [Nao lancado]
 
+### Adicionado
+- Auditoria de Estrutura SQL: `Conectar e listar bancos...` (tambem com Enter em
+  servidor/porta). Pede usuario e senha, lista os bancos que o usuario enxerga no
+  servidor (sem os internos do MySQL) e abre a tela de escolha do banco de cada
+  versao, com filtro e a indicacao "existe/nao existe no servidor". O banco sugerido
+  pelo nome da pasta e conferido contra o servidor (ignora maiusculas); o que nao
+  existe aparece como "Banco nao encontrado". Analisar um banco fora da lista pede
+  confirmacao. O campo Banco da edicao da versao passa a ser uma lista.
+
 ## [2.8.0] - 2026-11-06
 
 ### Adicionado

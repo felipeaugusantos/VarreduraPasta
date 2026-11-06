@@ -148,13 +148,12 @@ class WindowTestCase(unittest.TestCase):
             entries = self.find(dialog, "TEntry")
             boxes = self.find(dialog, "TCombobox")
             if database is not None:
-                entries[0].delete(0, "end")
-                entries[0].insert(0, database)
+                boxes[0].set(database)  # o banco agora e uma lista (editavel)
             if base is not None:
-                boxes[0].set(base)
+                boxes[1].set(base)
             if fork is not None:
-                entries[1].delete(0, "end")
-                entries[1].insert(0, fork)
+                entries[0].delete(0, "end")
+                entries[0].insert(0, fork)
             wanted = "Salvar e registrar para todos" if register else "Salvar"
             [b for b in self.find(dialog, "TButton") if b.cget("text") == wanted][0].invoke()
 
@@ -773,6 +772,201 @@ class FixScriptTests(WindowTestCase):
 
         self.assertNotIn("model", json.dumps(report.build_json(self.sa.run), default=str).lower().replace("modelo", ""))
         self.assertEqual(len(self.sa.store.list_runs()), 1)  # o historico gravou sem o modelo
+
+
+class DatabaseSelectionTests(WindowTestCase):
+    DB_72 = "BANCO_AUTCOM_379_48_02_30_72"
+    DB_150 = "BANCO_AUTCOM_379_48_02_30_74_150"
+
+    def start(self):
+        self.open(root=False)
+        self.discover()
+        self.sa.host_var.set("10.0.0.35")
+        self.sa.port_var.set("43309")
+
+    def listing(self, names, ok=True, message="Conectado: banco(s) visivel(is) para o usuario."):
+        return patch("app.sqlaudit.audit_runner.list_databases", return_value=(ok, names, message))
+
+    def dialog(self, choose=None, button="Aplicar", filter_text=None, record=None):
+        """Substitui o wait_window do dialogo de bancos: preenche e aperta um botao."""
+        record = {} if record is None else record
+
+        def fake_wait(dialog):
+            combos = self.find(dialog, "TCombobox")
+            record["combos"] = combos
+            record["values"] = [list(c.cget("values")) for c in combos]  # lido agora: depois o dialogo e destruido
+            labels = [self.sa.window.getvar(str(l.cget("textvariable"))) for l in self.find(dialog, "TLabel") if str(l.cget("textvariable"))]
+            record["indicators"] = labels
+            if filter_text is not None:
+                self.find(dialog, "TEntry")[0].insert(0, filter_text)
+                dialog.update()
+                record["filtered"] = [tuple(c.cget("values")) for c in combos]
+            for position, name in (choose or {}).items():
+                combos[position].set(name)
+            [b for b in self.find(dialog, "TButton") if b.cget("text") == button][0].invoke()
+
+        self.sa.window.wait_window = fake_wait
+        return record
+
+    def connect(self, names, **dialog_kwargs):
+        self.start()
+        record = self.dialog(**dialog_kwargs)
+        with self.login(), self.listing(names) as listing:
+            self.sa.connect_server()
+            self.pump()
+        return record, listing
+
+    def test_connect_asks_for_the_login_once_lists_the_databases_and_opens_the_selection(self):
+        record, listing = self.connect(["banco_autcom_379_48_02_30_72", "OUTRO", self.DB_150.lower()], choose={1: "OUTRO"})
+        server = listing.call_args.args[0]
+        self.assertEqual((server.host, server.port, server.username, server.password), ("10.0.0.35", 43309, "leitura", PASSWORD))
+        self.assertEqual(len(record["combos"]), 2)  # uma por versao descoberta
+        self.assertEqual(record["values"][0], ["banco_autcom_379_48_02_30_72", "OUTRO", self.DB_150.lower()])
+        self.assertEqual(record["indicators"], ["✔ existe no servidor", "✔ existe no servidor"])  # casou ignorando maiusculas
+        self.assertEqual(self.sa.databases["48.2.30.72"], "banco_autcom_379_48_02_30_72")  # nome canonico do servidor
+        self.assertEqual(self.sa.databases["48.2.30.74.150"], "OUTRO")  # escolhido
+        self.assertEqual(settings.load_sqlaudit_config()["databases"]["48.2.30.74.150"], "OUTRO")
+        rows = {r[1]: r for r in self.rows(self.sa.versions_table)}
+        self.assertEqual(rows["48.2.30.74.150"][4], "OUTRO")
+        self.assertIn("Bancos aplicados: 2 versão(ões) com banco encontrado", self.sa.status_var.get())
+        self.assertEqual(self.sa.busy, "")
+
+    def test_a_suggested_database_that_does_not_exist_is_flagged_everywhere(self):
+        record, _ = self.connect([self.DB_72, "OUTRO"], button="Cancelar")
+        self.assertEqual(record["indicators"], ["✔ existe no servidor", "✖ não existe no servidor"])
+        self.assertEqual(self.sa.server_databases, [self.DB_72, "OUTRO"])  # a lista fica carregada mesmo cancelando
+        self.assertEqual(self.sa.databases["48.2.30.74.150"], self.DB_150)  # nada foi alterado
+        rows = {r[1]: r for r in self.rows(self.sa.versions_table)}
+        self.assertEqual(rows["48.2.30.74.150"][5], "Banco não encontrado")
+        notes = [r for r in self.rows(self.sa.warnings_table) if r[0] == "48.2.30.74.150"]
+        self.assertTrue(notes and "não existe no servidor" in notes[0][1])
+
+    def test_applying_a_typed_database_that_is_not_on_the_server_is_allowed_but_stays_flagged(self):
+        self.connect([self.DB_72], choose={1: "digitado_a_mao"})
+        self.assertEqual(self.sa.databases["48.2.30.74.150"], "digitado_a_mao")
+        self.assertIn("1 sem banco no servidor", self.sa.status_var.get())
+
+    def test_cancelling_the_login_connects_to_nothing(self):
+        self.start()
+        with patch("app.sqlaudit_window.ask_credentials", return_value=None), self.listing([self.DB_72]) as listing:
+            self.sa.connect_server()
+        listing.assert_not_called()
+        self.assertEqual(self.sa.busy, "")
+        self.assertEqual(self.sa.server_databases, [])
+
+    def test_failures_and_an_empty_list_show_the_reason_and_open_no_dialog(self):
+        self.start()
+
+        def must_not_open(_dialog):
+            raise AssertionError("o dialogo nao deveria abrir")
+
+        self.sa.window.wait_window = must_not_open
+        for message in ("Usuario ou senha do banco incorretos.", "Conectado, mas nenhum banco visivel para este usuario. Confira se ele tem SELECT"):
+            with self.login(), self.listing([], ok=False, message=message):
+                self.sa.connect_server()
+                self.pump()
+            self.assertEqual(self.sa.status_var.get(), "✖ " + message)
+        self.assertEqual(self.sa.server_databases, [])
+
+    def test_validation_before_asking_for_the_login(self):
+        self.start()
+        self.sa.port_var.set("abc")
+        with patch("app.sqlaudit_window.messagebox.showwarning") as warning, patch("app.sqlaudit_window.ask_credentials") as ask:
+            self.sa.connect_server()
+        self.assertIn("porta", warning.call_args.args[1])
+        ask.assert_not_called()
+
+    def test_without_discovered_versions_it_only_reports_how_many_databases_are_visible(self):
+        self.open(root=False)
+        self.sa.host_var.set("10.0.0.35")
+        self.sa.port_var.set("43309")
+        with self.login(), self.listing(["A", "B", "C"]), patch("app.sqlaudit_window.messagebox.showinfo") as info:
+            self.sa.connect_server()
+            self.pump()
+        self.assertIn("3 banco(s) visível(is)", info.call_args.args[1])
+        self.assertEqual(self.sa.server_databases, ["A", "B", "C"])
+        with patch("app.sqlaudit_window.messagebox.showinfo") as info:
+            self.sa.choose_databases()
+        self.assertIn("Descubra as versões", info.call_args.args[1])
+
+    def test_the_selection_screen_needs_a_loaded_list(self):
+        self.start()
+        with patch("app.sqlaudit_window.messagebox.showinfo") as info:
+            self.sa.choose_databases()
+        self.assertIn("Conecte ao servidor", info.call_args.args[1])
+
+    def test_enter_in_server_or_port_and_the_button_start_the_connection(self):
+        self.start()
+        self.assertTrue(self.sa.host_entry.bind("<Return>"))
+        self.assertTrue(self.sa.port_entry.bind("<Return>"))
+        self.assertEqual(str(self.sa.connect_button.cget("text")), "Conectar e listar bancos...")
+        record = self.dialog(button="Cancelar")
+        with self.login(), self.listing([self.DB_72]):
+            self.sa.connect_button.invoke()
+            self.pump()
+        self.assertIn("combos", record)
+
+    def test_the_connect_button_is_disabled_while_busy(self):
+        self.start()
+        self.sa._set_busy("analisando")
+        self.assertEqual(str(self.sa.connect_button.cget("state")), "disabled")
+        with self.login() as ask:
+            self.sa.connect_server()
+        ask.assert_not_called()
+        self.sa._set_busy("")
+        self.assertEqual(str(self.sa.connect_button.cget("state")), "normal")
+
+    def test_the_filter_narrows_every_list(self):
+        record, _ = self.connect([self.DB_72, self.DB_150, "OUTRO"], button="Cancelar", filter_text="74_150")
+        self.assertEqual(record["filtered"], [(self.DB_150,), (self.DB_150,)])
+
+    def test_the_edit_dialog_offers_the_server_databases(self):
+        self.connect([self.DB_72, "OUTRO"], button="Cancelar")
+        seen = {}
+
+        def fake_wait(dialog):
+            seen["values"] = list(self.find(dialog, "TCombobox")[0].cget("values"))
+            [b for b in self.find(dialog, "TButton") if b.cget("text") == "Cancelar"][0].invoke()
+
+        self.sa.window.wait_window = fake_wait
+        self.sa._edit_version("48.2.30.72")
+        self.assertEqual(seen["values"], [self.DB_72, "OUTRO"])
+
+    def test_analysis_warns_about_a_database_missing_from_the_loaded_list(self):
+        self.connect([self.DB_72], button="Cancelar")  # a 74.150 nao existe no servidor
+        self.sa._check_all(True)
+        with patch("app.sqlaudit_window.messagebox.askyesno", return_value=False) as ask, self.login() as login:
+            self.sa.analyze()
+        self.assertIn(self.DB_150, ask.call_args.args[1])
+        self.assertIn("Continuar mesmo assim", ask.call_args.args[1])
+        login.assert_not_called()  # recusou: nem pediu a senha
+        self.assertEqual(self.sa.busy, "")
+        banks = {self.DB_72: responses_for(self.DB_72, [("CLI_ID", "int"), ("CLI_EMAIL", "varchar(200)")])}
+        with patch("app.sqlaudit_window.messagebox.askyesno", return_value=True), self.login(), self.connection(**banks):
+            self.sa.analyze()
+            self.pump()
+        self.assertEqual(len(self.sa.run.versions), 2)
+
+    def test_no_warning_when_every_database_is_on_the_list_or_no_list_was_loaded(self):
+        self.start()
+        banks = {self.DB_72: responses_for(self.DB_72, [("CLI_ID", "int"), ("CLI_EMAIL", "varchar(200)")])}
+        with patch("app.sqlaudit_window.messagebox.askyesno") as ask, self.login(), self.connection(**banks):
+            self.sa.analyze()  # sem lista carregada: comportamento de antes
+            self.pump()
+        ask.assert_not_called()
+
+    def test_the_password_never_reaches_status_settings_logs_or_the_tables(self):
+        self.connect([self.DB_72, "OUTRO"], choose={1: "OUTRO"})
+        haystacks = [
+            self.sa.status_var.get(),
+            " ".join(self.logged),
+            settings.SETTINGS_FILE.read_text(encoding="utf-8"),
+            str(self.rows(self.sa.versions_table)),
+            str(self.rows(self.sa.warnings_table)),
+        ]
+        for text in haystacks:
+            self.assertNotIn(PASSWORD, text)
+        self.assertEqual(settings.load_sqlaudit_server()["username"], "leitura")
 
 
 if __name__ == "__main__":

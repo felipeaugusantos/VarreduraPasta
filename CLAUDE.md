@@ -239,6 +239,13 @@ com SELECT). Cada versao deriva de uma base (sugerida pelo nome, editavel) e tem
 ponto de fork (maior `SCRIPT_<n>` da base ja presente no dump); sem fork o herdado
 fica INDETERMINADO. Servidor/porta/usuario/TLS e a arvore ficam em `settings.json`
 (`sqlaudit`); a senha e pedida a cada analise e nunca e gravada, logada ou exportada.
+`Conectar e listar bancos...` (ou Enter em servidor/porta) pede usuario e senha, conecta
+so ao servidor e lista os bancos que o usuario ENXERGA (`information_schema.SCHEMATA`;
+bancos internos do MySQL ficam de fora) e abre a tela de escolha do banco de cada versao:
+casa o banco sugerido com a lista (ignora maiusculas), mostra "existe/nao existe no
+servidor" e deixa escolher ou digitar. Banco que nao esta na lista aparece como `Banco
+nao encontrado` na tabela e em Avisos, e analisar um banco fora da lista pede
+confirmacao. A lista fica so em memoria; a senha continua sendo pedida a cada operacao.
 Descoberta, teste de conexao, analise e exportacao rodam em thread + fila; cada
 analise gera uma linha `Auditoria SQL concluida|cancelada` na Auditoria. COMPATIVEL
 nao prova que o script foi executado.

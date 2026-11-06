@@ -187,6 +187,40 @@ class RunAuditTests(RunnerTestCase):
         self.assertNotIn(PASSWORD, json.dumps(report.build_json(run), ensure_ascii=False))
 
 
+class ListDatabasesTests(RunnerTestCase):
+    def connector(self, names):
+        return lambda **options: FakeConnection({db_reader.SQL_DATABASES: [(n,) for n in names]})
+
+    def test_lists_what_the_user_can_see(self):
+        ok, names, message = audit_runner.list_databases(self.server, connector=self.connector(["BANCO_A", "mysql", "BANCO_B"]))
+        self.assertEqual((ok, names), (True, ["BANCO_A", "BANCO_B"]))
+        self.assertIn("2 banco(s)", message)
+
+    def test_empty_list_explains_the_permission(self):
+        ok, names, message = audit_runner.list_databases(self.server, connector=self.connector(["information_schema"]))
+        self.assertEqual((ok, names), (False, []))
+        self.assertIn("SELECT", message)
+
+    def test_connection_failures_are_messages_without_the_password(self):
+        def refuse(**options):
+            raise Exception(1045, f"Access denied (using password: YES) {options['password']}")
+
+        ok, names, message = audit_runner.list_databases(self.server, connector=refuse)
+        self.assertEqual((ok, names), (False, []))
+        self.assertIn("Usuario ou senha", message)
+        self.assertNotIn(PASSWORD, message)
+
+    def test_it_connects_without_a_database(self):
+        seen = []
+
+        def connector(**options):
+            seen.append(options)
+            return FakeConnection({db_reader.SQL_DATABASES: [("B",)]})
+
+        audit_runner.list_databases(self.server, connector=connector)
+        self.assertNotIn("database", seen[0])
+
+
 class TestConnectionTests(RunnerTestCase):
     def test_reports_version_database_and_visible_tables(self):
         ok, message = test_connection(self.server, DB_BASE, connector=connector_for(self.banks()))

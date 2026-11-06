@@ -23,6 +23,7 @@ TLS_VERIFY = "verify"  # confere o certificado (precisa do arquivo da CA)
 SQL_READ_ONLY = "SET SESSION TRANSACTION READ ONLY"
 SQL_MAX_EXECUTION = f"SET SESSION max_execution_time = {MAX_EXECUTION_MS}"
 SQL_SERVER_INFO = "SELECT VERSION(), @@lower_case_table_names, @@time_zone, DATABASE()"
+SQL_DATABASES = "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA ORDER BY SCHEMA_NAME"
 SQL_TABLES = (
     "SELECT TABLE_NAME, ENGINE, TABLE_COLLATION, CREATE_TIME "
     "FROM information_schema.TABLES WHERE TABLE_SCHEMA = %s AND TABLE_TYPE = 'BASE TABLE'"
@@ -44,6 +45,10 @@ SQL_COLUMNS = (
     "EXTRA, CHARACTER_SET_NAME, COLLATION_NAME, COLUMN_COMMENT "
     "FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = %s ORDER BY TABLE_NAME, ORDINAL_POSITION"
 )
+
+
+# Bancos internos do MySQL: nao sao da aplicacao, entao nao entram na lista de escolha.
+SYSTEM_DATABASES = frozenset({"information_schema", "mysql", "performance_schema", "sys"})
 
 
 class AuditDbError(Exception):
@@ -119,9 +124,14 @@ def _default_connector(**kwargs):
     return pymysql.connect(**kwargs)
 
 
-def connect_readonly(host, port, database, username, password, tls=TLS_ENCRYPT, ca_file="", connector=None):
-    """Abre a conexao de leitura. `connector` existe para testes."""
-    if not host or not database:
+def connect_readonly(
+    host, port, database, username, password, tls=TLS_ENCRYPT, ca_file="", connector=None, require_database=True
+):
+    """Abre a conexao de leitura. `connector` existe para testes.
+
+    `require_database=False` conecta so ao servidor (para listar os bancos disponiveis).
+    """
+    if not host or (require_database and not database):
         raise AuditDbError("Informe o servidor e o nome do banco antes de auditar.")
     if tls == TLS_VERIFY:
         if not ca_file:
@@ -135,7 +145,7 @@ def connect_readonly(host, port, database, username, password, tls=TLS_ENCRYPT, 
             port=int(port),
             user=username,
             password=password,
-            database=database,
+            **({"database": database} if database else {}),
             charset="utf8mb4",
             autocommit=True,
             connect_timeout=CONNECT_TIMEOUT_SECONDS,
@@ -187,6 +197,13 @@ class AuditConnection:
 
     def __exit__(self, *_exc):
         self.close()
+
+    def list_databases(self, include_system=False):
+        """Bancos que ESTE usuario enxerga (o information_schema esconde os demais), em ordem."""
+        names = [str(row[0]) for row in self._query(SQL_DATABASES)]
+        if include_system:
+            return names
+        return [name for name in names if name.lower() not in SYSTEM_DATABASES]
 
     def read_schema(self, database, cancel_event=None):
         """Tabelas e colunas de `database`. Confere que a conexao esta mesmo nesse banco."""
