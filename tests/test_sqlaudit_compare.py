@@ -18,7 +18,7 @@ from app.sqlaudit.comparator import (
     compare,
     worst,
 )
-from app.sqlaudit.db_reader import DbColumn, DbSchema, DbTable
+from app.sqlaudit.db_reader import DbColumn, DbForeignKey, DbIndex, DbSchema, DbTable
 from app.sqlaudit.expected_model import build_expected_model
 from app.sqlaudit.file_scanner import scan_sql_files
 from app.sqlaudit.fork_hint import suggest_fork
@@ -31,8 +31,19 @@ def col(name, column_type, null=True, default=None, extra="", charset=None, coll
     return DbColumn(name, 0, column_type, null, default, extra, charset, collation, comment)
 
 
-def db_table(name, *columns, engine="InnoDB", collation="utf8mb4_general_ci", created=None):
-    return DbTable(name, engine, collation, created, {c.name.lower(): c for c in columns})
+def idx(name, *columns, unique=False, kind="BTREE", prefixes=None):
+    return DbIndex(name, tuple(columns), tuple(prefixes or (None,) * len(columns)), unique, kind)
+
+
+def fk(name, columns, ref_table, ref_columns, delete="RESTRICT", update="RESTRICT"):
+    return DbForeignKey(name, tuple(columns), ref_table, tuple(ref_columns), delete, update)
+
+
+def db_table(name, *columns, engine="InnoDB", collation="utf8mb4_general_ci", created=None, indexes=(), foreign_keys=()):
+    return DbTable(
+        name, engine, collation, created, {c.name.lower(): c for c in columns},
+        {i.name.lower(): i for i in indexes}, {f.name.lower(): f for f in foreign_keys},
+    )
 
 
 def db_schema(*tables, lctn=1, database="BANCO_X"):
@@ -141,9 +152,14 @@ class AttributeTests(CompareTestCase):
 
     def test_not_null_without_declaration_is_divergent_only_when_nothing_explains_it(self):
         self.assertEqual(self.one("INT", col("A", "int", null=False)).status, DIVERGENTE)
-        model = self.model(**{"SCRIPT_1.SQL": "CREATE TABLE T (A INT, PRIMARY KEY (A));"})
-        result = compare(model, db_schema(db_table("T", col("A", "int", null=False))))
-        self.assertEqual(self.column(result, "T", "A").status, INDETERMINADO)
+        pk = self.model(**{"SCRIPT_1.SQL": "CREATE TABLE T (A INT, PRIMARY KEY (A));"})
+        result = compare(pk, db_schema(db_table("T", col("A", "int", null=False), indexes=[idx("PRIMARY", "A", unique=True)])))
+        self.assertEqual(self.column(result, "T", "A").status, COMPATIVEL)  # a PK explica o NOT NULL
+        result = compare(pk, db_schema(db_table("T", col("A", "int", null=True), indexes=[idx("PRIMARY", "A", unique=True)])))
+        self.assertEqual(self.column(result, "T", "A").differences[0].expected, "NOT NULL (chave primaria)")
+        check = self.model(**{"SCRIPT_1.SQL": "CREATE TABLE T (A INT, CONSTRAINT ck CHECK (A > 0));"})
+        result = compare(check, db_schema(db_table("T", col("A", "int", null=False))))
+        self.assertEqual(self.column(result, "T", "A").status, INDETERMINADO)  # restricao nao comparada pode explicar
 
     def test_defaults(self):
         self.assertEqual(self.one("INT DEFAULT 0", col("A", "int", default="0")).status, COMPATIVEL)
@@ -238,20 +254,23 @@ class ReliabilityTests(CompareTestCase):
         self.assertEqual(self.column(result, "T", "A").status, DIVERGENTE)
         self.assertEqual(self.column(result, "T", "B").status, AUSENTE)
 
-    def test_drop_column_makes_the_table_inconclusive_but_add_index_does_not(self):
-        dropped = self.model(**{"SCRIPT_1.SQL": "CREATE TABLE T (A INT, B INT); ALTER TABLE T DROP COLUMN B;"})
-        result = compare(dropped, db_schema(db_table("T", col("A", "int"))))
+    def test_only_an_action_the_model_cannot_follow_makes_the_table_inconclusive(self):
+        unfollowed = self.model(**{"SCRIPT_1.SQL": "CREATE TABLE T (A INT, B INT); ALTER TABLE T ALTER COLUMN B SET DEFAULT 1;"})
+        result = compare(unfollowed, db_schema(db_table("T", col("A", "int"))))
         self.assertEqual(self.column(result, "T", "B").status, INDETERMINADO)
-        indexed = self.model(**{"SCRIPT_1.SQL": "CREATE TABLE T (A INT, B INT); ALTER TABLE T ADD INDEX ix (A);"})
-        result = compare(indexed, db_schema(db_table("T", col("A", "int"))))
-        self.assertEqual(self.column(result, "T", "B").status, AUSENTE)
+        followed = self.model(**{"SCRIPT_1.SQL": "CREATE TABLE T (A INT, B INT); ALTER TABLE T DROP COLUMN A; ALTER TABLE T ADD INDEX ix (B);"})
+        result = compare(followed, db_schema(db_table("T", col("B", "int"), indexes=[idx("ix", "B")])))
+        self.assertEqual({o.status for o in result.objects}, {COMPATIVEL})
 
-    def test_dropped_or_renamed_table_is_inconclusive_when_absent_from_the_database(self):
-        for command in ("DROP TABLE T", "ALTER TABLE T RENAME TO U"):
-            model = self.model(**{"SCRIPT_1.SQL": f"CREATE TABLE T (A INT); {command};"})
-            result = compare(model, db_schema(db_table("OUTRA", col("X", "int"))))
-            self.assertEqual(self.table(result, "T").status, INDETERMINADO, command)
-            self.assertEqual(self.column(result, "T", "A").status, INDETERMINADO, command)
+    def test_dropped_table_is_compatible_when_absent_and_divergent_when_it_still_exists(self):
+        model = self.model(**{"SCRIPT_1.SQL": "CREATE TABLE T (A INT); DROP TABLE T;"})
+        absent = compare(model, db_schema(db_table("OUTRA", col("X", "int"))))
+        dropped = self.table(absent, "T")
+        self.assertEqual((dropped.status, dropped.expected_absent), (COMPATIVEL, True))
+        self.assertIn("esperado ausente", dropped.notes[0])
+        present = compare(model, db_schema(db_table("T", col("A", "int"))))
+        self.assertEqual(self.table(present, "T").status, DIVERGENTE)
+        self.assertEqual(self.table(present, "T").differences[0].found, "sim")
 
     def test_unsupported_error_and_conflict_operations_keep_their_own_state(self):
         model = self.model(

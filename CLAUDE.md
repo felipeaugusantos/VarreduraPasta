@@ -88,7 +88,7 @@ Nao distribuir `settings.json` junto do pacote. Dados persistentes ficam em
 | `app/script_monitor.py` | Monitoramento diario de scripts de banco modelo. |
 | `app/model_db.py` | Execucao de scripts SQL no MySQL do banco modelo (PyMySQL), divisor de comandos. |
 | `app/script_runner.py` | Roda scripts no banco e registra `executado` no controle compartilhado. |
-| `app/sqlaudit/` | Auditoria de estrutura SQL (so leitura, sem Tkinter): `file_scanner` (`.SQL` + SHA-256, ordem por `SCRIPT_<n>`), `sql_split` (comandos com linha), `sql_parse` (sqlglot; `CREATE TABLE`, `ADD`/`MODIFY COLUMN`), `version_discovery` (pastas `<versao>\SCRIPTS` e banco sugerido), `version_tree` (base/fork de cada versao e scripts efetivos), `expected_model` (replay logico com proveniencia), `type_normalizer`, `db_reader` (UNICO modulo que fala com o MySQL: so SELECT/SET SESSION fixos, sessao READ ONLY), `comparator` (COMPATIVEL/AUSENTE/DIVERGENTE/SUBSTITUIDO/NAO_SUPORTADO/INDETERMINADO/ERRO), `fork_hint`, `audit_runner` (orquestra a auditoria por versao, com cancelamento), `report` (CSV/JSON/HTML e linha de Auditoria), `audit_store` (historico local em SQLite `sqlaudit.db` e comparacao entre auditorias) e `shared_log` (`auditoria_estrutura_sql.log` na pasta de controle: resumos e forks declarados). Config em `settings.json` (`sqlaudit`). Nunca executa SQL dos scripts (`tests/test_sqlaudit_isolation.py`). O usuario do banco precisa de SELECT nas tabelas: sem isso o `information_schema` as esconde. |
+| `app/sqlaudit/` | Auditoria de estrutura SQL (so leitura, sem Tkinter): `file_scanner` (`.SQL` + SHA-256, ordem por `SCRIPT_<n>`), `sql_split` (comandos com linha), `sql_parse` (sqlglot; `CREATE TABLE`, `ALTER TABLE` com `ADD/MODIFY/CHANGE/DROP/RENAME COLUMN`, `RENAME`, indices, PK, FK, opcoes e `CONVERT TO CHARACTER SET`; `CREATE/DROP INDEX`, `DROP/RENAME TABLE`), `version_discovery` (pastas `<versao>\SCRIPTS` e banco sugerido), `version_tree` (base/fork de cada versao e scripts efetivos), `expected_model` (replay logico com proveniencia; objetos removidos ficam como "esperado ausente"), `type_normalizer`, `db_reader` (UNICO modulo que fala com o MySQL: so SELECT/SET SESSION fixos, sessao READ ONLY), `comparator` (COMPATIVEL/AUSENTE/DIVERGENTE/SUBSTITUIDO/NAO_SUPORTADO/INDETERMINADO/ERRO), `fork_hint`, `audit_runner` (orquestra a auditoria por versao, com cancelamento), `report` (CSV/JSON/HTML e linha de Auditoria), `audit_store` (historico local em SQLite `sqlaudit.db` e comparacao entre auditorias) e `shared_log` (`auditoria_estrutura_sql.log` na pasta de controle: resumos e forks declarados). Config em `settings.json` (`sqlaudit`). Nunca executa SQL dos scripts (`tests/test_sqlaudit_isolation.py`). O usuario do banco precisa de SELECT nas tabelas: sem isso o `information_schema` as esconde. |
 | `app/sqlaudit_window.py` | Janela `Monitoramento > Auditoria de Estrutura SQL` (so desenho; logica em `app/sqlaudit/`). |
 | `app/model_db_dialogs.py` | Janelas de login e configuracao do banco modelo. |
 | `app/jenkins.py` | Integracao Jenkins local via HTTP/Basic Auth. |
@@ -242,6 +242,18 @@ fica INDETERMINADO. Servidor/porta/usuario/TLS e a arvore ficam em `settings.jso
 Descoberta, teste de conexao, analise e exportacao rodam em thread + fila; cada
 analise gera uma linha `Auditoria SQL concluida|cancelada` na Auditoria. COMPATIVEL
 nao prova que o script foi executado.
+
+O que a auditoria compara: tabelas (engine, charset, colacao), colunas (tipo, NULL,
+DEFAULT, AUTO_INCREMENT, ON UPDATE, charset, colacao, comentario), indices (colunas,
+unicidade, prefixo, FULLTEXT/SPATIAL), chave primaria e chaves estrangeiras (colunas,
+referencia, ON DELETE/UPDATE). Objetos removidos por script (DROP, rename, CHANGE) sao
+esperados AUSENTES do banco; se ainda existem, DIVERGENTE. Indice/FK sem nome sao
+achados pelas colunas (o MySQL escolhe o nome). Continuam NAO SUPORTADOS, com o
+motivo, e nunca viram validado: CHECK, particoes, `ROW_FORMAT`/`COMMENT` de tabela,
+indice funcional, `MATCH` em FK, colunas geradas/invisiveis, triggers, procedures,
+views, DML e SQL dinamico. `ALGORITHM=`, `LOCK=` e `AUTO_INCREMENT=N` sao ignorados de
+proposito (nao sao estrutura). Uma acao que o modelo nao segue (ex.: `ALTER COLUMN ...
+SET DEFAULT`) deixa so aquela tabela INDETERMINADA.
 
 Historico: cada analise e gravada em `%LOCALAPPDATA%\VarreduraSistema\sqlaudit.db`
 (SQLite, so o seu; ultimas 60; guarda resultado por objeto e o SHA-256 dos scripts

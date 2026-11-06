@@ -2,7 +2,8 @@
 
 Os dumps nao sao guardados, entao o fork nao tem prova direta. Aqui compara-se o
 modelo COMPLETO da base com o banco da filha, script a script:
-- script que a filha NAO tem (algum objeto AUSENTE) -> provavelmente nao herdado;
+- script que a filha NAO tem (algum objeto AUSENTE, ou algo que ele removeu e ainda
+  existe) -> provavelmente nao herdado;
 - script cujo efeito aparece (COMPATIVEL) -> provavelmente herdado;
 - o resto (substituido, divergente, nao suportado...) nao prova nada.
 
@@ -35,7 +36,7 @@ def suggest_fork(comparison, base_version=None, earliest_restore=None):
         if provenance.number is None or (base_version and provenance.version != base_version):
             continue
         numbers.add(provenance.number)
-        if item.status == AUSENTE:
+        if item.status == AUSENTE or item.effect_missing:  # criou e nao existe / removeu e ainda existe
             verdicts[provenance.number] = AUSENTE
         elif item.status == COMPATIVEL and verdicts.get(provenance.number) != AUSENTE:
             verdicts[provenance.number] = COMPATIVEL

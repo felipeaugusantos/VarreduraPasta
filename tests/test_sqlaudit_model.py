@@ -130,16 +130,16 @@ class ReplayTests(ModelTestCase):
 class WhatTheModelCannotFollowTests(ModelTestCase):
     def test_unsupported_action_marks_the_table_incomplete_but_keeps_the_rest(self):
         model = self.single(
-            **{"SCRIPT_1.SQL": "CREATE TABLE t (a INT, b INT);", "SCRIPT_2.SQL": "ALTER TABLE t ADD c INT, DROP COLUMN b;"}
+            **{"SCRIPT_1.SQL": "CREATE TABLE t (a INT, b INT);", "SCRIPT_2.SQL": "ALTER TABLE t ADD c INT, ALTER COLUMN b SET DEFAULT 1;"}
         )
         table = model.tables["t"]
         self.assertIn("c", table.columns)
-        self.assertIn("b", table.columns)  # o modelo nao sabe que saiu: por isso a tabela fica incompleta
+        self.assertIn("b", table.columns)  # o modelo nao sabe o que a acao fez: por isso a tabela fica incompleta
         self.assertFalse(table.fully_known)
         self.assertEqual(len(table.incomplete), 1)
         self.assertEqual(table.incomplete[0].outcome, OUTCOME_UNSUPPORTED)
 
-    def test_index_and_key_actions_do_not_make_the_table_incomplete(self):
+    def test_index_and_key_actions_are_followed_and_keep_the_table_fully_known(self):
         model = self.single(
             **{
                 "SCRIPT_1.SQL": "CREATE TABLE t (a INT, b INT);",
@@ -148,23 +148,32 @@ class WhatTheModelCannotFollowTests(ModelTestCase):
         )
         table = model.tables["t"]
         self.assertTrue(table.fully_known)
-        self.assertEqual(len(table.unchecked_elements), 3)
+        self.assertEqual(table.unchecked_elements, [])
+        self.assertEqual(list(table.indexes), [])
+        self.assertEqual(table.primary_key.spec.columns, ("a",))
+        self.assertIn("ix", table.dropped_indexes)
 
-    def test_rename_and_column_actions_make_the_table_incomplete(self):
-        for action in ("DROP COLUMN b", "CHANGE COLUMN b c INT", "RENAME COLUMN b TO c", "RENAME TO u", "ALTER COLUMN b SET DEFAULT 1"):
+    def test_only_what_the_model_cannot_follow_makes_the_table_incomplete(self):
+        for action in ("ALTER COLUMN b SET DEFAULT 1", "ADD c INT VISIBLE"):
             model = self.single(**{"SCRIPT_1.SQL": f"CREATE TABLE t (a INT, b INT); ALTER TABLE t {action};"})
             self.assertFalse(model.tables["t"].fully_known, action)
+        for action in ("DROP COLUMN b", "CHANGE COLUMN b c INT", "RENAME COLUMN b TO c", "ADD INDEX (a)", "ENGINE=MyISAM"):
+            model = self.single(**{"SCRIPT_1.SQL": f"CREATE TABLE t (a INT, b INT); ALTER TABLE t {action};"})
+            self.assertTrue(model.tables["t"].fully_known, action)
 
-    def test_keys_and_options_of_create_table_are_kept_as_unchecked_elements(self):
-        model = self.single(**{"SCRIPT_1.SQL": "CREATE TABLE t (id INT, PRIMARY KEY (id)) ENGINE=InnoDB AUTO_INCREMENT=5;"})
+    def test_check_constraints_and_options_not_compared_are_kept_as_unchecked_elements(self):
+        model = self.single(**{"SCRIPT_1.SQL": "CREATE TABLE t (id INT, CONSTRAINT ck CHECK (id > 0)) ENGINE=InnoDB ROW_FORMAT=DYNAMIC;"})
         table = model.tables["t"]
         self.assertEqual(len(table.unchecked_elements), 2)
         self.assertTrue(table.fully_known)
 
-    def test_dropped_table_is_marked_instead_of_trusted(self):
+    def test_dropped_table_leaves_the_model_and_is_expected_to_be_absent(self):
         model = self.single(**{"SCRIPT_1.SQL": "CREATE TABLE t (a INT); DROP TABLE t;"})
-        self.assertFalse(model.tables["t"].fully_known)
+        self.assertNotIn("t", model.tables)
+        self.assertEqual(model.absent_tables["t"].name, "t")
         self.assertEqual(model.unresolved, [])
+        create = next(a for a in model.applied if a.operation.kind == "create_table" and a.operation.column is None)
+        self.assertEqual(create.superseded_by.script, "SCRIPT_1.SQL")
 
     def test_statement_level_unsupported_goes_to_unresolved(self):
         model = self.single(**{"SCRIPT_1.SQL": "INSERT INTO t VALUES (1); FOO BAR; DROP VIEW v;"})
@@ -267,7 +276,7 @@ class RunControlTests(ModelTestCase):
         self.assertEqual(model.unresolved[0].outcome, OUTCOME_ERROR)
 
     def test_applied_log_covers_every_operation(self):
-        model = self.single(**{"SCRIPT_1.SQL": "CREATE TABLE t (a INT); ALTER TABLE t ADD b INT; DROP TABLE x;"})
+        model = self.single(**{"SCRIPT_1.SQL": "CREATE TABLE t (a INT); ALTER TABLE t ADD b INT; DROP VIEW x;"})
         self.assertEqual(model.counts()[OUTCOME_APPLIED], 3)  # CREATE + coluna do CREATE + ADD
         self.assertEqual(model.counts()[OUTCOME_UNSUPPORTED], 1)
 

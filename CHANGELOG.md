@@ -23,6 +23,16 @@ Semantico (`MAIOR.MENOR.CORRECAO`).
   fork da versao para todos os operadores, e a descoberta aplica o fork registrado
   por outra pessoa quando voce ainda nao informou o seu.
 
+- Auditoria de Estrutura SQL: o que e entendido e comparado cresceu. `DROP COLUMN`,
+  `CHANGE COLUMN`, `RENAME COLUMN`, `RENAME TO`/`RENAME TABLE`, `DROP TABLE`, indices
+  (`ADD/DROP INDEX|KEY|UNIQUE`, `CREATE/DROP INDEX`, prefixo, FULLTEXT/SPATIAL),
+  chave primaria, chaves estrangeiras (colunas, referencia, `ON DELETE/UPDATE`),
+  opcoes de tabela (`ENGINE`, `CHARSET`, `COLLATE`) e `CONVERT TO CHARACTER SET`.
+  Objetos removidos sao esperados ausentes; indice e FK sem nome sao achados pelas
+  colunas; a chave primaria passa a explicar o `NOT NULL` das colunas. Continuam
+  nao suportados, com o motivo: CHECK, particoes, indice funcional, `MATCH` em FK,
+  triggers, procedures e DML.
+
 ### Corrigido
 - `requirements.txt` e o workflow de CI fixavam `pymysql==2.2.8`, versao que nao
   existe (o `2.2.8` e o `pymysql.__version__` de compatibilidade com MySQLdb): o
