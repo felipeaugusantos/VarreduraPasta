@@ -75,6 +75,9 @@ class VersionAudit:
     warnings: list = field(default_factory=list)  # leitura, fila efetiva, arquivos pulados
     error: str = ""
     duration: float = 0.0
+    # Modelo esperado usado na comparacao: so em memoria (alimenta o script corretivo);
+    # nunca vai para o historico nem para os relatorios.
+    model: object = field(default=None, repr=False, compare=False)
 
 
 @dataclass
@@ -190,6 +193,7 @@ def _audit_version(request, item, audit, scans, parse_cache, report, cancel_even
         return lambda done, size: report("interpretando scripts", start + width * done / max(size, 1))
 
     model = build_expected_model(effective, cache=parse_cache, cancel_event=cancel_event, progress=model_progress(0.1, 0.5))
+    audit.model = model
     if cancelled():
         return
 

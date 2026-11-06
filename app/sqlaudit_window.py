@@ -22,7 +22,7 @@ from app.settings import (
     save_sqlaudit_config,
     save_sqlaudit_server,
 )
-from app.sqlaudit import audit_runner, report, shared_log
+from app.sqlaudit import audit_runner, fix_suggestions, report, shared_log
 from app.sqlaudit.audit_store import AuditStore
 from app.sqlaudit.comparator import PRECEDENCE, worst
 from app.sqlaudit.db_reader import TLS_ENCRYPT, TLS_VERIFY
@@ -43,6 +43,7 @@ CHANGE_LABELS = {
     "detalhe": "Detalhe mudou", "alterado": "Script alterado", "adicionado": "Script adicionado",
 }
 EXPORT_TYPES = [("Relatório HTML", "*.html"), ("Planilha CSV", "*.csv"), ("Dados JSON", "*.json")]
+FIX_TYPES = [("Script SQL para revisão", "*.sql")]
 
 
 def open_sqlaudit_window(app):
@@ -159,7 +160,7 @@ class SqlAuditWindow:
         results.rowconfigure(1, weight=1)
         action_bar = ttk.Frame(results)
         action_bar.grid(row=0, column=0, sticky="ew")
-        action_bar.columnconfigure(4, weight=1)
+        action_bar.columnconfigure(5, weight=1)
         self.test_button = ttk.Button(action_bar, text="Testar conexão", command=self.test_connection)
         self.test_button.grid(row=0, column=0, padx=(0, 6))
         self.analyze_button = ttk.Button(action_bar, text="Analisar", style="Primary.TButton", command=self.analyze)
@@ -167,7 +168,9 @@ class SqlAuditWindow:
         self.cancel_button = ttk.Button(action_bar, text="Cancelar", command=self.cancel, state="disabled")
         self.cancel_button.grid(row=0, column=2, padx=(0, 6))
         self.export_button = ttk.Button(action_bar, text="Exportar...", command=self.export, state="disabled")
-        self.export_button.grid(row=0, column=3, padx=(0, 12))
+        self.export_button.grid(row=0, column=3, padx=(0, 6))
+        self.fix_button = ttk.Button(action_bar, text="Script corretivo...", command=self.generate_fix_script, state="disabled")
+        self.fix_button.grid(row=0, column=4, padx=(0, 12))
         colors = theme.COLORS
         ttk.Style(self.window).configure(
             "Audit.Horizontal.TProgressbar",
@@ -178,7 +181,7 @@ class SqlAuditWindow:
             darkcolor=colors["primary"],
         )
         self.progress = ttk.Progressbar(action_bar, mode="determinate", maximum=100, style="Audit.Horizontal.TProgressbar")
-        self.progress.grid(row=0, column=4, sticky="ew")
+        self.progress.grid(row=0, column=5, sticky="ew")
 
         self.notebook = ttk.Notebook(results)
         self.notebook.grid(row=1, column=0, sticky="nsew", pady=(8, 0))
@@ -315,6 +318,7 @@ class SqlAuditWindow:
         for button in (self.choose_button, self.discover_button, self.test_button, self.analyze_button, self.edit_button):
             button.config(state="normal" if idle else "disabled")
         self.export_button.config(state="normal" if idle and self.run is not None else "disabled")
+        self.fix_button.config(state="normal" if idle and self._fixable() else "disabled")
         self.cancel_button.config(state="normal" if busy in ("analisando", "testando") else "disabled")
         if idle:
             self.progress.config(value=0)
@@ -1020,6 +1024,51 @@ class SqlAuditWindow:
             return
         self.refresh_history()
         self.status_var.set(f"{len(selected)} auditoria(s) excluída(s) do histórico local.")
+
+    # ---- script corretivo (so para revisao: nada e executado) ----
+    def _fixable(self):
+        return self.run is not None and any(a.model is not None and a.comparison is not None for a in self.run.versions)
+
+    def generate_fix_script(self):
+        if not self._fixable():
+            messagebox.showinfo(TITLE, "Faça uma análise antes de gerar o script corretivo.", parent=self.window)
+            return
+        if self.viewing is not None:
+            messagebox.showinfo(
+                TITLE, "A aba Objetos mostra uma auditoria do histórico. Faça uma nova análise para gerar o script.", parent=self.window
+            )
+            return
+        name = f"corretivo-sql-{datetime.now():%Y%m%d-%H%M}.sql"
+        path = filedialog.asksaveasfilename(
+            title="Salvar script corretivo (somente para revisão)", defaultextension=".sql", initialfile=name,
+            filetypes=FIX_TYPES, parent=self.window,
+        )
+        if not path:
+            return
+        run = self.run
+
+        def work():
+            audited = [a for a in run.versions if a.model is not None and a.comparison is not None]
+            plans = [fix_suggestions.build_fix_plan(a.model, a.comparison, a.version, a.database) for a in audited]
+            try:
+                fix_suggestions.write_script(plans, path, user=run.user)
+            except (OSError, ValueError) as error:
+                return ("info", f"✖ Não foi possível gravar o script: {error}")
+            commands = sum(len(plan.items) for plan in plans)
+            commented = sum(plan.commented_count for plan in plans)
+            untouched = sum(sum(plan.not_handled.values()) + len(plan.skipped) for plan in plans)
+            write_log(report.audit_line(run, "script_corretivo", f"{commands} comando(s) para revisao, {commented} comentado(s)"))
+            skipped_versions = len(run.versions) - len(audited)
+            return (
+                "info",
+                f"✔ Script corretivo gravado em {path}: {commands} comando(s), {commented} comentado(s) para revisão, "
+                f"{untouched} achado(s) sem correção automática"
+                + (f", {skipped_versions} versão(ões) sem resultado fora do arquivo" if skipped_versions else "")
+                + ". REVISE e faça backup antes de usar; o sistema não executa nada.",
+            )
+
+        self.status_var.set("Gerando o script corretivo...")
+        self._start("gerando", work)
 
     # ---- exportar / fechar ----
     def export(self):

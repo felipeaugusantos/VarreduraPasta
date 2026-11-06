@@ -88,7 +88,7 @@ Nao distribuir `settings.json` junto do pacote. Dados persistentes ficam em
 | `app/script_monitor.py` | Monitoramento diario de scripts de banco modelo. |
 | `app/model_db.py` | Execucao de scripts SQL no MySQL do banco modelo (PyMySQL), divisor de comandos. |
 | `app/script_runner.py` | Roda scripts no banco e registra `executado` no controle compartilhado. |
-| `app/sqlaudit/` | Auditoria de estrutura SQL (so leitura, sem Tkinter): `file_scanner` (`.SQL` + SHA-256, ordem por `SCRIPT_<n>`), `sql_split` (comandos com linha), `sql_parse` (sqlglot; `CREATE TABLE`, `ALTER TABLE` com `ADD/MODIFY/CHANGE/DROP/RENAME COLUMN`, `RENAME`, indices, PK, FK, opcoes e `CONVERT TO CHARACTER SET`; `CREATE/DROP INDEX`, `DROP/RENAME TABLE`), `version_discovery` (pastas `<versao>\SCRIPTS` e banco sugerido), `version_tree` (base/fork de cada versao e scripts efetivos), `expected_model` (replay logico com proveniencia; objetos removidos ficam como "esperado ausente"), `type_normalizer`, `db_reader` (UNICO modulo que fala com o MySQL: so SELECT/SET SESSION fixos, sessao READ ONLY), `comparator` (COMPATIVEL/AUSENTE/DIVERGENTE/SUBSTITUIDO/NAO_SUPORTADO/INDETERMINADO/ERRO), `fork_hint`, `audit_runner` (orquestra a auditoria por versao, com cancelamento), `report` (CSV/JSON/HTML e linha de Auditoria), `audit_store` (historico local em SQLite `sqlaudit.db` e comparacao entre auditorias) e `shared_log` (`auditoria_estrutura_sql.log` na pasta de controle: resumos e forks declarados). Config em `settings.json` (`sqlaudit`). Nunca executa SQL dos scripts (`tests/test_sqlaudit_isolation.py`). O usuario do banco precisa de SELECT nas tabelas: sem isso o `information_schema` as esconde. |
+| `app/sqlaudit/` | Auditoria de estrutura SQL (so leitura, sem Tkinter): `file_scanner` (`.SQL` + SHA-256, ordem por `SCRIPT_<n>`), `sql_split` (comandos com linha), `sql_parse` (sqlglot; `CREATE TABLE`, `ALTER TABLE` com `ADD/MODIFY/CHANGE/DROP/RENAME COLUMN`, `RENAME`, indices, PK, FK, opcoes e `CONVERT TO CHARACTER SET`; `CREATE/DROP INDEX`, `DROP/RENAME TABLE`), `version_discovery` (pastas `<versao>\SCRIPTS` e banco sugerido), `version_tree` (base/fork de cada versao e scripts efetivos), `expected_model` (replay logico com proveniencia; objetos removidos ficam como "esperado ausente"), `type_normalizer`, `db_reader` (UNICO modulo que fala com o MySQL: so SELECT/SET SESSION fixos, sessao READ ONLY), `comparator` (COMPATIVEL/AUSENTE/DIVERGENTE/SUBSTITUIDO/NAO_SUPORTADO/INDETERMINADO/ERRO), `fork_hint`, `audit_runner` (orquestra a auditoria por versao, com cancelamento), `report` (CSV/JSON/HTML e linha de Auditoria), `fix_suggestions` (script corretivo SO PARA REVISAO: texto, nunca executado), `audit_store` (historico local em SQLite `sqlaudit.db` e comparacao entre auditorias) e `shared_log` (`auditoria_estrutura_sql.log` na pasta de controle: resumos e forks declarados). Config em `settings.json` (`sqlaudit`). Nunca executa SQL dos scripts (`tests/test_sqlaudit_isolation.py`). O usuario do banco precisa de SELECT nas tabelas: sem isso o `information_schema` as esconde. |
 | `app/sqlaudit_window.py` | Janela `Monitoramento > Auditoria de Estrutura SQL` (so desenho; logica em `app/sqlaudit/`). |
 | `app/model_db_dialogs.py` | Janelas de login e configuracao do banco modelo. |
 | `app/jenkins.py` | Integracao Jenkins local via HTTP/Basic Auth. |
@@ -254,6 +254,18 @@ indice funcional, `MATCH` em FK, colunas geradas/invisiveis, triggers, procedure
 views, DML e SQL dinamico. `ALGORITHM=`, `LOCK=` e `AUTO_INCREMENT=N` sao ignorados de
 proposito (nao sao estrutura). Uma acao que o modelo nao segue (ex.: `ALTER COLUMN ...
 SET DEFAULT`) deixa so aquela tabela INDETERMINADA.
+
+Script corretivo: `Script corretivo...` (depois de uma analise) grava um `.sql` PARA
+REVISAO; o sistema nunca o executa nem o abre (`tests/test_sqlaudit_isolation.py`). So
+parte de achados firmes (AUSENTE/DIVERGENTE com origem certa em tabela conhecida);
+INDETERMINADO, NAO SUPORTADO e ERRO nao geram comando, so sao contados. Saem
+COMENTADOS os comandos de risco alto (mudar tipo/charset/NOT NULL, chave primaria,
+engine) e todo DROP de coluna/tabela; o `USE <banco>` tambem vem comentado. Cada
+comando traz motivo, diferenca, risco e script/linha de origem. Indice ou FK de nome
+automatico que diverge nao e corrigido (o nome real no banco nao e conhecido). O SQL
+gerado e relido pelo parser do proprio sistema nos testes. O modelo esperado fica
+so em memoria (`VersionAudit.model`), nunca no historico nem nos relatorios. Cada
+geracao grava `Auditoria SQL script_corretivo` na Auditoria.
 
 Historico: cada analise e gravada em `%LOCALAPPDATA%\VarreduraSistema\sqlaudit.db`
 (SQLite, so o seu; ultimas 60; guarda resultado por objeto e o SHA-256 dos scripts

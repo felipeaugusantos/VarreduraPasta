@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from app import settings
-from app.sqlaudit import audit_runner, db_reader, shared_log, sql_parse
+from app.sqlaudit import audit_runner, db_reader, report, shared_log, sql_parse
 from app.sqlaudit.audit_runner import AuditRun, VersionAudit
 from tests.test_sqlaudit_reader import FakeConnection, full_responses
 
@@ -666,6 +666,113 @@ class SharedForkTests(WindowTestCase):
             self.pump()
         self.assertEqual(len(self.sa.order), 2)  # a descoberta funciona mesmo sem a pasta de controle
         self.assertTrue(any("indisponível" in r[1] for r in self.rows(self.sa.warnings_table)))
+
+
+class FixScriptTests(WindowTestCase):
+    def start(self):
+        self.open(root=False)
+        self.discover()
+
+    def analyze(self, email_type="varchar(100)"):
+        database = "BANCO_AUTCOM_379_48_02_30_72"
+        banks = {database: responses_for(database, [("CLI_ID", "int"), ("CLI_EMAIL", email_type)])}
+        with self.login(), self.connection(**banks):
+            self.sa.analyze()
+            self.pump()
+
+    def generate(self, path):
+        with patch("app.sqlaudit_window.filedialog.asksaveasfilename", return_value=str(path)):
+            self.sa.generate_fix_script()
+            self.pump()
+
+    def test_button_follows_the_state_of_the_analysis(self):
+        self.start()
+        self.assertEqual(str(self.sa.fix_button.cget("state")), "disabled")
+        with patch("app.sqlaudit_window.messagebox.showinfo") as info, \
+             patch("app.sqlaudit_window.filedialog.asksaveasfilename") as save:
+            self.sa.generate_fix_script()
+        self.assertIn("Faça uma análise", info.call_args.args[1])
+        save.assert_not_called()
+        self.analyze()
+        self.assertEqual(str(self.sa.fix_button.cget("state")), "normal")
+        self.sa._set_busy("analisando")
+        self.assertEqual(str(self.sa.fix_button.cget("state")), "disabled")
+        self.sa._set_busy("")
+
+    def test_generates_a_reviewable_script_and_logs_it_without_secrets(self):
+        self.start()
+        self.analyze("varchar(20)")  # o script pede varchar(200): divergencia de tipo
+        path = self.tmp / "corretivo.sql"
+        self.generate(path)
+        text = path.read_text(encoding="utf-8")
+        self.assertIn("NAO EXECUTE SEM REVISAR", text)
+        self.assertIn("-- USE `BANCO_AUTCOM_379_48_02_30_72`;", text)
+        self.assertIn("-- ALTER TABLE `CLIENTES` MODIFY COLUMN `CLI_EMAIL` varchar(200);", text)  # alto risco: comentado
+        self.assertFalse([l for l in text.splitlines() if l.startswith("ALTER TABLE")])
+        status = self.sa.status_var.get()
+        self.assertTrue(status.startswith("✔ Script corretivo gravado"))
+        self.assertIn("1 comando(s), 1 comentado(s)", status)
+        self.assertIn("REVISE", status)
+        line = self.logged[-1]
+        self.assertTrue(line.startswith("Auditoria SQL script_corretivo | usuario="))
+        self.assertIn("1 comando(s) para revisao, 1 comentado(s)", line)
+        for haystack in (text, status, " ".join(self.logged)):
+            self.assertNotIn(PASSWORD, haystack)
+
+    def test_low_risk_fix_is_written_as_a_live_statement(self):
+        self.start()
+        database = "BANCO_AUTCOM_379_48_02_30_72"
+        banks = {database: responses_for(database, [("CLI_ID", "int")])}  # falta CLI_EMAIL
+        with self.login(), self.connection(**banks):
+            self.sa.analyze()
+            self.pump()
+        path = self.tmp / "c.sql"
+        self.generate(path)
+        live = [l for l in path.read_text(encoding="utf-8").splitlines() if l and not l.startswith("--")]
+        self.assertEqual(live, ["ALTER TABLE `CLIENTES` ADD COLUMN `CLI_EMAIL` varchar(200);"])
+
+    def test_cancelled_dialog_and_unwritable_path(self):
+        self.start()
+        self.analyze()
+        with patch("app.sqlaudit_window.filedialog.asksaveasfilename", return_value=""):
+            self.sa.generate_fix_script()
+        self.assertEqual(self.sa.busy, "")
+        self.generate(self.tmp / "nao-existe" / "x.sql")
+        self.assertTrue(self.sa.status_var.get().startswith("✖ Não foi possível gravar o script"))
+        self.generate(self.tmp / "x.txt")
+        self.assertIn(".sql", self.sa.status_var.get())
+
+    def test_not_available_while_viewing_a_past_audit(self):
+        self.start()
+        self.analyze()
+        self.analyze("varchar(200)")
+        self.sa.history_table.selection_set(self.sa.history_table.get_children()[-1])
+        self.sa.view_selected_run()
+        with patch("app.sqlaudit_window.messagebox.showinfo") as info, \
+             patch("app.sqlaudit_window.filedialog.asksaveasfilename") as save:
+            self.sa.generate_fix_script()
+        self.assertIn("histórico", info.call_args.args[1])
+        save.assert_not_called()
+
+    def test_versions_without_a_result_are_left_out_and_reported(self):
+        self.start()
+        self.sa._check_all(True)  # a segunda versao nao tem banco na conexao falsa -> erro
+        database = "BANCO_AUTCOM_379_48_02_30_72"
+        banks = {database: responses_for(database, [("CLI_ID", "int"), ("CLI_EMAIL", "varchar(20)")])}
+        with self.login(), self.connection(**banks):
+            self.sa.analyze()
+            self.pump()
+        self.generate(self.tmp / "c.sql")
+        self.assertIn("versão(ões) sem resultado fora do arquivo", self.sa.status_var.get())
+
+    def test_the_model_never_reaches_history_or_reports(self):
+        self.start()
+        self.analyze("varchar(20)")
+        self.assertIsNotNone(self.sa.run.versions[0].model)
+        import json
+
+        self.assertNotIn("model", json.dumps(report.build_json(self.sa.run), default=str).lower().replace("modelo", ""))
+        self.assertEqual(len(self.sa.store.list_runs()), 1)  # o historico gravou sem o modelo
 
 
 if __name__ == "__main__":

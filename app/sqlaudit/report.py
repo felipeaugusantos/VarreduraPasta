@@ -97,14 +97,14 @@ def summary_text(run):
     return text
 
 
-def audit_line(run, result):
+def audit_line(run, result, reason=None):
     """Linha para o `write_log` (Auditoria): sem credenciais e sem SQL."""
     clean = lambda value: str(value).replace("|", "/").replace("\n", " ")
     databases = ",".join(audit.database for audit in run.versions)
     return (
         f"Auditoria SQL {result} | usuario={clean(run.user)} | projeto= | tipo= | origem={clean(run.root)} | "
         f"destino={clean(databases)} | bat= | fileversion= | productversion= | autcom_mb= | "
-        f"motivo={clean(summary_text(run))}"
+        f"motivo={clean(reason if reason is not None else summary_text(run))}"
     )
 
 

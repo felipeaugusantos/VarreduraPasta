@@ -33,6 +33,13 @@ Semantico (`MAIOR.MENOR.CORRECAO`).
   nao suportados, com o motivo: CHECK, particoes, indice funcional, `MATCH` em FK,
   triggers, procedures e DML.
 
+- Auditoria de Estrutura SQL: `Script corretivo...` gera um `.sql` para REVISAO com o
+  que falta para o banco chegar ao estado esperado (colunas, indices, chave primaria,
+  chaves estrangeiras, tabelas, opcoes). Nunca e executado pelo sistema. So usa
+  achados firmes; comandos de risco alto e todo DROP de coluna/tabela saem
+  comentados, assim como o `USE`; cada comando traz motivo, risco e script/linha de
+  origem. O que e indeterminado ou nao suportado nao gera comando.
+
 ### Corrigido
 - `requirements.txt` e o workflow de CI fixavam `pymysql==2.2.8`, versao que nao
   existe (o `2.2.8` e o `pymysql.__version__` de compatibilidade com MySQLdb): o

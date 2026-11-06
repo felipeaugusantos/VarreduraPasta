@@ -72,6 +72,24 @@ class OnlyTheReaderTouchesTheDatabase(unittest.TestCase):
         self.assertEqual(db_reader.SQL_READ_ONLY, "SET SESSION TRANSACTION READ ONLY")
 
 
+class FixScriptIsolationTests(unittest.TestCase):
+    def test_the_generator_only_writes_text_and_never_runs_or_opens_it(self):
+        source = sources()["fix_suggestions.py"]
+        for forbidden in ("subprocess", "os.system", "startfile", "popen", "exec(", "eval(", "__import__", ".execute(", "pymysql"):
+            self.assertNotIn(forbidden, source, forbidden)
+        imports = re.findall(r"^\s*(?:from|import)\s+(\S+)", source, re.MULTILINE)
+        for module in imports:
+            self.assertFalse(module.startswith(("app.sqlaudit.db_reader", "app.model_db", "app.script_runner")), module)
+
+    def test_the_window_writes_the_script_but_does_not_open_or_run_it(self):
+        window = (PACKAGE.parent / "sqlaudit_window.py").read_text(encoding="utf-8")
+        start = window.index("def generate_fix_script")
+        end = window.index("# ---- exportar / fechar ----")
+        body = window[start:end]
+        for forbidden in ("startfile", "subprocess", "os.system", "execute"):
+            self.assertNotIn(forbidden, body, forbidden)
+
+
 class WindowIsolationTests(unittest.TestCase):
     def test_window_never_runs_scripts_or_touches_the_driver(self):
         source = (PACKAGE.parent / "sqlaudit_window.py").read_text(encoding="utf-8")
