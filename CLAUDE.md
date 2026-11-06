@@ -88,6 +88,7 @@ Nao distribuir `settings.json` junto do pacote. Dados persistentes ficam em
 | `app/script_monitor.py` | Monitoramento diario de scripts de banco modelo. |
 | `app/model_db.py` | Execucao de scripts SQL no MySQL do banco modelo (PyMySQL), divisor de comandos. |
 | `app/script_runner.py` | Roda scripts no banco e registra `executado` no controle compartilhado. |
+| `app/sqlaudit/` | Auditoria de estrutura SQL (so leitura, sem Tkinter): `file_scanner` (`.SQL` + SHA-256, ordem por `SCRIPT_<n>`), `sql_split` (comandos com linha), `sql_parse` (sqlglot; `CREATE TABLE`, `ADD`/`MODIFY COLUMN`). Nunca executa SQL. |
 | `app/model_db_dialogs.py` | Janelas de login e configuracao do banco modelo. |
 | `app/jenkins.py` | Integracao Jenkins local via HTTP/Basic Auth. |
 | `app/svn_search.py` | Consulta SVN por revisao/requisito. |
@@ -224,8 +225,8 @@ scripts selecionados, em ordem e parando no primeiro erro, com usuario/senha
 digitados a cada execucao (nunca gravados nem logados). Servidor/porta/banco ficam
 em `settings.json` (`model_db`). Cada script e uma transacao: DML e desfeito em
 erro, DDL nao. Sucesso grava `executado` no controle compartilhado na hora. O
-PyMySQL e a unica dependencia fora da biblioteca padrao (`requirements.txt`,
-`hiddenimports` no spec).
+PyMySQL e o `sqlglot` (so leitura, em `app/sqlaudit/`) sao as unicas dependencias
+fora da biblioteca padrao (`requirements.txt`, `hiddenimports` no spec).
 
 ### Consulta SVN
 
@@ -266,7 +267,7 @@ http://localhost:8080
 - Nao chamar metodos Tkinter diretamente de thread secundaria.
 - Preservar logs e mensagens em portugues.
 - Usar apenas biblioteca padrao para novas funcionalidades do sistema (unica
-  excecao autorizada: PyMySQL, para o banco modelo).
+  excecoes autorizadas: PyMySQL, para o banco modelo, e sqlglot, para interpretar scripts na `app/sqlaudit/`).
 - Ao editar manualmente, preferir mudancas pequenas e cobertas por testes.
 
 ## Git

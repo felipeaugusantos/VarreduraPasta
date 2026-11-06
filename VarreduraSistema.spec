@@ -1,6 +1,8 @@
 # -*- mode: python ; coding: utf-8 -*-
 from pathlib import Path
 
+from PyInstaller.utils.hooks import collect_submodules
+
 
 datas = [('assets\\app-icon.ico', 'assets')]
 if Path('project_pattern.json').exists():
@@ -12,7 +14,7 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=datas,
-    hiddenimports=['pymysql'],
+    hiddenimports=['pymysql'] + collect_submodules('sqlglot'),
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

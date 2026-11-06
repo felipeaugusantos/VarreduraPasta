@@ -7,6 +7,14 @@ Semantico (`MAIOR.MENOR.CORRECAO`).
 
 ## [Nao lancado]
 
+### Interno
+- Auditoria de estrutura SQL, fase 1 (`app/sqlaudit/`, ainda sem tela): le os
+  `.SQL` de uma pasta (SHA-256, ordem por `SCRIPT_<n>`, avisos de lacuna e
+  repeticao), divide em comandos com linha e interpreta `CREATE TABLE` e
+  `ALTER TABLE ... ADD/MODIFY COLUMN`. Somente leitura: nada e executado. O que
+  nao e entendido com seguranca fica `nao_suportado` ou `erro`, nunca validado.
+  Nova dependencia: `sqlglot` (embutido no exe).
+
 ## [2.7.0] - 2026-10-26
 
 ### Adicionado
