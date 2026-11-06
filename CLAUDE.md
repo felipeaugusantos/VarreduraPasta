@@ -88,7 +88,7 @@ Nao distribuir `settings.json` junto do pacote. Dados persistentes ficam em
 | `app/script_monitor.py` | Monitoramento diario de scripts de banco modelo. |
 | `app/model_db.py` | Execucao de scripts SQL no MySQL do banco modelo (PyMySQL), divisor de comandos. |
 | `app/script_runner.py` | Roda scripts no banco e registra `executado` no controle compartilhado. |
-| `app/sqlaudit/` | Auditoria de estrutura SQL (so leitura, sem Tkinter): `file_scanner` (`.SQL` + SHA-256, ordem por `SCRIPT_<n>`), `sql_split` (comandos com linha), `sql_parse` (sqlglot; `CREATE TABLE`, `ADD`/`MODIFY COLUMN`), `version_discovery` (pastas `<versao>\SCRIPTS` e banco sugerido), `version_tree` (base/fork de cada versao e scripts efetivos), `expected_model` (replay logico com proveniencia), `type_normalizer`, `db_reader` (UNICO modulo que fala com o MySQL: so SELECT/SET SESSION fixos, sessao READ ONLY), `comparator` (COMPATIVEL/AUSENTE/DIVERGENTE/SUBSTITUIDO/NAO_SUPORTADO/INDETERMINADO/ERRO), `fork_hint`, `audit_runner` (orquestra a auditoria por versao, com cancelamento) e `report` (CSV/JSON/HTML e linha de Auditoria). Config em `settings.json` (`sqlaudit`). Nunca executa SQL dos scripts (`tests/test_sqlaudit_isolation.py`). O usuario do banco precisa de SELECT nas tabelas: sem isso o `information_schema` as esconde. |
+| `app/sqlaudit/` | Auditoria de estrutura SQL (so leitura, sem Tkinter): `file_scanner` (`.SQL` + SHA-256, ordem por `SCRIPT_<n>`), `sql_split` (comandos com linha), `sql_parse` (sqlglot; `CREATE TABLE`, `ADD`/`MODIFY COLUMN`), `version_discovery` (pastas `<versao>\SCRIPTS` e banco sugerido), `version_tree` (base/fork de cada versao e scripts efetivos), `expected_model` (replay logico com proveniencia), `type_normalizer`, `db_reader` (UNICO modulo que fala com o MySQL: so SELECT/SET SESSION fixos, sessao READ ONLY), `comparator` (COMPATIVEL/AUSENTE/DIVERGENTE/SUBSTITUIDO/NAO_SUPORTADO/INDETERMINADO/ERRO), `fork_hint`, `audit_runner` (orquestra a auditoria por versao, com cancelamento), `report` (CSV/JSON/HTML e linha de Auditoria), `audit_store` (historico local em SQLite `sqlaudit.db` e comparacao entre auditorias) e `shared_log` (`auditoria_estrutura_sql.log` na pasta de controle: resumos e forks declarados). Config em `settings.json` (`sqlaudit`). Nunca executa SQL dos scripts (`tests/test_sqlaudit_isolation.py`). O usuario do banco precisa de SELECT nas tabelas: sem isso o `information_schema` as esconde. |
 | `app/sqlaudit_window.py` | Janela `Monitoramento > Auditoria de Estrutura SQL` (so desenho; logica em `app/sqlaudit/`). |
 | `app/model_db_dialogs.py` | Janelas de login e configuracao do banco modelo. |
 | `app/jenkins.py` | Integracao Jenkins local via HTTP/Basic Auth. |
@@ -242,6 +242,18 @@ fica INDETERMINADO. Servidor/porta/usuario/TLS e a arvore ficam em `settings.jso
 Descoberta, teste de conexao, analise e exportacao rodam em thread + fila; cada
 analise gera uma linha `Auditoria SQL concluida|cancelada` na Auditoria. COMPATIVEL
 nao prova que o script foi executado.
+
+Historico: cada analise e gravada em `%LOCALAPPDATA%\VarreduraSistema\sqlaudit.db`
+(SQLite, so o seu; ultimas 60; guarda resultado por objeto e o SHA-256 dos scripts
+usados, nunca senha) e, se concluida, um resumo por versao vai para
+`auditoria_estrutura_sql.log` na pasta de controle (so acrescimo, nunca reescrito). A
+aba `Historico` lista Meus registros ou Todos os operadores, mostra uma auditoria
+antiga e compara duas (piorou/melhorou/novo/removido e scripts alterados pelo
+SHA-256, nunca pela data do arquivo). `Salvar e registrar para todos` na edicao da
+versao grava o evento `fork` (base e ultimo `SCRIPT_<n>` herdado) no mesmo arquivo; na
+descoberta, o fork registrado por outro operador vale quando o operador ainda nao
+informou o seu (o local vence e o conflito aparece em Avisos). Falha no historico ou
+na pasta de controle nunca perde o resultado da analise.
 
 ### Consulta SVN
 

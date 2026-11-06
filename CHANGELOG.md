@@ -15,6 +15,13 @@ Semantico (`MAIOR.MENOR.CORRECAO`).
   aceita cancelamento, filtra por estado/versao/texto, detalha esperado x encontrado
   com a origem (script e linha), sugere o fork pelo banco e exporta HTML, CSV ou JSON.
   Cada analise grava uma linha na Auditoria.
+- Auditoria de Estrutura SQL: aba `Historico`. Cada analise fica salva (SQLite local,
+  ultimas 60, com o SHA-256 dos scripts) e um resumo por versao vai para a pasta de
+  controle compartilhada (so acrescimo). Permite ver uma auditoria antiga e comparar
+  duas (objetos que pioraram, melhoraram, surgiram ou sumiram; scripts alterados,
+  adicionados ou removidos pelo SHA-256). `Salvar e registrar para todos` grava o
+  fork da versao para todos os operadores, e a descoberta aplica o fork registrado
+  por outra pessoa quando voce ainda nao informou o seu.
 
 ### Corrigido
 - `requirements.txt` e o workflow de CI fixavam `pymysql==2.2.8`, versao que nao

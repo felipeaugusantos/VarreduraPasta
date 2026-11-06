@@ -8,6 +8,7 @@ from app.sqlaudit import db_reader
 
 PACKAGE = Path(__file__).resolve().parent.parent / "app" / "sqlaudit"
 READER = "db_reader.py"
+STORE = "audit_store.py"  # historico local em SQLite (nao e o MySQL)
 WRITE_WORDS = re.compile(
     r"\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE|GRANT|REVOKE|REPLACE|RENAME|CALL|LOAD|KILL)\b", re.IGNORECASE
 )
@@ -23,11 +24,26 @@ class OnlyTheReaderTouchesTheDatabase(unittest.TestCase):
             if name == READER:
                 continue
             for forbidden in (".execute(", ".executemany(", ".cursor("):
+                if name == STORE and forbidden != ".cursor(":
+                    continue  # SQLite local: coberto pelo teste proprio abaixo
                 self.assertNotIn(forbidden, source, f"{name} usa {forbidden}")
             imports = re.findall(r"^\s*(?:from|import)\s+(\S+)", source, re.MULTILINE)
             for module in imports:
                 for forbidden in ("pymysql", "app.model_db", "app.script_runner", "app.script_monitor"):
                     self.assertFalse(module.startswith(forbidden), f"{name} importa {module}")
+
+    def test_local_history_uses_sqlite_with_bound_parameters_only(self):
+        source = sources()[STORE]
+        self.assertIn("import sqlite3", source)
+        self.assertNotIn("pymysql", source)
+        # nenhum SQL montado por f-string/format/concatenacao com dados: so constantes e `?`
+        self.assertIsNone(re.search(r'f"[^"\n]*\b(SELECT|INSERT|DELETE|UPDATE)\b', source))
+        self.assertNotIn(".format(", source)
+        self.assertNotIn("%s", source)
+        imports = re.findall(r"^\s*(?:from|import)\s+(\S+)", source, re.MULTILINE)
+        for module in imports:
+            for forbidden in ("pymysql", "app.sqlaudit.db_reader", "app.sqlaudit.sql_parse", "app.sqlaudit.sql_split"):
+                self.assertFalse(module.startswith(forbidden), f"{STORE} importa {module}")
 
     def test_reader_never_imports_modules_that_read_sql_text_or_execute_scripts(self):
         imports = re.findall(r"^\s*(?:from|import)\s+(\S+)", sources()[READER], re.MULTILINE)

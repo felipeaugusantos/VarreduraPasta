@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from app import settings
-from app.sqlaudit import audit_runner, db_reader, sql_parse
+from app.sqlaudit import audit_runner, db_reader, shared_log, sql_parse
 from app.sqlaudit.audit_runner import AuditRun, VersionAudit
 from tests.test_sqlaudit_reader import FakeConnection, full_responses
 
@@ -92,6 +92,8 @@ class WindowTestCase(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
         settings.save_sqlaudit_server("10.0.0.35", 43309, "", "encrypt", "")
+        self.control = self.tmp / "controle"  # nunca a pasta de rede de verdade
+        settings.save_script_control_directory(str(self.control))
         # Dialogo modal inesperado travaria o teste: registra e falha no fim.
         self.unexpected = []
         for name, answer in (("showinfo", "ok"), ("showwarning", "ok"), ("showerror", "ok"), ("askyesno", False)):
@@ -140,6 +142,33 @@ class WindowTestCase(unittest.TestCase):
     @staticmethod
     def rows(table):
         return [table.item(iid, "values") for iid in table.get_children()]
+
+    def edit(self, version, database=None, base=None, fork=None, register=False):
+        def fake_wait(dialog):
+            entries = self.find(dialog, "TEntry")
+            boxes = self.find(dialog, "TCombobox")
+            if database is not None:
+                entries[0].delete(0, "end")
+                entries[0].insert(0, database)
+            if base is not None:
+                boxes[0].set(base)
+            if fork is not None:
+                entries[1].delete(0, "end")
+                entries[1].insert(0, fork)
+            wanted = "Salvar e registrar para todos" if register else "Salvar"
+            [b for b in self.find(dialog, "TButton") if b.cget("text") == wanted][0].invoke()
+
+        self.sa.window.wait_window = fake_wait
+        self.sa._edit_version(version)
+
+    @classmethod
+    def find(cls, widget, kind):
+        found = []
+        for child in widget.winfo_children():
+            if child.winfo_class() == kind:
+                found.append(child)
+            found.extend(cls.find(child, kind))
+        return found
 
 
 class DiscoveryTests(WindowTestCase):
@@ -400,32 +429,6 @@ class ControlTests(WindowTestCase):
 
 
 class EditVersionTests(WindowTestCase):
-    def edit(self, version, database=None, base=None, fork=None):
-        def fake_wait(dialog):
-            entries = self.find(dialog, "TEntry")
-            boxes = self.find(dialog, "TCombobox")
-            if database is not None:
-                entries[0].delete(0, "end")
-                entries[0].insert(0, database)
-            if base is not None:
-                boxes[0].set(base)
-            if fork is not None:
-                entries[1].delete(0, "end")
-                entries[1].insert(0, fork)
-            [b for b in self.find(dialog, "TButton") if b.cget("text") == "Salvar"][0].invoke()
-
-        self.sa.window.wait_window = fake_wait
-        self.sa._edit_version(version)
-
-    @classmethod
-    def find(cls, widget, kind):
-        found = []
-        for child in widget.winfo_children():
-            if child.winfo_class() == kind:
-                found.append(child)
-            found.extend(cls.find(child, kind))
-        return found
-
     def test_base_fork_and_database_are_saved_and_survive_a_new_discovery(self):
         self.open(root=False)
         self.discover()
@@ -460,6 +463,209 @@ class EditVersionTests(WindowTestCase):
         with patch("app.sqlaudit_window.messagebox.showinfo") as info:
             self.sa.edit_selected()
         info.assert_called_once()
+
+
+class HistoryTests(WindowTestCase):
+    GOOD = {"BANCO_AUTCOM_379_48_02_30_72": None}
+
+    def banks(self, email_type):
+        database = "BANCO_AUTCOM_379_48_02_30_72"
+        return {database: responses_for(database, [("CLI_ID", "int"), ("CLI_EMAIL", email_type)])}
+
+    def run_analysis(self, email_type="varchar(200)"):
+        with self.login(), self.connection(**self.banks(email_type)):
+            self.sa.analyze()
+            self.pump()
+
+    def start(self):
+        self.open(root=False)
+        self.discover()
+
+    def history_ids(self):
+        return list(self.sa.history_table.get_children())
+
+    def test_analysis_is_saved_in_the_local_history_and_the_shared_summary(self):
+        self.start()
+        self.run_analysis()
+        self.assertEqual(len(self.history_ids()), 1)
+        self.assertIn("Histórico #1", self.sa.status_var.get())
+        row = self.sa.history_table.item(self.history_ids()[0], "values")
+        self.assertEqual(row[1], audit_runner.os_user())
+        self.assertIn("48.2.30.72", row[2])
+        events = shared_log.read_events(self.control)
+        self.assertEqual([(e.event, e.version) for e in events], [("auditoria", "48.2.30.72")])
+        self.assertIn("objetos=compativel:3", events[0].detail)
+        self.assertNotIn(PASSWORD, shared_log.log_path(self.control).read_text(encoding="utf-8"))
+        self.assertNotIn(PASSWORD, str(self.sa.store.load_objects(1)) + str(self.sa.store.load_files(1)))
+
+    def test_history_failures_never_lose_the_result(self):
+        self.start()
+        with patch.object(self.sa.store, "save_run", side_effect=RuntimeError("disco cheio")), \
+             patch("app.sqlaudit.shared_log.append_events", side_effect=OSError("rede fora")):
+            self.run_analysis()
+        self.assertIsNotNone(self.sa.run)
+        self.assertTrue(self.rows(self.sa.results_table))
+        status = self.sa.status_var.get()
+        self.assertIn("Histórico local não gravado: disco cheio", status)
+        self.assertIn("Registro compartilhado indisponível: rede fora", status)
+
+    def test_cancelled_run_is_kept_locally_but_not_announced_to_everyone(self):
+        self.start()
+
+        def slow(request, progress=None, cancel_event=None, connector=None):
+            cancel_event.wait(5)
+            return AuditRun(datetime.now(), "x", request.root, [VersionAudit("48.2.30.72", "B")], datetime.now(), cancelled=True)
+
+        with self.login(), patch("app.sqlaudit.audit_runner.run_audit", slow):
+            self.sa.analyze()
+            self.sa.cancel()
+            self.pump()
+        self.assertEqual(len(self.history_ids()), 1)
+        self.assertIn("cancelada", self.sa.history_table.item(self.history_ids()[0], "values")[3])
+        self.assertEqual(shared_log.read_events(self.control), [])
+
+    def test_view_a_past_run_in_the_objects_tab_and_block_export(self):
+        self.start()
+        self.run_analysis("varchar(100)")
+        self.run_analysis("varchar(200)")
+        older = self.history_ids()[-1]
+        self.sa.history_table.selection_set(older)
+        self.sa.view_selected_run()
+        self.assertIsNotNone(self.sa.viewing)
+        shown = {r[3]: r[0] for r in self.rows(self.sa.results_table)}
+        self.assertEqual(shown["CLIENTES.CLI_EMAIL"], "Divergente")
+        self.assertIn("Exibindo a auditoria #1", self.sa.status_var.get())
+        with patch("app.sqlaudit_window.messagebox.showinfo") as info, \
+             patch("app.sqlaudit_window.filedialog.asksaveasfilename") as save:
+            self.sa.export()
+        self.assertIn("histórico", info.call_args.args[1])
+        save.assert_not_called()
+
+    def test_compare_two_runs_shows_what_got_worse(self):
+        self.start()
+        self.run_analysis("varchar(200)")
+        self.run_analysis("varchar(100)")  # piorou: agora diverge do script
+        self.sa.history_table.selection_set(*self.history_ids())
+        self.sa.compare_selected()
+        self.pump()
+        rows = self.rows(self.sa.diff_table)
+        worse = [r for r in rows if r[0] == "Piorou"]
+        self.assertEqual([(r[1], r[2], r[3], r[4]) for r in worse], [("48.2.30.72", "CLIENTES.CLI_EMAIL", "Compatível", "Divergente")])
+        self.assertIn("esperado varchar(200), encontrado varchar(100)", worse[0][5])
+        self.assertIn("1 piorou", self.sa.status_var.get())
+
+    def test_compare_one_selected_run_with_the_previous_one(self):
+        self.start()
+        self.run_analysis("varchar(100)")
+        self.run_analysis("varchar(200)")
+        newest = self.history_ids()[0]
+        self.sa.history_table.selection_set(newest)
+        self.sa.compare_selected()
+        self.pump()
+        self.assertEqual([r[0] for r in self.rows(self.sa.diff_table)], ["Melhorou"])
+        with patch("app.sqlaudit_window.messagebox.showinfo") as info:
+            self.sa.history_table.selection_set(self.history_ids()[-1])
+            self.sa.compare_selected()
+        self.assertIn("anterior", info.call_args.args[1])
+
+    def test_selection_rules_and_delete(self):
+        self.start()
+        self.run_analysis()
+        with patch("app.sqlaudit_window.messagebox.showinfo") as info:
+            self.sa.history_table.selection_remove(*self.history_ids())
+            self.sa.view_selected_run()
+            self.sa.compare_selected()
+        self.assertEqual(info.call_count, 2)
+        self.sa.history_table.selection_set(self.history_ids())
+        with patch("app.sqlaudit_window.messagebox.askyesno", return_value=False):
+            self.sa.delete_selected()
+        self.assertEqual(len(self.history_ids()), 1)
+        with patch("app.sqlaudit_window.messagebox.askyesno", return_value=True):
+            self.sa.delete_selected()
+        self.assertEqual(self.history_ids(), [])
+        self.assertEqual(self.sa.store.list_runs(), [])
+
+    def test_shared_origin_lists_every_operators_audits_and_reports_an_unavailable_share(self):
+        self.start()
+        shared_log.append_events([shared_log.SharedEvent("2026-11-05 09:00:00", "ana", "48.2.30.72", "auditoria", "banco=B; objetos=ausente:2")], self.control)
+        shared_log.append_events([shared_log.fork_event("bia", "48.2.30.72", "x", 1)], self.control)
+        self.sa.origin_var.set("Todos os operadores")
+        self.sa.refresh_history()
+        self.pump()
+        rows = self.rows(self.sa.history_table)
+        self.assertEqual([(r[1], r[2]) for r in rows], [("ana", "48.2.30.72")])  # so eventos de auditoria
+        with patch("app.sqlaudit_window.messagebox.showinfo") as info:
+            self.sa.view_selected_run()
+        self.assertIn("Meus registros", info.call_args.args[1])
+        with patch("app.sqlaudit.shared_log.read_events", side_effect=OSError("sem rede")):
+            self.sa.refresh_history()
+            self.pump()
+        self.assertIn("indisponível", self.sa.status_var.get())
+
+
+class SharedForkTests(WindowTestCase):
+    def start(self):
+        self.open(root=False)
+        self.discover()
+
+    def test_register_birth_for_everyone_writes_an_append_only_event(self):
+        self.start()
+        with patch("app.sqlaudit_window.messagebox.askyesno", return_value=True) as ask:
+            self.edit("48.2.30.74.150", base="48.2.30.72", fork="2", register=True)
+            self.pump()
+        self.assertIn("SCRIPT_2", ask.call_args.args[1])
+        self.assertIn("registrado para todos", self.sa.status_var.get())
+        (event,) = shared_log.read_events(self.control)
+        self.assertEqual((event.event, event.version, event.user), ("fork", "48.2.30.74.150", audit_runner.os_user()))
+        fork = shared_log.latest_forks([event])["48.2.30.74.150"]
+        self.assertEqual((fork.base, fork.fork, fork.database), ("48.2.30.72", 2, "BANCO_AUTCOM_379_48_02_30_74_150"))
+
+    def test_registering_needs_base_and_fork_and_a_confirmation(self):
+        self.start()
+        with patch("app.sqlaudit_window.messagebox.showwarning") as warning:
+            self.edit("48.2.30.74.150", base="48.2.30.72", register=True)  # sem fork
+            self.assertIn("base e o fork", warning.call_args.args[1])
+        self.assertIsNone(self.sa.tree.nodes["48.2.30.74.150"].base)  # nada foi salvo
+        with patch("app.sqlaudit_window.messagebox.askyesno", return_value=False):
+            self.edit("48.2.30.74.150", base="48.2.30.72", fork="2", register=True)
+        self.assertEqual(shared_log.read_events(self.control), [])  # salvou local, mas nao registrou
+
+    def test_unavailable_share_is_reported_when_registering(self):
+        self.start()
+        with patch("app.sqlaudit_window.messagebox.askyesno", return_value=True), \
+             patch("app.sqlaudit.shared_log.append_events", side_effect=OSError("rede fora")):
+            self.edit("48.2.30.74.150", base="48.2.30.72", fork="2", register=True)
+            self.pump()
+        self.assertTrue(self.sa.status_var.get().startswith("✖"))
+        self.assertIn("rede fora", self.sa.status_var.get())
+
+    def test_discovery_applies_a_fork_registered_by_another_operator(self):
+        shared_log.append_events([shared_log.fork_event("bia", "48.2.30.74.150", "48.2.30.72", 2, "BANCO_X")], self.control)
+        self.start()
+        node = self.sa.tree.nodes["48.2.30.74.150"]
+        self.assertEqual((node.base, node.fork), ("48.2.30.72", 2))
+        texts = [r[1] for r in self.rows(self.sa.warnings_table)]
+        self.assertTrue(any("registrado por bia" in t and "aplicado" in t for t in texts))
+
+    def test_local_fork_wins_over_the_shared_one_with_a_notice(self):
+        shared_log.append_events([shared_log.fork_event("bia", "48.2.30.74.150", "48.2.30.72", 2)], self.control)
+        settings.save_sqlaudit_config("", {"48.2.30.74.150": {"base": "48.2.30.72", "fork": 7}}, {})
+        self.open(root=False)
+        self.sa._saved_tree = settings.load_sqlaudit_config()["tree"]
+        self.discover()
+        self.assertEqual(self.sa.tree.nodes["48.2.30.74.150"].fork, 7)
+        self.assertTrue(any("difere do registrado por bia" in r[1] for r in self.rows(self.sa.warnings_table)))
+
+    def test_shared_fork_with_unknown_base_is_not_applied_and_unavailable_share_is_tolerated(self):
+        shared_log.append_events([shared_log.fork_event("bia", "48.2.30.74.150", "9.9.9", 2)], self.control)
+        self.start()
+        self.assertIsNone(self.sa.tree.nodes["48.2.30.74.150"].base)
+        self.assertTrue(any("base desconhecida" in r[1] for r in self.rows(self.sa.warnings_table)))
+        with patch("app.sqlaudit.shared_log.read_events", side_effect=OSError("sem rede")):
+            self.sa.discover()
+            self.pump()
+        self.assertEqual(len(self.sa.order), 2)  # a descoberta funciona mesmo sem a pasta de controle
+        self.assertTrue(any("indisponível" in r[1] for r in self.rows(self.sa.warnings_table)))
 
 
 if __name__ == "__main__":

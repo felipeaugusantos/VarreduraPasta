@@ -147,6 +147,13 @@ def build_json(run):
                     "restaurado_ate": hint.earliest_restore.isoformat() if hint.earliest_restore else None,
                     "notas": hint.notes,
                 },
+                "scripts": [
+                    {
+                        "versao_origem": f.version, "script": f.script, "numero": f.number, "sha256": f.sha256,
+                        "bytes": f.size, "origem_certa": f.certain, "herdado": f.inherited,
+                    }
+                    for f in audit.files
+                ],
                 "arquivos": [
                     {"script": f.script, "numero": f.number, "estado": f.status, "contagem": f.counts, "parcial": f.partial}
                     for f in (comparison.files() if comparison else [])

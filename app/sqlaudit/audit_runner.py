@@ -48,6 +48,19 @@ class AuditRequest:
     server: ServerConnection
 
 
+@dataclass(frozen=True)
+class ScriptRecord:
+    """Um script usado no modelo de uma versao, com o SHA-256 que o identifica."""
+
+    version: str  # pasta de onde veio
+    script: str
+    number: int | None
+    sha256: str
+    size: int
+    certain: bool
+    inherited: bool
+
+
 @dataclass
 class VersionAudit:
     version: str
@@ -58,6 +71,7 @@ class VersionAudit:
     tls_verified: bool = False
     scripts_total: int = 0
     excluded: list = field(default_factory=list)
+    files: list = field(default_factory=list)  # ScriptRecord
     warnings: list = field(default_factory=list)  # leitura, fila efetiva, arquivos pulados
     error: str = ""
     duration: float = 0.0
@@ -164,6 +178,13 @@ def _audit_version(request, item, audit, scans, parse_cache, report, cancel_even
     audit.warnings.extend(effective.warnings)
     audit.excluded = list(effective.excluded)
     audit.scripts_total = len(effective.scripts)
+    audit.files = [
+        ScriptRecord(
+            item.version, item.script.relative, item.script.number, item.script.sha256,
+            item.script.size, item.certain, item.inherited,
+        )
+        for item in effective.scripts
+    ]
 
     def model_progress(start, width):
         return lambda done, size: report("interpretando scripts", start + width * done / max(size, 1))

@@ -86,6 +86,20 @@ class RunAuditTests(RunnerTestCase):
         self.assertEqual((hint.candidate, hint.first_missing), (2, 3))  # B nao existe no banco da filha
         self.assertEqual(audit.server_version, "8.0.36")
 
+    def test_records_the_sha256_of_every_script_used_with_its_origin(self):
+        import hashlib
+
+        self.tree.set_base(CHILD, BASE, fork=2)
+        run = run_audit(self.request(CHILD), connector=connector_for(self.banks()))
+        files = {f.script: f for f in run.versions[0].files}
+        self.assertEqual(sorted(files), ["SCRIPT_1.SQL", "SCRIPT_2.SQL", "SCRIPT_4.SQL"])  # SCRIPT_3 ficou alem do fork
+        self.assertEqual(files["SCRIPT_4.SQL"].sha256, hashlib.sha256(b"ALTER TABLE CLIENTES ADD C INT;").hexdigest())
+        self.assertEqual((files["SCRIPT_1.SQL"].version, files["SCRIPT_1.SQL"].inherited), (BASE, True))
+        self.assertEqual((files["SCRIPT_4.SQL"].version, files["SCRIPT_4.SQL"].inherited), (CHILD, False))
+        self.assertTrue(all(f.certain for f in files.values()))
+        exported = report.build_json(run)["versoes"][0]["scripts"]
+        self.assertEqual({s["script"]: s["sha256"] for s in exported}, {n: f.sha256 for n, f in files.items()})
+
     def test_without_a_declared_fork_inherited_findings_are_not_firm(self):
         run = run_audit(self.request(CHILD), connector=connector_for(self.banks()))
         states = {(o.table, o.column): o.status for o in run.versions[0].comparison.objects}

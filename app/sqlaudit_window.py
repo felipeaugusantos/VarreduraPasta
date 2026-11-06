@@ -22,7 +22,8 @@ from app.settings import (
     save_sqlaudit_config,
     save_sqlaudit_server,
 )
-from app.sqlaudit import audit_runner, report
+from app.sqlaudit import audit_runner, report, shared_log
+from app.sqlaudit.audit_store import AuditStore
 from app.sqlaudit.comparator import PRECEDENCE, worst
 from app.sqlaudit.db_reader import TLS_ENCRYPT, TLS_VERIFY
 from app.sqlaudit.version_discovery import discover_versions
@@ -36,6 +37,11 @@ PROBLEMS = "Com problema (erro, divergente, ausente)"
 NO_BASE = "(nenhuma)"
 TLS_LABELS = {TLS_ENCRYPT: "Criptografar (sem verificar certificado)", TLS_VERIFY: "Verificar certificado"}
 CHECKED, UNCHECKED = "☑", "☐"
+ORIGIN_LOCAL, ORIGIN_SHARED = "Meus registros", "Todos os operadores"
+CHANGE_LABELS = {
+    "piorou": "Piorou", "melhorou": "Melhorou", "novo": "Novo", "removido": "Removido",
+    "detalhe": "Detalhe mudou", "alterado": "Script alterado", "adicionado": "Script adicionado",
+}
 EXPORT_TYPES = [("Relatório HTML", "*.html"), ("Planilha CSV", "*.csv"), ("Dados JSON", "*.json")]
 
 
@@ -62,6 +68,9 @@ class SqlAuditWindow:
         self.run = None
         self.rows = []
         self.shown = {}
+        self.store = AuditStore()
+        self.viewing = None  # RunInfo do historico exibido na aba Objetos
+        self.history_runs = {}
         self.queue = queue.Queue()
         self.cancel_event = None
         self.busy = ""  # "", "descobrindo", "testando", "analisando", "exportando"
@@ -77,6 +86,7 @@ class SqlAuditWindow:
         self.version_filter = tk.StringVar(value=ALL)
         self.search_var = tk.StringVar()
         self.count_var = tk.StringVar()
+        self.origin_var = tk.StringVar(value=ORIGIN_LOCAL)
 
         self._build()
         self._load_saved()
@@ -175,6 +185,7 @@ class SqlAuditWindow:
         self._build_objects_tab()
         self._build_files_tab()
         self._build_warnings_tab()
+        self._build_history_tab()
 
         ttk.Label(frame, textvariable=self.status_var, wraplength=1100, justify="left").grid(
             row=5, column=0, columnspan=3, sticky="w", pady=(8, 0)
@@ -285,6 +296,7 @@ class SqlAuditWindow:
         self._saved_tree = saved["tree"]
         self._saved_databases = saved["databases"]
         self._saved_username = server["username"]
+        self.refresh_history()
         if saved["root"]:
             self.window.after(50, self.discover)
 
@@ -343,13 +355,22 @@ class SqlAuditWindow:
             self.progress.config(value=round(message[2] * 100))
         elif kind == "discovered":
             self._set_busy("")
-            self._apply_discovery(message[1])
+            self._apply_discovery(message[1], message[2], message[3])
         elif kind == "tested":
             self._set_busy("")
             self.status_var.set(("✔ " if message[1] else "✖ ") + message[2])
         elif kind == "done":
             self._set_busy("")
-            self._finish_run(message[1])
+            self._finish_run(message[1], message[2])
+        elif kind == "info":
+            self._set_busy("")
+            self.status_var.set(message[1])
+        elif kind == "shared_history":
+            self._set_busy("")
+            self._fill_shared_history(message[1], message[2])
+        elif kind == "diff":
+            self._set_busy("")
+            self._fill_diff(message[1])
         elif kind == "exported":
             self._set_busy("")
             self.status_var.set(message[1])
@@ -375,9 +396,19 @@ class SqlAuditWindow:
             messagebox.showinfo(TITLE, "Informe a pasta raiz das versões (por exemplo, ...\\379.48.2.30).", parent=self.window)
             return
         self.status_var.set("Procurando pastas SCRIPTS...")
-        self._start("descobrindo", lambda: ("discovered", discover_versions(Path(root))))
 
-    def _apply_discovery(self, result):
+        def work():
+            result = discover_versions(Path(root))
+            forks, warning = {}, ""
+            try:
+                forks = shared_log.latest_forks(shared_log.read_events())
+            except OSError as error:
+                warning = f"Registro compartilhado de forks indisponível: {error}"
+            return ("discovered", result, forks, warning)
+
+        self._start("descobrindo", work)
+
+    def _apply_discovery(self, result, forks=None, warning=""):
         folders = {}
         for item in result.versions:
             current = folders.get(item.version)
@@ -389,6 +420,9 @@ class SqlAuditWindow:
         self.databases = {v: self._saved_databases.get(v) or folders[v].database for v in self.order}
         self.checked = {v for v in self.order if not folders[v].discontinued}
         self.discovery_warnings = list(result.warnings)
+        if warning:
+            self.discovery_warnings.append(warning)
+        self.discovery_warnings.extend(self._apply_shared_forks(forks or {}))
         self._refresh_versions()
         self._refresh_warnings()
         found = len(self.order)
@@ -397,6 +431,29 @@ class SqlAuditWindow:
         )
         if found:
             self._persist()
+
+    def _apply_shared_forks(self, forks):
+        """Fork registrado por outro operador vale quando este ainda nao informou o seu."""
+        notes = []
+        for version, shared in sorted(forks.items()):
+            if version not in self.tree.nodes:
+                continue
+            origin = f"registrado por {shared.user} em {shared.timestamp} (base {shared.base or '-'}, fork {shared.fork})"
+            local = self._saved_tree.get(version) or {}
+            if local.get("fork") is None:
+                if not shared.base or shared.base not in self.tree.nodes:
+                    notes.append(f"Fork de {version} {origin}: base desconhecida nesta raiz; não aplicado.")
+                    continue
+                try:
+                    self.tree.set_base(version, shared.base, shared.fork)
+                    notes.append(f"Fork de {version} {origin}: aplicado.")
+                except TreeError as error:
+                    notes.append(f"Fork de {version} {origin}: não aplicado ({error}).")
+            elif (local.get("base") or "") != shared.base or local.get("fork") != shared.fork:
+                notes.append(
+                    f"Fork local de {version} (base {local.get('base') or '-'}, fork {local.get('fork')}) difere do {origin}; mantido o local."
+                )
+        return notes
 
     def _version_state(self, version):
         if self.run is not None:
@@ -479,12 +536,15 @@ class SqlAuditWindow:
         if hint_text:
             ttk.Label(box, text=hint_text, wraplength=520, justify="left").grid(row=4, column=0, columnspan=2, sticky="w", pady=(8, 0))
 
-        def confirm():
+        def confirm(register=False):
             fork_text = fork_var.get().strip()
             if fork_text and not fork_text.isdigit():
                 messagebox.showwarning(TITLE, "O fork deve ser um número inteiro (ou ficar vazio).", parent=dialog)
                 return
             base = None if base_var.get() == NO_BASE else base_var.get()
+            if register and (base is None or not fork_text):
+                messagebox.showwarning(TITLE, "Para registrar para todos, informe a versão-base e o fork.", parent=dialog)
+                return
             try:
                 self.tree.set_base(version, base, int(fork_text) if fork_text else None)
             except TreeError as error:
@@ -494,13 +554,37 @@ class SqlAuditWindow:
             self._persist()
             self._refresh_versions()
             dialog.destroy()
+            if register:
+                self._register_fork(version)
 
         buttons = ttk.Frame(box)
         buttons.grid(row=5, column=0, columnspan=2, sticky="e", pady=(14, 0))
         ttk.Button(buttons, text="Salvar", style="Primary.TButton", command=confirm).grid(row=0, column=0, padx=(0, 8))
-        ttk.Button(buttons, text="Cancelar", command=dialog.destroy).grid(row=0, column=1)
+        ttk.Button(buttons, text="Salvar e registrar para todos", command=lambda: confirm(register=True)).grid(row=0, column=1, padx=(0, 8))
+        ttk.Button(buttons, text="Cancelar", command=dialog.destroy).grid(row=0, column=2)
         dialog.grab_set()
         self.window.wait_window(dialog)
+
+    def _register_fork(self, version):
+        node = self.tree.nodes[version]
+        if not messagebox.askyesno(
+            TITLE,
+            f"Registrar para todos os operadores que a versão {version} nasceu de {node.base} "
+            f"até SCRIPT_{node.fork}?\n\nO registro fica na pasta de controle e não é apagado.",
+            parent=self.window,
+        ):
+            return
+        event = shared_log.fork_event(audit_runner.os_user(), version, node.base, node.fork, self.databases.get(version, ""))
+
+        def work():
+            try:
+                shared_log.append_events([event])
+            except OSError as error:
+                return ("info", f"✖ Não foi possível registrar na pasta de controle: {error}")
+            return ("info", f"✔ Fork de {version} registrado para todos os operadores.")
+
+        self.status_var.set("Registrando...")
+        self._start("registrando", work)
 
     def _hint_text(self, version):
         if self.run is None:
@@ -593,15 +677,27 @@ class SqlAuditWindow:
         self.progress.config(value=0)
         self._start(
             "analisando",
-            lambda: (
-                "done",
-                audit_runner.run_audit(
-                    request,
-                    progress=lambda text, fraction: self.queue.put(("progress", text, fraction)),
-                    cancel_event=cancel,
-                ),
-            ),
+            lambda: self._run_and_record(request, cancel),
         )
+
+    def _run_and_record(self, request, cancel):
+        """Na thread: analisa, grava o historico local e o resumo compartilhado (falhas nao perdem o resultado)."""
+        run = audit_runner.run_audit(
+            request,
+            progress=lambda text, fraction: self.queue.put(("progress", text, fraction)),
+            cancel_event=cancel,
+        )
+        info = {"run_id": None, "warnings": []}
+        try:
+            info["run_id"] = self.store.save_run(run)
+        except Exception as error:  # historico e acessorio: nunca derruba o resultado
+            info["warnings"].append(f"Histórico local não gravado: {error}")
+        if not run.cancelled:
+            try:
+                shared_log.append_events([shared_log.audit_event(run.user, audit) for audit in run.versions])
+            except OSError as error:
+                info["warnings"].append(f"Registro compartilhado indisponível: {error}")
+        return ("done", run, info)
 
     def cancel(self):
         if self.cancel_event is not None and self.busy in ("analisando", "testando"):
@@ -609,7 +705,9 @@ class SqlAuditWindow:
             self.cancel_button.config(state="disabled")
             self.status_var.set("Cancelando... aguardando o fim da etapa atual.")
 
-    def _finish_run(self, run):
+    def _finish_run(self, run, info=None):
+        info = info or {}
+        self.viewing = None
         self.run = run
         self.rows = report.object_rows(run)
         write_log(report.audit_line(run, "cancelada" if run.cancelled else "concluida"))
@@ -622,7 +720,10 @@ class SqlAuditWindow:
         self._refresh_warnings()
         self._refresh_versions()
         self._set_busy("")
-        self.status_var.set(report.summary_text(run) + ". " + "Compatível não comprova que o script foi executado.")
+        extra = f" Histórico #{info['run_id']}." if info.get("run_id") else ""
+        extra += "".join(" ⚠ " + warning for warning in info.get("warnings", []))
+        self.status_var.set(report.summary_text(run) + ". Compatível não comprova que o script foi executado." + extra)
+        self.refresh_history()
 
     # ---- resultados ----
     def apply_filters(self):
@@ -731,10 +832,202 @@ class SqlAuditWindow:
                 for note in audit.fork_hint.notes:
                     table.insert("", "end", values=(audit.version, note), tags=("info",))
 
+    # ---- historico ----
+    def _build_history_tab(self):
+        tab = ttk.Frame(self.notebook, padding=8)
+        tab.columnconfigure(0, weight=1)
+        tab.rowconfigure(1, weight=2)
+        tab.rowconfigure(4, weight=3)
+        self.notebook.add(tab, text="Histórico")
+        bar = ttk.Frame(tab)
+        bar.grid(row=0, column=0, sticky="ew")
+        ttk.Label(bar, text="Origem:").grid(row=0, column=0)
+        origin_box = ttk.Combobox(
+            bar, textvariable=self.origin_var, values=[ORIGIN_LOCAL, ORIGIN_SHARED], state="readonly", width=22
+        )
+        origin_box.grid(row=0, column=1, padx=(6, 12))
+        origin_box.bind("<<ComboboxSelected>>", lambda _event: self.refresh_history())
+        ttk.Button(bar, text="Atualizar", command=self.refresh_history).grid(row=0, column=2, padx=(0, 6))
+        ttk.Button(bar, text="Ver resultados", command=self.view_selected_run).grid(row=0, column=3, padx=(0, 6))
+        ttk.Button(bar, text="Comparar selecionadas", command=self.compare_selected).grid(row=0, column=4, padx=(0, 6))
+        ttk.Button(bar, text="Excluir", command=self.delete_selected).grid(row=0, column=5)
+        holder, self.history_table = self._table(
+            tab,
+            ("date", "user", "versions", "summary"),
+            {"date": "Data", "user": "Operador", "versions": "Versões", "summary": "Resumo"},
+            {"date": 130, "user": 110, "versions": 300, "summary": 560},
+            {"summary"},
+            height=5,
+        )
+        self.history_table.configure(selectmode="extended")
+        holder.grid(row=1, column=0, sticky="nsew", pady=(8, 0))
+        ttk.Label(
+            tab,
+            text="Selecione duas auditorias para compará-las (ou uma, para comparar com a anterior).",
+            style="Muted.TLabel",
+        ).grid(row=2, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(tab, text="Diferenças entre as auditorias", font=self._font("section")).grid(row=3, column=0, sticky="w", pady=(6, 2))
+        holder, self.diff_table = self._table(
+            tab,
+            ("change", "version", "object", "before", "after", "detail"),
+            {"change": "Mudança", "version": "Versão", "object": "Objeto / script", "before": "Antes", "after": "Depois", "detail": "Detalhe"},
+            {"change": 130, "version": 120, "object": 270, "before": 110, "after": 110, "detail": 360},
+            {"object", "detail"},
+            height=5,
+        )
+        holder.grid(row=4, column=0, sticky="nsew")
+
+    @staticmethod
+    def _date_text(text):
+        try:
+            return datetime.fromisoformat(text).strftime("%d/%m/%Y %H:%M")
+        except (TypeError, ValueError):
+            return str(text)
+
+    def refresh_history(self):
+        table = self.history_table
+        if self.origin_var.get() == ORIGIN_SHARED:
+            if self.busy:
+                return
+
+            def work():
+                try:
+                    events = [e for e in shared_log.read_events() if e.event == shared_log.EVENT_AUDIT]
+                except OSError as error:
+                    return ("info", f"✖ Registro compartilhado indisponível: {error}")
+                return ("shared_history", list(reversed(events))[:300], "")
+
+            self.status_var.set("Lendo o registro compartilhado...")
+            self._start("historico", work)
+            return
+        table.delete(*table.get_children())
+        try:
+            runs = self.store.list_runs()
+        except Exception as error:
+            self.history_runs = {}
+            self.status_var.set(f"✖ Histórico local indisponível: {error}")
+            return
+        self.history_runs = {str(run.id): run for run in runs}
+        for run in runs:
+            table.insert("", "end", iid=str(run.id), values=(self._date_text(run.started), run.user, ", ".join(run.versions), run.summary))
+
+    def _fill_shared_history(self, events, _unused=""):
+        table = self.history_table
+        table.delete(*table.get_children())
+        self.history_runs = {}
+        for index, event in enumerate(events):
+            table.insert("", "end", iid=f"s{index}", values=(event.timestamp, event.user, event.version, event.detail))
+        self.status_var.set(f"{len(events)} registro(s) compartilhado(s) de auditoria (os mais recentes primeiro).")
+
+    def _selected_runs(self):
+        if self.origin_var.get() != ORIGIN_LOCAL:
+            messagebox.showinfo(TITLE, "Esta ação vale só para o histórico de Meus registros.", parent=self.window)
+            return None
+        selected = [self.history_runs[iid] for iid in self.history_table.selection() if iid in self.history_runs]
+        if not selected:
+            messagebox.showinfo(TITLE, "Selecione uma auditoria na lista.", parent=self.window)
+            return None
+        return selected
+
+    def view_selected_run(self):
+        selected = self._selected_runs()
+        if selected is None:
+            return
+        run = selected[0]
+        try:
+            rows = self.store.load_objects(run.id)
+        except Exception as error:
+            self.status_var.set(f"✖ Não foi possível ler o histórico: {error}")
+            return
+        self.viewing = run
+        self.rows = rows
+        self.version_box.config(values=[ALL] + list(run.versions))
+        self.state_filter.set(ALL)
+        self.version_filter.set(ALL)
+        self.search_var.set("")
+        self.apply_filters()
+        self.notebook.select(0)
+        self.status_var.set(
+            f"Exibindo a auditoria #{run.id} de {self._date_text(run.started)} (histórico): {run.summary}. "
+            "As abas Scripts e Avisos continuam mostrando a última análise."
+        )
+
+    def compare_selected(self):
+        if self.busy:
+            return
+        selected = self._selected_runs()
+        if selected is None:
+            return
+        ids = sorted(run.id for run in selected)
+        if len(ids) == 2:
+            old_id, new_id = ids
+        elif len(ids) == 1:
+            earlier = [run.id for run in self.history_runs.values() if run.id < ids[0]]
+            if not earlier:
+                messagebox.showinfo(TITLE, "Não há auditoria anterior a esta para comparar.", parent=self.window)
+                return
+            old_id, new_id = max(earlier), ids[0]
+        else:
+            messagebox.showinfo(TITLE, "Selecione no máximo duas auditorias.", parent=self.window)
+            return
+        self.status_var.set("Comparando auditorias...")
+        self._start("comparando", lambda: ("diff", self.store.compare(old_id, new_id)))
+
+    def _fill_diff(self, diff):
+        table = self.diff_table
+        table.delete(*table.get_children())
+        short = lambda sha: sha[:8] if sha else "—"
+        for change in diff.changes:
+            tag = ("bad",) if change.kind == "piorou" or (change.kind == "novo" and change.new_status in report.PROBLEM_STATUSES) else (
+                ("info",) if change.kind == "melhorou" else ("warn",)
+            )
+            table.insert(
+                "", "end",
+                values=(
+                    CHANGE_LABELS[change.kind], change.version, change.label,
+                    report.label(change.old_status) if change.old_status else "—",
+                    report.label(change.new_status) if change.new_status else "—",
+                    change.new_detail or change.old_detail,
+                ),
+                tags=tag,
+            )
+        for change in diff.script_changes:
+            table.insert(
+                "", "end",
+                values=(CHANGE_LABELS[change.kind], change.version, change.script, short(change.old_sha256), short(change.new_sha256), "SHA-256 (início)"),
+                tags=("warn",) if change.kind == "alterado" else (),
+            )
+        for note in diff.notes:
+            table.insert("", "end", values=("Observação", "—", note, "", "", ""), tags=("warn",))
+        counts = diff.counts()
+        summary = ", ".join(f"{count} {CHANGE_LABELS[kind].lower()}" for kind, count in sorted(counts.items())) or "nenhuma diferença de objetos"
+        scripts = f"; {len(diff.script_changes)} script(s) com mudança" if diff.script_changes else ""
+        self.status_var.set(
+            f"#{diff.old.id} ({self._date_text(diff.old.started)}) → #{diff.new.id} ({self._date_text(diff.new.started)}): {summary}{scripts}."
+        )
+
+    def delete_selected(self):
+        selected = self._selected_runs()
+        if selected is None:
+            return
+        if not messagebox.askyesno(TITLE, f"Excluir {len(selected)} auditoria(s) do seu histórico local?", parent=self.window):
+            return
+        try:
+            for run in selected:
+                self.store.delete_run(run.id)
+        except Exception as error:
+            self.status_var.set(f"✖ Não foi possível excluir: {error}")
+            return
+        self.refresh_history()
+        self.status_var.set(f"{len(selected)} auditoria(s) excluída(s) do histórico local.")
+
     # ---- exportar / fechar ----
     def export(self):
         if self.run is None:
             messagebox.showinfo(TITLE, "Faça uma análise antes de exportar.", parent=self.window)
+            return
+        if self.viewing is not None:
+            messagebox.showinfo(TITLE, "A aba Objetos mostra uma auditoria do histórico. Faça uma nova análise para exportar.", parent=self.window)
             return
         name = f"auditoria-sql-{datetime.now():%Y%m%d-%H%M}.html"
         path = filedialog.asksaveasfilename(
