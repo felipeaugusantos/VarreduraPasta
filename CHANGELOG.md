@@ -5,24 +5,6 @@ Todas as alteracoes relevantes deste projeto sao documentadas neste arquivo.
 O formato e baseado em Keep a Changelog e o projeto segue Versionamento
 Semantico (`MAIOR.MENOR.CORRECAO`).
 
-## [Nao lancado]
-
-### Adicionado
-- Auditoria de Estrutura SQL: `Conectar e listar bancos...` (tambem com Enter em
-  servidor/porta). Pede usuario e senha, lista os bancos que o usuario enxerga no
-  servidor (sem os internos do MySQL) e abre a tela de escolha do banco de cada
-  versao, com filtro e a indicacao "existe/nao existe no servidor". O banco sugerido
-  pelo nome da pasta e conferido contra o servidor (ignora maiusculas); o que nao
-  existe aparece como "Banco nao encontrado". Analisar um banco fora da lista pede
-  confirmacao. O campo Banco da edicao da versao passa a ser uma lista.
-
-### Corrigido
-- Auditoria de Estrutura SQL: `Descobrir versoes` nao fazia nada quando a pasta
-  escolhida era a propria `SCRIPTS` (ou a pasta da versao). Agora a pasta `SCRIPTS`,
-  a pasta da versao e uma pasta com `.SQL` valem como uma unica versao (ja marcada),
-  com o banco sugerido pela pasta ancestral (ex.: `379.48.2.30`) e escolhido depois em
-  `Conectar e listar bancos...`. Sem versoes, a mensagem explica o que escolher.
-
 ## [2.8.0] - 2026-11-06
 
 ### Adicionado
@@ -57,8 +39,20 @@ Semantico (`MAIOR.MENOR.CORRECAO`).
   achados firmes; comandos de risco alto e todo DROP de coluna/tabela saem
   comentados, assim como o `USE`; cada comando traz motivo, risco e script/linha de
   origem. O que e indeterminado ou nao suportado nao gera comando.
+- Auditoria de Estrutura SQL: `Conectar e listar bancos...` (tambem com Enter em
+  servidor/porta). Pede usuario e senha, lista os bancos que o usuario enxerga no
+  servidor (sem os internos do MySQL) e abre a tela de escolha do banco de cada
+  versao, com filtro e a indicacao "existe/nao existe no servidor". O banco sugerido
+  pelo nome da pasta e conferido contra o servidor (ignora maiusculas); o que nao
+  existe aparece como "Banco nao encontrado". Analisar um banco fora da lista pede
+  confirmacao. O campo Banco da edicao da versao passa a ser uma lista.
 
 ### Corrigido
+- Auditoria de Estrutura SQL: `Descobrir versoes` nao fazia nada quando a pasta
+  escolhida era a propria `SCRIPTS` (ou a pasta da versao). Agora a pasta `SCRIPTS`,
+  a pasta da versao e uma pasta com `.SQL` valem como uma unica versao (ja marcada),
+  com o banco sugerido pela pasta ancestral (ex.: `379.48.2.30`) e escolhido depois em
+  `Conectar e listar bancos...`. Sem versoes, a mensagem explica o que escolher.
 - Registro compartilhado da Auditoria de Estrutura SQL (`auditoria_estrutura_sql.log`):
   no Windows, `open("a")` nao e atomico e dois operadores gravando juntos podiam
   sobrescrever a linha um do outro (o CI perdeu 2 a 5 de 100 linhas). Agora a gravacao
