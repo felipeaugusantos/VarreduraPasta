@@ -76,7 +76,7 @@ class TableState:
     options: dict = field(default_factory=dict)
     created_by: AppliedOperation | None = None
     origin_unknown: bool = False  # nenhum script cria a tabela: veio do banco-base
-    incomplete: list = field(default_factory=list)  # AppliedOperation que o modelo nao seguiu
+    incomplete: list = field(default_factory=list)  # acoes que podem ter mudado colunas e o modelo nao seguiu
     unchecked_elements: list = field(default_factory=list)  # chaves/indices/FK do CREATE TABLE
 
     @property
@@ -195,7 +195,7 @@ class ExpectedModel:
             self.unresolved.append(entry)
             return entry
         table = self._table(operation)
-        if operation.kind == KIND_CREATE_TABLE:
+        if operation.kind == KIND_CREATE_TABLE or not operation.affects_columns:
             table.unchecked_elements.append(entry)
         else:
             table.incomplete.append(entry)

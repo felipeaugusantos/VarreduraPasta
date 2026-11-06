@@ -79,6 +79,9 @@ class Operation:
     reason: str = ""
     statement: object = None  # SqlStatement de origem
     min_version: str = ""  # de /*!NNNNN ... */
+    # False so para acoes que sabidamente nao mudam a definicao de colunas
+    # (indices, chaves, FK). Na duvida e True: o modelo desconfia da tabela.
+    affects_columns: bool = True
 
     @property
     def interpreted(self):
@@ -167,6 +170,19 @@ def parse_statement(statement):
         operations = _create_table(statement, expression, exp)
     elif isinstance(expression, exp.Alter):
         operations = _alter_table(statement, expression, exp)
+    elif isinstance(expression, exp.Drop) and str(expression.args.get("kind") or "").upper() == "TABLE":
+        tables = [item for item in expression.args.get("tables") or [] if isinstance(item, exp.Table)]
+        if tables:  # a tabela pode ter deixado de existir: o modelo precisa saber de quais
+            return [
+                _unsupported(
+                    statement,
+                    f"DROP TABLE nao e acompanhado pelo modelo: {item.name} pode ter deixado de existir.",
+                    table=item.name,
+                    schema=item.db or "",
+                )
+                for item in tables
+            ]
+        return [_unsupported(statement, f"DROP TABLE sem tabela reconhecida: {_preview(sql)}")]
     else:
         return [
             _unsupported(
@@ -178,10 +194,13 @@ def parse_statement(statement):
     # Checagem de fidelidade: nada do original pode ter sido descartado.
     lost = _lost_tokens(dialect, sql, expression.sql(dialect="mysql"))
     if lost:
+        table, database = _alter_target(expression, exp)
         return [
             _unsupported(
                 statement,
                 "Partes do comando nao foram entendidas com seguranca: " + ", ".join(lost[:8]),
+                table=table,
+                schema=database,
             )
         ]
     if min_version:
@@ -329,14 +348,40 @@ def _with_statement(operation, statement):
     return replace(operation, statement=statement)
 
 
+def _alter_target(expression, exp):
+    """(tabela, schema) de um ALTER TABLE, ou ('', '') se nao for um.
+
+    Mesmo quando o comando nao e entendido, a tabela afetada precisa ser conhecida:
+    o modelo a marca como incompleta em vez de deixar so um aviso geral.
+    """
+    if isinstance(expression, exp.Alter) and isinstance(expression.this, exp.Table):
+        return _table_ref(expression.this)
+    return "", ""
+
+
+def _affects_columns(action, exp):
+    if isinstance(action, (exp.AddConstraint, exp.DropPrimaryKey)):
+        return False
+    if isinstance(action, exp.Drop) and str(action.args.get("kind") or "").upper() in ("INDEX", "FOREIGN KEY", "CHECK", "CONSTRAINT"):
+        return False
+    return True
+
+
 def _alter_table(statement, alter, exp):
     _sqlglot, _exp, dialect = _load_sqlglot()
     if str(alter.args.get("kind") or "").upper() != "TABLE":
         return [_unsupported(statement, f"ALTER {alter.args.get('kind')} fora do escopo desta fase.")]
+    table, database = _table_ref(alter.this)
     extra_args = [key for key, value in alter.args.items() if value and key not in ("this", "kind", "actions")]
     if extra_args:
-        return [_unsupported(statement, "Opcao de ALTER TABLE nao suportada (ALGORITHM, LOCK ou similar): " + ", ".join(sorted(extra_args)))]
-    table, database = _table_ref(alter.this)
+        return [
+            _unsupported(
+                statement,
+                "Opcao de ALTER TABLE nao suportada (ALGORITHM, LOCK ou similar): " + ", ".join(sorted(extra_args)),
+                table=table,
+                schema=database,
+            )
+        ]
     operations = []
     for action in alter.args.get("actions") or []:
         base = dict(table=table, schema=database)
@@ -352,7 +397,12 @@ def _alter_table(statement, alter, exp):
         else:
             label = "CHANGE COLUMN" if isinstance(action, exp.ModifyColumn) else type(action).__name__
             operations.append(
-                _unsupported(statement, f"Acao de ALTER TABLE ainda nao suportada ({label}): {action.sql(dialect='mysql')[:60]}", **base)
+                _unsupported(
+                    statement,
+                    f"Acao de ALTER TABLE ainda nao suportada ({label}): {action.sql(dialect='mysql')[:60]}",
+                    affects_columns=_affects_columns(action, exp),
+                    **base,
+                )
             )
             continue
         if problem:
@@ -360,5 +410,5 @@ def _alter_table(statement, alter, exp):
         else:
             operations.append(Operation(kind=kind, status=STATUS_INTERPRETED, column=spec, statement=statement, **base))
     if not operations:
-        return [_unsupported(statement, "ALTER TABLE sem acoes reconhecidas.")]
+        return [_unsupported(statement, "ALTER TABLE sem acoes reconhecidas.", table=table, schema=database)]
     return operations

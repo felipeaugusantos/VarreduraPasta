@@ -139,14 +139,35 @@ class WhatTheModelCannotFollowTests(ModelTestCase):
         self.assertEqual(len(table.incomplete), 1)
         self.assertEqual(table.incomplete[0].outcome, OUTCOME_UNSUPPORTED)
 
+    def test_index_and_key_actions_do_not_make_the_table_incomplete(self):
+        model = self.single(
+            **{
+                "SCRIPT_1.SQL": "CREATE TABLE t (a INT, b INT);",
+                "SCRIPT_2.SQL": "ALTER TABLE t ADD INDEX ix (a); ALTER TABLE t DROP INDEX ix; ALTER TABLE t ADD PRIMARY KEY (a);",
+            }
+        )
+        table = model.tables["t"]
+        self.assertTrue(table.fully_known)
+        self.assertEqual(len(table.unchecked_elements), 3)
+
+    def test_rename_and_column_actions_make_the_table_incomplete(self):
+        for action in ("DROP COLUMN b", "CHANGE COLUMN b c INT", "RENAME COLUMN b TO c", "RENAME TO u", "ALTER COLUMN b SET DEFAULT 1"):
+            model = self.single(**{"SCRIPT_1.SQL": f"CREATE TABLE t (a INT, b INT); ALTER TABLE t {action};"})
+            self.assertFalse(model.tables["t"].fully_known, action)
+
     def test_keys_and_options_of_create_table_are_kept_as_unchecked_elements(self):
         model = self.single(**{"SCRIPT_1.SQL": "CREATE TABLE t (id INT, PRIMARY KEY (id)) ENGINE=InnoDB AUTO_INCREMENT=5;"})
         table = model.tables["t"]
         self.assertEqual(len(table.unchecked_elements), 2)
         self.assertTrue(table.fully_known)
 
+    def test_dropped_table_is_marked_instead_of_trusted(self):
+        model = self.single(**{"SCRIPT_1.SQL": "CREATE TABLE t (a INT); DROP TABLE t;"})
+        self.assertFalse(model.tables["t"].fully_known)
+        self.assertEqual(model.unresolved, [])
+
     def test_statement_level_unsupported_goes_to_unresolved(self):
-        model = self.single(**{"SCRIPT_1.SQL": "DROP TABLE t; INSERT INTO t VALUES (1); FOO BAR;"})
+        model = self.single(**{"SCRIPT_1.SQL": "INSERT INTO t VALUES (1); FOO BAR; DROP VIEW v;"})
         self.assertEqual(len(model.unresolved), 3)
         self.assertEqual(model.tables, {})
         self.assertTrue(all(item.outcome in (OUTCOME_UNSUPPORTED, OUTCOME_ERROR) for item in model.unresolved))

@@ -7,6 +7,11 @@ Semantico (`MAIOR.MENOR.CORRECAO`).
 
 ## [Nao lancado]
 
+### Corrigido
+- `requirements.txt` e o workflow de CI fixavam `pymysql==2.2.8`, versao que nao
+  existe (o `2.2.8` e o `pymysql.__version__` de compatibilidade com MySQLdb): o
+  `pip install` falhava e o CI ficou vermelho desde a v2.7.0. Agora `pymysql==1.2.3`.
+
 ### Interno
 - Auditoria de estrutura SQL, fase 1 (`app/sqlaudit/`, ainda sem tela): le os
   `.SQL` de uma pasta (SHA-256, ordem por `SCRIPT_<n>`, avisos de lacuna e
@@ -22,6 +27,14 @@ Semantico (`MAIOR.MENOR.CORRECAO`).
   incerto. Comandos que o modelo nao segue (DROP, CHANGE, DML...) deixam a tabela
   marcada como incompleta, nunca ignorados. Config `sqlaudit` em `settings.json`
   (sem credenciais).
+- Auditoria de estrutura SQL, fase 3 (ainda sem tela): `db_reader` le tabelas e
+  colunas do `information_schema` em sessao somente leitura (so consultas fixas;
+  nada do texto dos scripts chega ao banco), `comparator` classifica cada comando,
+  objeto, arquivo e versao (COMPATIVEL, AUSENTE, DIVERGENTE, SUBSTITUIDO,
+  NAO_SUPORTADO, INDETERMINADO, ERRO) normalizando tipos equivalentes entre
+  versoes do MySQL, e `fork_hint` sugere o ponto de fork da versao filha pelo
+  banco dela. Origem incerta, tabela com DROP/RENAME/CHANGE e tipo desconhecido
+  nunca viram AUSENTE/DIVERGENTE: ficam INDETERMINADO.
 
 ## [2.7.0] - 2026-10-26
 

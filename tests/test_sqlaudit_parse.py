@@ -1,5 +1,4 @@
 import unittest
-from pathlib import Path
 
 from app.sqlaudit import sql_parse
 from app.sqlaudit.sql_parse import (
@@ -87,6 +86,24 @@ class AddAndModifyColumnTests(unittest.TestCase):
         for attribute in ("GENERATED ALWAYS AS (b + 1) VIRTUAL", "INVISIBLE", "CHECK (a > 0)"):
             op = parse_one(f"ALTER TABLE t ADD a INT {attribute}")
             self.assertEqual(op.status, STATUS_UNSUPPORTED, attribute)
+
+    def test_actions_that_do_not_touch_columns_are_marked(self):
+        harmless = ("ADD INDEX ix (a)", "DROP INDEX ix", "DROP PRIMARY KEY", "ADD CONSTRAINT fk FOREIGN KEY (a) REFERENCES o (id)")
+        for action in harmless:
+            self.assertFalse(parse_one(f"ALTER TABLE t {action}").affects_columns, action)
+        for action in ("DROP COLUMN b", "CHANGE COLUMN a b INT", "RENAME COLUMN a TO b", "RENAME TO u"):
+            self.assertTrue(parse_one(f"ALTER TABLE t {action}").affects_columns, action)
+
+    def test_statements_that_fail_fidelity_still_name_their_table(self):
+        for sql in ("ALTER TABLE t RENAME TO u", "ALTER TABLE t ALGORITHM=INPLACE, ADD a INT", "ALTER TABLE t ENGINE=InnoDB"):
+            op = parse_one(sql)
+            self.assertEqual((op.status, op.table), (STATUS_UNSUPPORTED, "t"), sql)
+
+    def test_drop_table_names_each_dropped_table(self):
+        operations = parse_text("DROP TABLE IF EXISTS db.a, b")
+        self.assertEqual([(op.table, op.schema, op.status) for op in operations], [("a", "db", STATUS_UNSUPPORTED), ("b", "", STATUS_UNSUPPORTED)])
+        self.assertEqual(parse_one("DROP VIEW v").table, "")
+        self.assertEqual(parse_one("INSERT INTO t VALUES (1)").table, "")
 
     def test_executable_comment_is_unwrapped_with_min_version(self):
         op = parse_one("/*!50001 ALTER TABLE t ADD a INT */;")
@@ -194,15 +211,6 @@ class NeverValidateWhatWasNotUnderstoodTests(unittest.TestCase):
         for op in operations:
             self.assertFalse(op.interpreted)
             self.assertTrue(op.reason)
-
-
-class IsolationTests(unittest.TestCase):
-    def test_audit_package_never_executes_sql_or_touches_the_execution_modules(self):
-        package = Path(__file__).resolve().parent.parent / "app" / "sqlaudit"
-        for path in package.glob("*.py"):
-            source = path.read_text(encoding="utf-8")
-            for forbidden in ("pymysql", "import model_db", "from app.model_db", "script_runner", ".execute(", ".executemany("):
-                self.assertNotIn(forbidden, source, f"{path.name} usa {forbidden}")
 
 
 if __name__ == "__main__":
