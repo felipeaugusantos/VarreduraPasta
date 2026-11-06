@@ -1,8 +1,9 @@
+import gc
 import sqlite3
 import tempfile
 import threading
 import unittest
-from contextlib import closing
+from contextlib import closing, contextmanager
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
@@ -14,6 +15,19 @@ from app.sqlaudit.comparator import ComparisonResult, Difference, ObjectResult
 from app.sqlaudit.expected_model import Provenance
 
 SHA_A, SHA_B = "a" * 64, "b" * 64
+
+
+@contextmanager
+def gc_only_in_the_main_thread():
+    """Testes com threads criam lixo; se o coletor rodar numa delas e apanhar um objeto Tk
+    esquecido por outro teste, o Tcl aborta o processo inteiro (`Tcl_AsyncDelete`)."""
+    gc.collect()
+    gc.disable()
+    try:
+        yield
+    finally:
+        gc.enable()
+        gc.collect()
 
 
 def provenance(script="SCRIPT_1.SQL", line=1, certain=True):
@@ -279,13 +293,144 @@ class SharedLogTests(unittest.TestCase):
                 shared_log.append_events([shared_log.fork_event(name, f"v{i}", "base", i)], self.control)
 
         threads = [threading.Thread(target=writer, args=(f"op{n}",)) for n in range(4)]
-        for thread in threads:
-            thread.start()
-        for thread in threads:
-            thread.join()
+        with gc_only_in_the_main_thread():
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
         events = shared_log.read_events(self.control)
         self.assertEqual(len(events), 100)
         self.assertTrue(all(e.event == "fork" and e.detail.startswith("base=base; fork=") for e in events))
+
+    def test_concurrent_processes_never_lose_or_mix_lines(self):
+        """Processos de verdade, como varios operadores: no Windows exercita o msvcrt real."""
+        import os
+        import subprocess
+        import sys
+
+        code = (
+            "import sys; from pathlib import Path; from app.sqlaudit import shared_log\n"
+            "name, folder = sys.argv[1], Path(sys.argv[2])\n"
+            "for i in range(30):\n"
+            "    shared_log.append_events([shared_log.fork_event(name, f'v{i}', 'base', i)], folder)\n"
+        )
+        env = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parent.parent), VARREDURA_SEM_AUDITORIA_COMPARTILHADA="1")
+        processes = [
+            subprocess.Popen([sys.executable, "-c", code, f"op{n}", str(self.control)], env=env, stderr=subprocess.PIPE)
+            for n in range(4)
+        ]
+        errors = [process.communicate(timeout=120)[1].decode("utf-8", "replace") for process in processes]
+        self.assertEqual([process.returncode for process in processes], [0] * 4, errors)
+        events = shared_log.read_events(self.control)
+        self.assertEqual(len(events), 120)
+        for name in ("op0", "op1", "op2", "op3"):
+            self.assertEqual(sorted(int(shared_log._fields(e.detail)["fork"]) for e in events if e.user == name), list(range(30)))
+        self.assertTrue(all(e.event == "fork" and e.detail.startswith("base=base; fork=") for e in events))
+
+    def test_a_writer_holding_the_lock_does_not_block_readers(self):
+        shared_log.append_events([shared_log.fork_event("ana", "v1", "v0", 1)], self.control)
+        with shared_log.log_path(self.control).open("ab") as handle:
+            shared_log._lock(handle)
+            try:
+                self.assertEqual(len(shared_log.read_events(self.control)), 1)  # a trava fica fora da area dos dados
+            finally:
+                shared_log._unlock(handle)
+
+    def test_the_lock_is_released_even_when_the_write_fails(self):
+        shared_log.append_events([shared_log.fork_event("ana", "v1", "v0", 1)], self.control)
+        with patch("app.sqlaudit.shared_log.os.SEEK_END", "invalido"):
+            with self.assertRaises(Exception):
+                shared_log.append_events([shared_log.fork_event("ana", "v2", "v0", 2)], self.control)
+        shared_log.append_events([shared_log.fork_event("ana", "v3", "v0", 3)], self.control)  # nao ficou travado
+        self.assertEqual([e.version for e in shared_log.read_events(self.control)], ["v1", "v3"])
+
+
+class FakeMsvcrt:
+    """msvcrt falso com exclusao mutua real, para exercitar o ramo do Windows em qualquer sistema."""
+
+    LK_UNLCK, LK_LOCK, LK_NBLCK = 0, 1, 2
+
+    def __init__(self, busy_first=0):
+        self._guard = threading.Lock()
+        self._held = threading.Lock()
+        self.calls = []
+        self.offsets = []
+        self.busy_first = busy_first
+
+    def locking(self, fd, mode, nbytes):
+        with self._guard:
+            self.calls.append(mode)
+            if mode == self.LK_UNLCK:
+                self._held.release()
+                return
+            if self.busy_first > 0:
+                self.busy_first -= 1
+                raise PermissionError(13, "Permission denied")
+            if not self._held.acquire(blocking=False):
+                raise PermissionError(13, "Permission denied")
+
+
+class WindowsBranchTests(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        self.addCleanup(self._tmp.cleanup)
+        self.control = Path(self._tmp.name) / "controle"
+
+    def windows(self, fake):
+        import sys
+
+        offsets = fake.offsets
+        real_lock = shared_log._lock
+
+        def tracking_lock(handle):
+            real_lock(handle)
+            offsets.append(handle.tell())
+
+        stack = [
+            patch.object(shared_log, "_WINDOWS", True),
+            patch.dict(sys.modules, {"msvcrt": fake}),
+            patch.object(shared_log, "_lock", tracking_lock),
+            patch("app.sqlaudit.shared_log.time.sleep"),
+        ]
+        for item in stack:
+            item.start()
+            self.addCleanup(item.stop)
+
+    def test_threads_never_overwrite_each_other_and_lock_beyond_the_data(self):
+        fake = FakeMsvcrt()
+        self.windows(fake)
+
+        def writer(name):
+            for i in range(25):
+                shared_log.append_events([shared_log.fork_event(name, f"v{i}", "base", i)], self.control)
+
+        threads = [threading.Thread(target=writer, args=(f"op{n}",)) for n in range(4)]
+        with gc_only_in_the_main_thread():
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+        self.assertEqual(len(shared_log.read_events(self.control)), 100)
+        self.assertEqual(fake.calls.count(FakeMsvcrt.LK_UNLCK), 100)  # toda trava foi liberada
+        self.assertGreaterEqual(min(fake.offsets), 1 << 30)  # trava muito alem de qualquer dado real: leitores nao sao bloqueados
+
+    def test_contention_is_retried_until_the_lock_is_free(self):
+        fake = FakeMsvcrt(busy_first=3)
+        self.windows(fake)
+        shared_log.append_events([shared_log.fork_event("ana", "v1", "v0", 1)], self.control)
+        self.assertEqual(len(shared_log.read_events(self.control)), 1)
+        self.assertGreaterEqual(fake.calls.count(FakeMsvcrt.LK_NBLCK), 4)
+
+    def test_a_lock_that_never_frees_times_out_once_and_is_not_retried_by_the_open_loop(self):
+        fake = FakeMsvcrt(busy_first=10**9)
+        self.windows(fake)
+        ticks = iter(range(0, 10**6))
+        with patch("app.sqlaudit.shared_log.time.monotonic", lambda: next(ticks) * 0.5):
+            with self.assertRaises(shared_log.LockTimeout) as raised:
+                shared_log.append_events([shared_log.fork_event("ana", "v1", "v0", 1)], self.control)
+        self.assertIsInstance(raised.exception, OSError)  # a janela ja trata OSError
+        self.assertEqual(shared_log.read_events(self.control), [])
+        self.assertLess(fake.calls.count(FakeMsvcrt.LK_NBLCK), 100)  # esperou so um ciclo de timeout
 
 
 if __name__ == "__main__":

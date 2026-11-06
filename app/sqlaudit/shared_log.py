@@ -11,6 +11,8 @@ Eventos:
   fonte certa do ponto de fork (os dumps nao sao guardados).
 """
 
+import os
+import sys
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -24,6 +26,16 @@ EVENT_FORK = "fork"
 SEPARATOR = " | "
 APPEND_RETRY_ATTEMPTS = 5
 APPEND_RETRY_DELAY_SECONDS = 0.3
+LOCK_TIMEOUT_SECONDS = 8.0
+LOCK_POLL_SECONDS = 0.02
+# Byte que serve de trava, bem alem do fim real do arquivo: no Windows o bloqueio de
+# intervalo e obrigatorio e travaria a leitura de quem estivesse lendo o inicio.
+LOCK_OFFSET = 1 << 40
+_WINDOWS = sys.platform == "win32"
+
+
+class LockTimeout(OSError):
+    """Outro operador manteve o arquivo travado por tempo demais."""
 
 
 @dataclass(frozen=True)
@@ -68,20 +80,72 @@ def now_text(now=None):
     return (now or datetime.now()).strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _lock(handle):
+    """Trava exclusiva (entre threads, processos e maquinas via SMB); espera ate LOCK_TIMEOUT_SECONDS.
+
+    `open("a")` NAO basta: no Windows o fim do arquivo e calculado antes da escrita, entao
+    dois gravadores simultaneos escrevem na mesma posicao e uma linha sobrescreve a outra.
+    """
+    deadline = time.monotonic() + LOCK_TIMEOUT_SECONDS
+    while True:
+        try:
+            if _WINDOWS:
+                import msvcrt
+
+                handle.seek(LOCK_OFFSET)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return
+        except OSError as error:
+            if time.monotonic() >= deadline:
+                raise LockTimeout(f"arquivo em uso por outro operador ({error})") from error
+            time.sleep(LOCK_POLL_SECONDS)
+
+
+def _unlock(handle):
+    try:
+        if _WINDOWS:
+            import msvcrt
+
+            handle.seek(LOCK_OFFSET)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    except OSError:
+        pass  # fechar o arquivo libera a trava de qualquer forma
+
+
+def _append_locked(path, data):
+    with path.open("ab") as handle:
+        _lock(handle)
+        try:
+            handle.seek(0, os.SEEK_END)
+            handle.write(data)
+            handle.flush()
+        finally:
+            _unlock(handle)
+
+
 def append_events(events, control_directory=None):
-    """Acrescenta eventos (cria pasta/arquivo se preciso). Levanta OSError se a rede falhar."""
+    """Acrescenta eventos sob trava (cria pasta/arquivo se preciso). Levanta OSError se a rede falhar."""
     if not events:
         return
     path = log_path(control_directory)
     path.parent.mkdir(parents=True, exist_ok=True)
-    text = "".join(format_line(event) + "\n" for event in events)
+    data = "".join(format_line(event) + "\n" for event in events).encode("utf-8")
     last_error = None
     for attempt in range(APPEND_RETRY_ATTEMPTS):
         try:
-            with path.open("a", encoding="utf-8", newline="") as handle:
-                handle.write(text)
+            _append_locked(path, data)
             return
-        except PermissionError as error:  # outro operador gravando no mesmo instante
+        except LockTimeout:
+            raise
+        except PermissionError as error:  # abertura recusada (antivirus, outro processo)
             last_error = error
             if attempt < APPEND_RETRY_ATTEMPTS - 1:
                 time.sleep(APPEND_RETRY_DELAY_SECONDS)

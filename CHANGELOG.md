@@ -41,6 +41,11 @@ Semantico (`MAIOR.MENOR.CORRECAO`).
   origem. O que e indeterminado ou nao suportado nao gera comando.
 
 ### Corrigido
+- Registro compartilhado da Auditoria de Estrutura SQL (`auditoria_estrutura_sql.log`):
+  no Windows, `open("a")` nao e atomico e dois operadores gravando juntos podiam
+  sobrescrever a linha um do outro (o CI perdeu 2 a 5 de 100 linhas). Agora a gravacao
+  usa bloqueio de intervalo de bytes (`msvcrt.locking`/`flock`) em area bem alem dos
+  dados, entao nao bloqueia quem le e vale entre processos e maquinas.
 - `requirements.txt` e o workflow de CI fixavam `pymysql==2.2.8`, versao que nao
   existe (o `2.2.8` e o `pymysql.__version__` de compatibilidade com MySQLdb): o
   `pip install` falhava e o CI ficou vermelho desde a v2.7.0. Agora `pymysql==1.2.3`.
