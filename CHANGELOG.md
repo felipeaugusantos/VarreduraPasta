@@ -14,6 +14,14 @@ Semantico (`MAIOR.MENOR.CORRECAO`).
   `ALTER TABLE ... ADD/MODIFY COLUMN`. Somente leitura: nada e executado. O que
   nao e entendido com seguranca fica `nao_suportado` ou `erro`, nunca validado.
   Nova dependencia: `sqlglot` (embutido no exe).
+- Auditoria de estrutura SQL, fase 2 (ainda sem tela): descobre as pastas
+  `<versao>\SCRIPTS` e sugere o banco (`BANCO_AUTCOM_379_48_02_30_...`), monta a
+  arvore de versoes (a base e sugerida pelo nome e o operador pode mudar) com o
+  ponto de fork, e monta o estado esperado por replay logico dos scripts da base
+  (ate o fork) e da versao. Sem fork informado, o herdado fica marcado como
+  incerto. Comandos que o modelo nao segue (DROP, CHANGE, DML...) deixam a tabela
+  marcada como incompleta, nunca ignorados. Config `sqlaudit` em `settings.json`
+  (sem credenciais).
 
 ## [2.7.0] - 2026-10-26
 

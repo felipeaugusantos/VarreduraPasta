@@ -214,6 +214,44 @@ def save_model_db(host, port, database, username=""):
     _save_settings(data)
 
 
+def load_sqlaudit_config():
+    """Raiz das versoes, arvore (base/fork) e banco de cada versao da Auditoria de Estrutura SQL.
+
+    Nunca guarda usuario nem senha. Valores invalidos sao descartados.
+    """
+    value = _load_settings().get("sqlaudit")
+    if not isinstance(value, dict):
+        value = {}
+    tree = {}
+    raw_tree = value.get("tree")
+    for version, data in (raw_tree.items() if isinstance(raw_tree, dict) else ()):
+        if not isinstance(data, dict):
+            continue
+        fork = data.get("fork")
+        tree[str(version)] = {
+            "base": str(data.get("base") or "").strip(),
+            "fork": fork if isinstance(fork, int) and not isinstance(fork, bool) and fork >= 0 else None,
+        }
+    raw_databases = value.get("databases")
+    databases = {
+        str(version): str(name).strip()
+        for version, name in (raw_databases.items() if isinstance(raw_databases, dict) else ())
+        if str(name).strip()
+    }
+    return {"root": str(value.get("root") or "").strip(), "tree": tree, "databases": databases}
+
+
+@_synchronized
+def save_sqlaudit_config(root, tree, databases):
+    data = _load_settings()
+    data["sqlaudit"] = {
+        "root": str(root or "").strip(),
+        "tree": tree,
+        "databases": {version: name for version, name in databases.items() if str(name).strip()},
+    }
+    _save_settings(data)
+
+
 def load_script_directory():
     """Pasta dos scripts do banco modelo; vazio/ausente usa o padrao de config.py."""
     data = _load_settings()
