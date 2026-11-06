@@ -239,7 +239,7 @@ com SELECT). Cada versao deriva de uma base (sugerida pelo nome, editavel) e tem
 ponto de fork (maior `SCRIPT_<n>` da base ja presente no dump); sem fork o herdado
 fica INDETERMINADO. Servidor/porta/usuario/TLS e a arvore ficam em `settings.json`
 (`sqlaudit`); a senha e pedida a cada analise e nunca e gravada, logada ou exportada.
-`Conectar e listar bancos...` (ou Enter em servidor/porta) pede usuario e senha, conecta
+A pasta escolhida pode ser a raiz (`<versao>\SCRIPTS` abaixo), a pasta da versao ou a propria `SCRIPTS` (ou qualquer pasta com `.SQL`): vale como uma unica versao. `Conectar e listar bancos...` (ou Enter em servidor/porta) pede usuario e senha, conecta
 so ao servidor e lista os bancos que o usuario ENXERGA (`information_schema.SCHEMATA`;
 bancos internos do MySQL ficam de fora) e abre a tela de escolha do banco de cada versao:
 casa o banco sugerido com a lista (ignora maiusculas), mostra "existe/nao existe no

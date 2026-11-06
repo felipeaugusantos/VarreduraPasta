@@ -16,6 +16,13 @@ Semantico (`MAIOR.MENOR.CORRECAO`).
   existe aparece como "Banco nao encontrado". Analisar um banco fora da lista pede
   confirmacao. O campo Banco da edicao da versao passa a ser uma lista.
 
+### Corrigido
+- Auditoria de Estrutura SQL: `Descobrir versoes` nao fazia nada quando a pasta
+  escolhida era a propria `SCRIPTS` (ou a pasta da versao). Agora a pasta `SCRIPTS`,
+  a pasta da versao e uma pasta com `.SQL` valem como uma unica versao (ja marcada),
+  com o banco sugerido pela pasta ancestral (ex.: `379.48.2.30`) e escolhido depois em
+  `Conectar e listar bancos...`. Sem versoes, a mensagem explica o que escolher.
+
 ## [2.8.0] - 2026-11-06
 
 ### Adicionado

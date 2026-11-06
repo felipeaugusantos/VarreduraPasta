@@ -104,6 +104,37 @@ class DiscoveryTests(TempRootTestCase):
         self.assertEqual([item.version for item in discover_versions(self.root).versions], ["48.2.30.72"])
 
 
+class DirectSelectionTests(TempRootTestCase):
+    def test_scripts_folder_chosen_directly(self):
+        self.make("48.2.30.74.111/SCRIPTS/SCRIPT_1.SQL", "CREATE TABLE a (id INT);")
+        result = discover_versions(self.root / "48.2.30.74.111" / "SCRIPTS")
+        self.assertEqual([v.version for v in result.versions], ["48.2.30.74.111"])
+        self.assertEqual(result.versions[0].database, "BANCO_AUTCOM_379_48_02_30_74_111")
+        self.assertEqual(result.versions[0].scripts_path.name, "SCRIPTS")
+
+    def test_version_folder_chosen_directly(self):
+        self.make("48.2.30.74.111/SCRIPTS/SCRIPT_1.SQL", "SELECT 1;")
+        result = discover_versions(self.root / "48.2.30.74.111")
+        self.assertEqual([v.version for v in result.versions], ["48.2.30.74.111"])
+        self.assertEqual(result.versions[0].scripts_path, self.root / "48.2.30.74.111" / "SCRIPTS")
+
+    def test_folder_with_sql_files_is_one_version(self):
+        self.make("Minha Pasta/SCRIPT_1.sql", "SELECT 1;")
+        result = discover_versions(self.root / "Minha Pasta")
+        self.assertEqual([v.version for v in result.versions], ["Minha Pasta"])
+        self.assertEqual(result.versions[0].database, "")
+
+    def test_empty_folder_finds_nothing(self):
+        self.make("Vazia")
+        self.assertEqual(discover_versions(self.root / "Vazia").versions, [])
+
+    def test_sort_key_tolerates_non_numeric_names(self):
+        from app.sqlaudit.version_discovery import version_sort_key
+
+        names = ["Minha Pasta", "48.2.30.10", "48.2.30.9"]
+        self.assertEqual(sorted(names, key=version_sort_key), ["48.2.30.9", "48.2.30.10", "Minha Pasta"])
+
+
 class SuggestBaseTests(unittest.TestCase):
     VERSIONS = list(KNOWN_DATABASES)
 

@@ -26,7 +26,7 @@ from app.sqlaudit import audit_runner, fix_suggestions, report, shared_log
 from app.sqlaudit.audit_store import AuditStore
 from app.sqlaudit.comparator import PRECEDENCE, worst
 from app.sqlaudit.db_reader import TLS_ENCRYPT, TLS_VERIFY
-from app.sqlaudit.version_discovery import discover_versions
+from app.sqlaudit.version_discovery import discover_versions, version_sort_key
 from app.sqlaudit.version_tree import TreeError, VersionTree
 
 TITLE = "Auditoria de Estrutura SQL"
@@ -432,10 +432,10 @@ class SqlAuditWindow:
             if current is None or (current.discontinued and not item.discontinued):
                 folders[item.version] = item
         self.folders = folders
-        self.order = sorted(folders, key=lambda version: tuple(int(p) for p in version.split(".")))
+        self.order = sorted(folders, key=version_sort_key)
         self.tree = VersionTree.build(self.order, self._saved_tree)
         self.databases = {v: self._saved_databases.get(v) or folders[v].database for v in self.order}
-        self.checked = {v for v in self.order if not folders[v].discontinued}
+        self.checked = {v for v in self.order if not folders[v].discontinued or len(self.order) == 1}
         self.discovery_warnings = list(result.warnings)
         if warning:
             self.discovery_warnings.append(warning)
@@ -444,7 +444,7 @@ class SqlAuditWindow:
         self._refresh_warnings()
         found = len(self.order)
         self.status_var.set(
-            f"{found} versão(ões) encontrada(s)." if found else "Nenhuma pasta <versão>\\SCRIPTS encontrada nesta raiz."
+            f"{found} versão(ões) encontrada(s)." if found else "Nenhuma versão encontrada. Escolha a raiz (com <versão>\\SCRIPTS), uma pasta de versão ou a própria pasta SCRIPTS."
         )
         if found:
             self._persist()

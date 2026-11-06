@@ -197,7 +197,20 @@ class DiscoveryTests(WindowTestCase):
         self.sa.root_var.set(str(empty))
         self.sa.discover()
         self.pump()
-        self.assertIn("Nenhuma pasta", self.sa.status_var.get())
+        self.assertIn("Nenhuma versão", self.sa.status_var.get())
+
+    def test_scripts_folder_chosen_directly_becomes_one_checked_version(self):
+        self.open(root=False)
+        scripts = self.tmp / "379.48.2.30" / "48.2.30.74.111" / "SCRIPTS"
+        scripts.mkdir(parents=True)
+        (scripts / "SCRIPT_1.SQL").write_bytes(b"CREATE TABLE a (id INT);")
+        self.sa.root_var.set(str(scripts))
+        self.sa.discover()
+        self.pump()
+        self.assertEqual(self.sa.order, ["48.2.30.74.111"])
+        self.assertEqual(self.sa.checked, {"48.2.30.74.111"})
+        self.assertEqual(self.sa.databases["48.2.30.74.111"], "BANCO_AUTCOM_379_48_02_30_74_111")
+        self.assertIn("1 versão", self.sa.status_var.get())
 
     def test_click_toggles_selection_only_in_the_first_column(self):
         self.open(root=False)

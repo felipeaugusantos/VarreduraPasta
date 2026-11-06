@@ -43,7 +43,11 @@ def is_version_name(name):
 
 
 def version_sort_key(version):
-    return tuple(int(part) for part in version.split("."))
+    """Chave de ordenacao: numeros primeiro (por valor); nomes nao numericos depois."""
+    parts = str(version).split(".")
+    if all(part.isdigit() for part in parts):
+        return (0, tuple(int(part) for part in parts), "")
+    return (1, (), str(version).lower())
 
 
 def _plain(text):
@@ -64,13 +68,75 @@ def database_name_for(root_name, version):
     return DATABASE_PREFIX + "_".join([product] + [part.zfill(2) for part in version.split(".")])
 
 
+def _product_root_name(folder):
+    """Nome da pasta ancestral mais proxima com nome de versao (ex.: `379.48.2.30`)."""
+    for ancestor in folder.parents:
+        if is_version_name(ancestor.name):
+            return ancestor.name
+    return ""
+
+
+def _has_sql_files(folder):
+    try:
+        return any(entry.is_file() and entry.name.lower().endswith(".sql") for entry in os.scandir(folder))
+    except OSError:
+        return False
+
+
+def _children(folder):
+    try:
+        return [Path(e.path) for e in os.scandir(folder) if e.is_dir()]
+    except OSError:
+        return []
+
+
+def _direct_selection(root):
+    """Quando a pasta escolhida e uma pasta SCRIPTS, uma pasta de versao ou tem .SQL.
+
+    Devolve um resultado com uma unica versao, ou None se nao for o caso.
+    """
+    version_dir = None
+    scripts_path = None
+    if root.name.lower() == SCRIPTS_FOLDER:
+        scripts_path = root
+        version_dir = root.parent
+    elif is_version_name(root.name):
+        child = next((c for c in _children(root) if c.name.lower() == SCRIPTS_FOLDER), None)
+        if child is not None:
+            scripts_path, version_dir = child, root
+    if scripts_path is None and _has_sql_files(root):
+        scripts_path, version_dir = root, root
+    if scripts_path is None:
+        return None
+    name = version_dir.name
+    product = _product_root_name(version_dir)
+    result = DiscoveryResult(root=root)
+    result.versions.append(
+        VersionFolder(
+            version=name,
+            scripts_path=scripts_path,
+            relative=".",
+            discontinued=False,
+            database=database_name_for(product, name) if product else "",
+        )
+    )
+    result.warnings.append(f"Usando a pasta escolhida como uma unica versao ({name}).")
+    return result
+
+
 def discover_versions(root, cancel_event=None):
-    """Acha as pastas `SCRIPTS` abaixo de `root` cujo pai tem nome de versao."""
+    """Acha as pastas `SCRIPTS` abaixo de `root` cujo pai tem nome de versao.
+
+    Tambem aceita a propria pasta `SCRIPTS`, uma pasta de versao ou uma pasta com .SQL.
+    """
     root = Path(root)
     result = DiscoveryResult(root=root)
     if not root.is_dir():
         result.warnings.append(f"Pasta raiz nao encontrada: {root}")
         return result
+    direct = _direct_selection(root)
+    if direct is not None:
+        return direct
     for directory, subdirectories, _names in os.walk(root, followlinks=False):
         if cancel_event is not None and cancel_event.is_set():
             break
