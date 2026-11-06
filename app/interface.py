@@ -12,6 +12,7 @@ from app import __version__, actions, log_cleanup, logging_utils, model_db, proj
 from app.audit import filter_log_entries, list_log_files, parse_log_entries, read_log_file
 from app.autcom_test import login_value_error
 from app.model_db_dialogs import ask_credentials, open_db_settings
+from app.sqlaudit_window import open_sqlaudit_window
 from app.config import (
     CLOSING_MAX_CONCURRENT,
     CLOUD_MIN_AUTCOM_MB,
@@ -104,6 +105,7 @@ class VersionScannerApp(tk.Tk):
         self.first_scan_done = False
         self.projects_shown_once = False
         self.script_monitor_window = None
+        self.sqlaudit_window = None
         self._build_menu()
         self._build_layout()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -147,6 +149,10 @@ class VersionScannerApp(tk.Tk):
         monitor_menu.add_command(
             label="Scripts Banco Modelo",
             command=self.open_script_monitor_window,
+        )
+        monitor_menu.add_command(
+            label="Auditoria de Estrutura SQL",
+            command=self.open_sqlaudit_window,
         )
         monitor_menu.add_command(
             label="Consulta SVN",
@@ -2073,6 +2079,12 @@ class VersionScannerApp(tk.Tk):
 
         threading.Thread(target=worker, daemon=True).start()
         self.after(100, poll)
+
+    def open_sqlaudit_window(self):
+        if self.sqlaudit_window and self.sqlaudit_window.window.winfo_exists():
+            self.sqlaudit_window.window.focus()
+            return
+        self.sqlaudit_window = open_sqlaudit_window(self)
 
     def open_script_monitor_window(self):
         if self.script_monitor_window and self.script_monitor_window.winfo_exists():

@@ -56,5 +56,15 @@ class OnlyTheReaderTouchesTheDatabase(unittest.TestCase):
         self.assertEqual(db_reader.SQL_READ_ONLY, "SET SESSION TRANSACTION READ ONLY")
 
 
+class WindowIsolationTests(unittest.TestCase):
+    def test_window_never_runs_scripts_or_touches_the_driver(self):
+        source = (PACKAGE.parent / "sqlaudit_window.py").read_text(encoding="utf-8")
+        for forbidden in ("run_scripts", "execute_scripts", "run_script(", "pymysql", "connect_readonly(", ".execute(", "script_runner"):
+            self.assertNotIn(forbidden, source, forbidden)
+        imports = re.findall(r"^\s*(?:from|import)\s+(\S+)", source, re.MULTILINE)
+        self.assertNotIn("app.model_db", imports)  # so o dialogo de login (app.model_db_dialogs)
+        self.assertIn("app.model_db_dialogs", imports)
+
+
 if __name__ == "__main__":
     unittest.main()

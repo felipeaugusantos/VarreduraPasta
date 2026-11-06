@@ -24,10 +24,8 @@ class ScannerTestCase(unittest.TestCase):
     def write(self, relative, content="SELECT 1;", binary=False):
         path = self.root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
-        if binary:
-            path.write_bytes(content)
-        else:
-            path.write_text(content, encoding="utf-8")
+        # bytes exatos: write_text converteria \n em \r\n no Windows
+        path.write_bytes(content if binary else content.encode("utf-8"))
         return path
 
 

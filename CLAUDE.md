@@ -88,7 +88,8 @@ Nao distribuir `settings.json` junto do pacote. Dados persistentes ficam em
 | `app/script_monitor.py` | Monitoramento diario de scripts de banco modelo. |
 | `app/model_db.py` | Execucao de scripts SQL no MySQL do banco modelo (PyMySQL), divisor de comandos. |
 | `app/script_runner.py` | Roda scripts no banco e registra `executado` no controle compartilhado. |
-| `app/sqlaudit/` | Auditoria de estrutura SQL (so leitura, sem Tkinter): `file_scanner` (`.SQL` + SHA-256, ordem por `SCRIPT_<n>`), `sql_split` (comandos com linha), `sql_parse` (sqlglot; `CREATE TABLE`, `ADD`/`MODIFY COLUMN`), `version_discovery` (pastas `<versao>\SCRIPTS` e banco sugerido), `version_tree` (base/fork de cada versao e scripts efetivos), `expected_model` (replay logico com proveniencia), `type_normalizer`, `db_reader` (UNICO modulo que fala com o MySQL: so SELECT/SET SESSION fixos, sessao READ ONLY), `comparator` (COMPATIVEL/AUSENTE/DIVERGENTE/SUBSTITUIDO/NAO_SUPORTADO/INDETERMINADO/ERRO) e `fork_hint`. Config em `settings.json` (`sqlaudit`). Nunca executa SQL dos scripts (`tests/test_sqlaudit_isolation.py`). O usuario do banco precisa de SELECT nas tabelas: sem isso o `information_schema` as esconde. |
+| `app/sqlaudit/` | Auditoria de estrutura SQL (so leitura, sem Tkinter): `file_scanner` (`.SQL` + SHA-256, ordem por `SCRIPT_<n>`), `sql_split` (comandos com linha), `sql_parse` (sqlglot; `CREATE TABLE`, `ADD`/`MODIFY COLUMN`), `version_discovery` (pastas `<versao>\SCRIPTS` e banco sugerido), `version_tree` (base/fork de cada versao e scripts efetivos), `expected_model` (replay logico com proveniencia), `type_normalizer`, `db_reader` (UNICO modulo que fala com o MySQL: so SELECT/SET SESSION fixos, sessao READ ONLY), `comparator` (COMPATIVEL/AUSENTE/DIVERGENTE/SUBSTITUIDO/NAO_SUPORTADO/INDETERMINADO/ERRO), `fork_hint`, `audit_runner` (orquestra a auditoria por versao, com cancelamento) e `report` (CSV/JSON/HTML e linha de Auditoria). Config em `settings.json` (`sqlaudit`). Nunca executa SQL dos scripts (`tests/test_sqlaudit_isolation.py`). O usuario do banco precisa de SELECT nas tabelas: sem isso o `information_schema` as esconde. |
+| `app/sqlaudit_window.py` | Janela `Monitoramento > Auditoria de Estrutura SQL` (so desenho; logica em `app/sqlaudit/`). |
 | `app/model_db_dialogs.py` | Janelas de login e configuracao do banco modelo. |
 | `app/jenkins.py` | Integracao Jenkins local via HTTP/Basic Auth. |
 | `app/svn_search.py` | Consulta SVN por revisao/requisito. |
@@ -227,6 +228,20 @@ em `settings.json` (`model_db`). Cada script e uma transacao: DML e desfeito em
 erro, DDL nao. Sucesso grava `executado` no controle compartilhado na hora. O
 PyMySQL e o `sqlglot` (so leitura, em `app/sqlaudit/`) sao as unicas dependencias
 fora da biblioteca padrao (`requirements.txt`, `hiddenimports` no spec).
+
+### Auditoria de Estrutura SQL
+
+`Monitoramento > Auditoria de Estrutura SQL` compara a estrutura do banco de cada
+versao (`BANCO_AUTCOM_<...>`, sugerido pelo nome da pasta e editavel) com o que os
+scripts `<raiz>\<versao>\SCRIPTS\SCRIPT_<n>.SQL` deveriam ter produzido. Somente
+leitura: nada dos scripts e executado e a sessao do MySQL e `READ ONLY` (usuario so
+com SELECT). Cada versao deriva de uma base (sugerida pelo nome, editavel) e tem um
+ponto de fork (maior `SCRIPT_<n>` da base ja presente no dump); sem fork o herdado
+fica INDETERMINADO. Servidor/porta/usuario/TLS e a arvore ficam em `settings.json`
+(`sqlaudit`); a senha e pedida a cada analise e nunca e gravada, logada ou exportada.
+Descoberta, teste de conexao, analise e exportacao rodam em thread + fila; cada
+analise gera uma linha `Auditoria SQL concluida|cancelada` na Auditoria. COMPATIVEL
+nao prova que o script foi executado.
 
 ### Consulta SVN
 

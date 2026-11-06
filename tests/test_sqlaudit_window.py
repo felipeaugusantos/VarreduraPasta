@@ -1,0 +1,466 @@
+"""Janela de Auditoria de Estrutura SQL com Tk de verdade e conexao falsa."""
+
+import tempfile
+import threading
+import time
+import unittest
+from datetime import datetime
+from pathlib import Path
+from unittest.mock import patch
+
+from app import settings
+from app.sqlaudit import audit_runner, db_reader, sql_parse
+from app.sqlaudit.audit_runner import AuditRun, VersionAudit
+from tests.test_sqlaudit_reader import FakeConnection, full_responses
+
+try:
+    import tkinter
+except ImportError:  # pragma: no cover
+    tkinter = None
+
+AVAILABLE = sql_parse.is_available()
+PASSWORD = "SenhaSecreta#42"
+ROOT_NAME = "379.48.2.30"
+
+
+def fake_connect(responses_by_database):
+    """Substitui connect_readonly: conexao falsa por banco, mantendo a validacao real."""
+    real = db_reader.connect_readonly
+
+    def connect(host, port, database, username, password, **kwargs):
+        connection = FakeConnection(responses_by_database[database])
+        return real(host, port, database, username, password, connector=lambda **_: connection, **{
+            k: v for k, v in kwargs.items() if k != "connector"})
+
+    return connect
+
+
+def responses_for(database, columns):
+    responses = full_responses(database)
+    responses[db_reader.SQL_TABLES] = [("CLIENTES", "InnoDB", "utf8mb4_general_ci", datetime(2026, 5, 1, 10, 0))]
+    responses[db_reader.SQL_COLUMNS] = [
+        ("CLIENTES", name, i, column_type, "NO" if name == "CLI_ID" else "YES", None, "", None, None, "")  # CLI_ID e NOT NULL no script
+        for i, (name, column_type) in enumerate(columns, 1)
+    ]
+    return responses
+
+
+@unittest.skipIf(tkinter is None, "tkinter nao instalado")
+@unittest.skipUnless(AVAILABLE, "sqlglot nao instalado")
+class WindowTestCase(unittest.TestCase):
+    def setUp(self):
+        patcher = patch.dict("os.environ", {"VARREDURA_SISTEMA_DATA_DIR": tempfile.mkdtemp()})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        temp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        self.addCleanup(temp.cleanup)
+        self.tmp = Path(temp.name)
+        original = settings.SETTINGS_FILE
+        settings.SETTINGS_FILE = self.tmp / "settings.json"
+        self.addCleanup(setattr, settings, "SETTINGS_FILE", original)
+        from app import interface
+
+        self.interface = interface
+        try:
+            with patch.object(interface.VersionScannerApp, "refresh", lambda self: None), \
+                 patch.object(interface.VersionScannerApp, "check_scripts_periodically", lambda self: None), \
+                 patch.object(interface.VersionScannerApp, "check_for_update_periodically", lambda self: None), \
+                 patch.object(interface.VersionScannerApp, "check_jenkins_periodically", lambda self: None):
+                self.app = interface.VersionScannerApp()
+        except tkinter.TclError as error:
+            self.skipTest(f"sem display: {error}")
+        self.app.withdraw()
+        self.addCleanup(self.app.destroy)
+
+        self.root = self.tmp / ROOT_NAME
+        for version, files in {
+            "48.2.30.72": {"SCRIPT_1.SQL": "CREATE TABLE CLIENTES (CLI_ID INT NOT NULL);",
+                           "SCRIPT_2.SQL": "ALTER TABLE CLIENTES ADD COLUMN CLI_EMAIL VARCHAR(100);",
+                           "SCRIPT_3.SQL": "ALTER TABLE CLIENTES MODIFY COLUMN CLI_EMAIL VARCHAR(200);"},
+            "Versões Descontinuada/48.2.30.74.150": {"SCRIPT_1.SQL": "CREATE TABLE CLIENTES (CLI_ID INT);"},
+        }.items():
+            folder = self.root / version / "SCRIPTS"
+            folder.mkdir(parents=True)
+            for name, text in files.items():
+                (folder / name).write_text(text, encoding="utf-8")
+        self.databases = {
+            "48.2.30.72": "BANCO_AUTCOM_379_48_02_30_72",
+            "48.2.30.74.150": "BANCO_AUTCOM_379_48_02_30_74_150",
+        }
+        self.logged = []
+        patcher = patch("app.sqlaudit_window.write_log", side_effect=self.logged.append)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        settings.save_sqlaudit_server("10.0.0.35", 43309, "", "encrypt", "")
+        # Dialogo modal inesperado travaria o teste: registra e falha no fim.
+        self.unexpected = []
+        for name, answer in (("showinfo", "ok"), ("showwarning", "ok"), ("showerror", "ok"), ("askyesno", False)):
+            patcher = patch(
+                f"app.sqlaudit_window.messagebox.{name}",
+                side_effect=lambda *args, _name=name, _answer=answer, **kwargs: self.unexpected.append((_name, args)) or _answer,
+            )
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.addCleanup(lambda: self.assertEqual(self.unexpected, [], "dialogo inesperado"))
+
+    def open(self, root=True):
+        if root:
+            settings.save_sqlaudit_config(str(self.root), {}, {})
+        with patch.object(self.interface.VersionScannerApp, "update", wraps=self.app.update):
+            self.app.open_sqlaudit_window()
+        self.sa = self.app.sqlaudit_window
+        self.addCleanup(lambda: self.sa.window.winfo_exists() and self.sa.window.destroy())
+        return self.sa
+
+    def pump(self, timeout=8.0, min_wait=0.0):
+        start = time.time()
+        end = start + timeout
+        while time.time() < end:
+            self.app.update()
+            if time.time() - start >= min_wait and not self.sa.busy and self.sa.queue.empty():
+                self.app.update()
+                return
+            time.sleep(0.01)
+        self.fail(f"a janela ficou ocupada ({self.sa.busy})")
+
+    def discover(self):
+        self.sa.root_var.set(str(self.root))
+        self.sa.discover()
+        self.pump()
+
+    def login(self, user="leitura"):
+        return patch("app.sqlaudit_window.ask_credentials", return_value=(user, PASSWORD))
+
+    def connection(self, **by_database):
+        return patch("app.sqlaudit.audit_runner.connect_readonly", fake_connect(by_database or {
+            "BANCO_AUTCOM_379_48_02_30_72": responses_for("BANCO_AUTCOM_379_48_02_30_72", [("CLI_ID", "int(11)"), ("CLI_EMAIL", "varchar(200)")]),
+            "BANCO_AUTCOM_379_48_02_30_74_150": responses_for("BANCO_AUTCOM_379_48_02_30_74_150", [("CLI_ID", "int(11)")]),
+        }))
+
+    @staticmethod
+    def rows(table):
+        return [table.item(iid, "values") for iid in table.get_children()]
+
+
+class DiscoveryTests(WindowTestCase):
+    def test_menu_opens_one_window_and_discovers_versions_from_the_saved_root(self):
+        self.open()
+        self.pump(min_wait=0.3)  # a descoberta automatica dispara 50 ms depois de abrir
+        self.assertEqual([r[1] for r in self.rows(self.sa.versions_table)], ["48.2.30.72", "48.2.30.74.150"])
+        self.app.open_sqlaudit_window()
+        self.assertIs(self.app.sqlaudit_window, self.sa)
+
+    def test_suggested_databases_and_default_selection(self):
+        self.open(root=False)
+        self.discover()
+        rows = {r[1]: r for r in self.rows(self.sa.versions_table)}
+        self.assertEqual(rows["48.2.30.72"][4], self.databases["48.2.30.72"])
+        self.assertEqual(rows["48.2.30.74.150"][4], self.databases["48.2.30.74.150"])
+        self.assertEqual(rows["48.2.30.72"][0], "☑")
+        self.assertEqual((rows["48.2.30.74.150"][0], rows["48.2.30.74.150"][5]), ("☐", "Descontinuada"))  # descontinuada nao vem marcada
+
+    def test_missing_root_asks_for_it_and_empty_root_reports_nothing_found(self):
+        self.open(root=False)
+        with patch("app.sqlaudit_window.messagebox.showinfo") as info:
+            self.sa.discover()
+        info.assert_called_once()
+        empty = self.tmp / "vazia"
+        empty.mkdir()
+        self.sa.root_var.set(str(empty))
+        self.sa.discover()
+        self.pump()
+        self.assertIn("Nenhuma pasta", self.sa.status_var.get())
+
+    def test_click_toggles_selection_only_in_the_first_column(self):
+        self.open(root=False)
+        self.discover()
+        table = self.sa.versions_table
+        event = type("E", (), {"x": 5, "y": 5})()
+        with patch.object(table, "identify_region", return_value="cell"), \
+             patch.object(table, "identify_column", return_value="#1"), \
+             patch.object(table, "identify_row", return_value="48.2.30.72"):
+            self.assertEqual(self.sa._on_versions_click(event), "break")
+        self.assertNotIn("48.2.30.72", self.sa.checked)
+        with patch.object(table, "identify_region", return_value="cell"), \
+             patch.object(table, "identify_column", return_value="#2"):
+            self.assertIsNone(self.sa._on_versions_click(event))
+        self.assertNotIn("48.2.30.72", self.sa.checked)
+        self.sa._check_all(True)
+        self.assertEqual(len(self.sa.checked), 2)
+
+
+class AnalysisTests(WindowTestCase):
+    def analyze(self):
+        self.open(root=False)
+        self.discover()
+        with self.login(), self.connection():
+            self.sa.analyze()
+            self.pump()
+
+    def test_full_analysis_shows_results_filters_and_details(self):
+        self.analyze()
+        sa = self.sa
+        self.assertIsNotNone(sa.run)
+        self.assertEqual([a.version for a in sa.run.versions], ["48.2.30.72"])  # a descontinuada nao estava marcada
+        rows = self.rows(sa.results_table)
+        self.assertTrue(all(r[1] == "48.2.30.72" for r in rows))
+        states = {r[3]: r[0] for r in rows}
+        self.assertEqual(states["CLIENTES.CLI_EMAIL"], "Compatível")
+        self.assertIn("Compatível", sa.status_var.get())
+        self.assertIn("não comprova", sa.status_var.get())
+        # arquivo SCRIPT_2 foi substituido pelo SCRIPT_3
+        files = {r[1]: r[2] for r in self.rows(sa.files_table)}
+        self.assertEqual(files["SCRIPT_2.SQL"], "Substituído")
+        self.assertEqual(self.rows(sa.versions_table)[0][5], "Compatível")
+        self.assertEqual(str(sa.export_button.cget("state")), "normal")
+
+    def test_divergence_is_listed_with_expected_and_found(self):
+        self.open(root=False)
+        self.discover()
+        divergent = {"BANCO_AUTCOM_379_48_02_30_72": responses_for("BANCO_AUTCOM_379_48_02_30_72", [("CLI_ID", "int"), ("CLI_EMAIL", "varchar(100)")])}
+        with self.login(), self.connection(**divergent):
+            self.sa.analyze()
+            self.pump()
+        self.sa.state_filter.set("Com problema (erro, divergente, ausente)")
+        rows = self.rows(self.sa.results_table)
+        self.assertEqual([(r[0], r[3]) for r in rows], [("Divergente", "CLIENTES.CLI_EMAIL")])
+        self.sa.results_table.selection_set(self.sa.results_table.get_children()[0])
+        self.sa.show_detail()
+        detail = self.sa.detail.get("1.0", "end")
+        self.assertIn("esperado varchar(200), encontrado varchar(100)", detail)
+        self.assertIn("SCRIPT_3.SQL, linha 1", detail)
+        self.sa.search_var.set("nao-existe")
+        self.assertEqual(self.rows(self.sa.results_table), [])
+        self.sa.search_var.set("")
+        self.sa.state_filter.set("Todos")
+        self.sa.version_filter.set("outra")
+        self.assertEqual(self.rows(self.sa.results_table), [])
+
+    def test_password_never_reaches_status_logs_widgets_settings_or_report(self):
+        self.analyze()
+        path = self.tmp / "relatorio.html"
+        with patch("app.sqlaudit_window.filedialog.asksaveasfilename", return_value=str(path)):
+            self.sa.export()
+            self.pump()
+        self.assertIn("gravado", self.sa.status_var.get())
+        haystacks = [
+            self.sa.status_var.get(),
+            " ".join(self.logged),
+            settings.SETTINGS_FILE.read_text(encoding="utf-8"),
+            path.read_text(encoding="utf-8"),
+            str(self.rows(self.sa.results_table)),
+            str(self.rows(self.sa.warnings_table)),
+        ]
+        for text in haystacks:
+            self.assertNotIn(PASSWORD, text)
+        self.assertIn("leitura", settings.SETTINGS_FILE.read_text(encoding="utf-8"))  # usuario sim, senha nunca
+
+    def test_run_is_written_to_the_audit_log_without_secrets(self):
+        self.analyze()
+        self.assertEqual(len(self.logged), 1)
+        self.assertTrue(self.logged[0].startswith("Auditoria SQL concluida | usuario="))
+        self.assertIn("destino=BANCO_AUTCOM_379_48_02_30_72", self.logged[0])
+
+    def test_database_error_is_shown_per_version_and_other_versions_continue(self):
+        self.open(root=False)
+        self.discover()
+        self.sa._check_all(True)
+        only_one = {"BANCO_AUTCOM_379_48_02_30_72": responses_for("BANCO_AUTCOM_379_48_02_30_72", [("CLI_ID", "int"), ("CLI_EMAIL", "varchar(200)")])}
+        with self.login(), self.connection(**only_one):  # o outro banco nao existe -> KeyError dentro do conector
+            self.sa.analyze()
+            self.pump()
+        by_version = {a.version: a for a in self.sa.run.versions}
+        self.assertFalse(by_version["48.2.30.72"].error)
+        self.assertIn("Erro inesperado", by_version["48.2.30.74.150"].error)
+        self.assertEqual(self.rows(self.sa.versions_table)[1][5], "Erro")
+        self.assertTrue(any("Erro:" in r[1] for r in self.rows(self.sa.warnings_table)))
+
+    def test_row_cap_is_shown_and_asks_to_refine(self):
+        self.analyze()
+        self.sa.rows = [dict(self.sa.rows[0], tabela=f"T{i}") for i in range(6000)]
+        self.sa.apply_filters()
+        self.assertEqual(len(self.sa.results_table.get_children()), 5000)
+        self.assertTrue(self.sa.count_var.get().startswith("5000 de 6000"))
+        self.assertIn("refine", self.sa.count_var.get())
+
+
+class ControlTests(WindowTestCase):
+    def test_validation_messages_before_any_connection(self):
+        self.open(root=False)
+        self.discover()
+        with patch("app.sqlaudit_window.messagebox.showinfo") as info:
+            self.sa._check_all(False)
+            self.sa.analyze()
+        info.assert_called_once()
+        self.sa._check_all(True)
+        with patch("app.sqlaudit_window.messagebox.showwarning") as warning:
+            self.sa.databases["48.2.30.72"] = ""
+            self.sa.analyze()
+            self.assertIn("Informe o banco", warning.call_args.args[1])
+            self.sa.databases["48.2.30.72"] = "X"
+            self.sa.port_var.set("abc")
+            self.sa.analyze()
+            self.assertIn("porta", warning.call_args.args[1])
+            self.sa.port_var.set("43309")
+            self.sa.tls_var.set("Verificar certificado")
+            self.sa.ca_var.set("")
+            self.sa.analyze()
+            self.assertIn("CA", warning.call_args.args[1])
+
+    def test_login_cancel_starts_nothing(self):
+        self.open(root=False)
+        self.discover()
+        with patch("app.sqlaudit_window.ask_credentials", return_value=None), \
+             patch("app.sqlaudit.audit_runner.run_audit") as run:
+            self.sa.analyze()
+        run.assert_not_called()
+        self.assertEqual(self.sa.busy, "")
+
+    def test_cancel_stops_the_running_analysis(self):
+        self.open(root=False)
+        self.discover()
+        started = threading.Event()
+
+        def slow(request, progress=None, cancel_event=None, connector=None):
+            progress("[1/1] 48.2.30.72: lendo scripts", 0.3)
+            started.set()
+            cancel_event.wait(5)
+            return AuditRun(datetime.now(), "x", request.root, [VersionAudit("48.2.30.72", "B")], datetime.now(), cancelled=cancel_event.is_set())
+
+        with self.login(), patch("app.sqlaudit.audit_runner.run_audit", slow):
+            self.sa.analyze()
+            self.assertEqual(self.sa.busy, "analisando")
+            self.assertEqual(str(self.sa.cancel_button.cget("state")), "normal")
+            self.assertEqual(str(self.sa.analyze_button.cget("state")), "disabled")
+            self.assertTrue(started.wait(3))
+            self.sa.cancel()
+            self.pump()
+        self.assertTrue(self.sa.run.cancelled)
+        self.assertIn("cancelada", self.sa.status_var.get())
+        self.assertTrue(self.logged[-1].startswith("Auditoria SQL cancelada"))
+        self.assertEqual(str(self.sa.cancel_button.cget("state")), "disabled")
+
+    def test_closing_while_running_asks_and_cancels(self):
+        self.open(root=False)
+        self.discover()
+        release = threading.Event()
+
+        def slow(request, progress=None, cancel_event=None, connector=None):
+            cancel_event.wait(5)
+            release.set()
+            return AuditRun(datetime.now(), "x", request.root)
+
+        with self.login(), patch("app.sqlaudit.audit_runner.run_audit", slow):
+            self.sa.analyze()
+            with patch("app.sqlaudit_window.messagebox.askyesno", return_value=False):
+                self.sa.close()
+            self.assertTrue(self.sa.window.winfo_exists())
+            with patch("app.sqlaudit_window.messagebox.askyesno", return_value=True):
+                self.sa.close()
+            self.assertTrue(release.wait(3))
+        self.assertFalse(self.sa.window.winfo_exists())
+
+    def test_unexpected_worker_failure_is_shown_not_swallowed(self):
+        self.open(root=False)
+        self.discover()
+        with self.login(), patch("app.sqlaudit.audit_runner.run_audit", side_effect=RuntimeError("boom")), \
+             patch("app.sqlaudit_window.messagebox.showerror") as error:
+            self.sa.analyze()
+            self.pump()
+        self.assertIn("boom", error.call_args.args[1])
+        self.assertEqual(self.sa.busy, "")
+        self.assertEqual(str(self.sa.analyze_button.cget("state")), "normal")
+
+    def test_connection_test_reports_ok_and_failure(self):
+        self.open(root=False)
+        self.discover()
+        self.sa.versions_table.selection_set("48.2.30.72")
+        with self.login(), self.connection():
+            self.sa.test_connection()
+            self.pump()
+        self.assertTrue(self.sa.status_var.get().startswith("✔"))
+        self.assertIn("1 tabela(s) visivel(is)", self.sa.status_var.get())
+        with self.login(), patch("app.sqlaudit.audit_runner.connect_readonly", side_effect=db_reader.AuditDbError("Usuario ou senha do banco incorretos.")):
+            self.sa.test_connection()
+            self.pump()
+        self.assertTrue(self.sa.status_var.get().startswith("✖"))
+        self.assertIn("incorretos", self.sa.status_var.get())
+
+    def test_server_settings_are_remembered_but_never_the_password(self):
+        self.open(root=False)
+        self.discover()
+        self.sa.host_var.set("10.0.0.35")
+        self.sa.port_var.set("43309")
+        with self.login("auditor"), self.connection():
+            self.sa.analyze()
+            self.pump()
+        saved = settings.load_sqlaudit_server()
+        self.assertEqual((saved["host"], saved["port"], saved["username"]), ("10.0.0.35", 43309, "auditor"))
+        self.assertNotIn(PASSWORD, settings.SETTINGS_FILE.read_text(encoding="utf-8"))
+
+
+class EditVersionTests(WindowTestCase):
+    def edit(self, version, database=None, base=None, fork=None):
+        def fake_wait(dialog):
+            entries = self.find(dialog, "TEntry")
+            boxes = self.find(dialog, "TCombobox")
+            if database is not None:
+                entries[0].delete(0, "end")
+                entries[0].insert(0, database)
+            if base is not None:
+                boxes[0].set(base)
+            if fork is not None:
+                entries[1].delete(0, "end")
+                entries[1].insert(0, fork)
+            [b for b in self.find(dialog, "TButton") if b.cget("text") == "Salvar"][0].invoke()
+
+        self.sa.window.wait_window = fake_wait
+        self.sa._edit_version(version)
+
+    @classmethod
+    def find(cls, widget, kind):
+        found = []
+        for child in widget.winfo_children():
+            if child.winfo_class() == kind:
+                found.append(child)
+            found.extend(cls.find(child, kind))
+        return found
+
+    def test_base_fork_and_database_are_saved_and_survive_a_new_discovery(self):
+        self.open(root=False)
+        self.discover()
+        self.edit("48.2.30.74.150", database="BANCO_CORRIGIDO", base="48.2.30.72", fork="2")
+        node = self.sa.tree.nodes["48.2.30.74.150"]
+        self.assertEqual((node.base, node.fork), ("48.2.30.72", 2))
+        row = {r[1]: r for r in self.rows(self.sa.versions_table)}["48.2.30.74.150"]
+        self.assertEqual((row[2], row[3], row[4]), ("48.2.30.72", "2", "BANCO_CORRIGIDO"))
+        config = settings.load_sqlaudit_config()
+        self.assertEqual(config["tree"]["48.2.30.74.150"], {"base": "48.2.30.72", "fork": 2})
+        self.assertEqual(config["databases"]["48.2.30.74.150"], "BANCO_CORRIGIDO")
+        self.sa._saved_tree, self.sa._saved_databases = config["tree"], config["databases"]
+        self.sa.discover()
+        self.pump()
+        self.assertEqual(self.sa.tree.nodes["48.2.30.74.150"].fork, 2)
+
+    def test_invalid_fork_and_cycle_are_refused_without_changing_anything(self):
+        self.open(root=False)
+        self.discover()
+        with patch("app.sqlaudit_window.messagebox.showwarning") as warning:
+            self.edit("48.2.30.72", fork="abc")
+            self.assertIn("inteiro", warning.call_args.args[1])
+        self.edit("48.2.30.74.150", base="48.2.30.72", fork="1")
+        with patch("app.sqlaudit_window.messagebox.showwarning") as warning:
+            self.edit("48.2.30.72", base="48.2.30.74.150")
+            self.assertIn("Ciclo", warning.call_args.args[1])
+        self.assertIsNone(self.sa.tree.nodes["48.2.30.72"].base)
+
+    def test_edit_without_selection_asks_to_select(self):
+        self.open(root=False)
+        self.discover()
+        with patch("app.sqlaudit_window.messagebox.showinfo") as info:
+            self.sa.edit_selected()
+        info.assert_called_once()
+
+
+if __name__ == "__main__":
+    unittest.main()

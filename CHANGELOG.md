@@ -7,6 +7,15 @@ Semantico (`MAIOR.MENOR.CORRECAO`).
 
 ## [Nao lancado]
 
+### Adicionado
+- `Monitoramento > Auditoria de Estrutura SQL`: compara a estrutura de cada banco
+  `BANCO_AUTCOM_<versao>` com os scripts da versao e de suas bases (somente leitura,
+  senha pedida a cada analise e nunca gravada). Descobre as pastas `SCRIPTS` pela
+  raiz, sugere banco e base pelo nome, permite informar o fork, mostra progresso,
+  aceita cancelamento, filtra por estado/versao/texto, detalha esperado x encontrado
+  com a origem (script e linha), sugere o fork pelo banco e exporta HTML, CSV ou JSON.
+  Cada analise grava uma linha na Auditoria.
+
 ### Corrigido
 - `requirements.txt` e o workflow de CI fixavam `pymysql==2.2.8`, versao que nao
   existe (o `2.2.8` e o `pymysql.__version__` de compatibilidade com MySQLdb): o

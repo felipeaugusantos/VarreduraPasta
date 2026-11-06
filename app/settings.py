@@ -244,11 +244,51 @@ def load_sqlaudit_config():
 @_synchronized
 def save_sqlaudit_config(root, tree, databases):
     data = _load_settings()
-    data["sqlaudit"] = {
-        "root": str(root or "").strip(),
-        "tree": tree,
-        "databases": {version: name for version, name in databases.items() if str(name).strip()},
+    current = data.get("sqlaudit") if isinstance(data.get("sqlaudit"), dict) else {}
+    current.update(
+        {
+            "root": str(root or "").strip(),
+            "tree": tree,
+            "databases": {version: name for version, name in databases.items() if str(name).strip()},
+        }
+    )
+    data["sqlaudit"] = current
+    _save_settings(data)
+
+
+def load_sqlaudit_server():
+    """Servidor da auditoria. Sem valor salvo, usa o servidor do banco modelo (e o mesmo MySQL).
+
+    Guarda so o usuario de LEITURA (nunca a senha) e como tratar o TLS.
+    """
+    value = _load_settings().get("sqlaudit")
+    server = value.get("server") if isinstance(value, dict) and isinstance(value.get("server"), dict) else {}
+    model = load_model_db()
+    try:
+        port = int(server.get("port") or model["port"])
+    except (TypeError, ValueError):
+        port = model["port"]
+    return {
+        "host": str(server.get("host") or model["host"]).strip(),
+        "port": port,
+        "username": str(server.get("username") or "").strip(),
+        "tls": "verify" if server.get("tls") == "verify" else "encrypt",
+        "ca_file": str(server.get("ca_file") or "").strip(),
     }
+
+
+@_synchronized
+def save_sqlaudit_server(host, port, username="", tls="encrypt", ca_file=""):
+    data = _load_settings()
+    current = data.get("sqlaudit") if isinstance(data.get("sqlaudit"), dict) else {}
+    current["server"] = {
+        "host": str(host or "").strip(),
+        "port": int(port) if str(port or "").strip().isdigit() else 3306,
+        "username": str(username or "").strip(),
+        "tls": "verify" if tls == "verify" else "encrypt",
+        "ca_file": str(ca_file or "").strip(),
+    }
+    data["sqlaudit"] = current
     _save_settings(data)
 
 

@@ -9,13 +9,13 @@ from app import model_db, theme
 from app.settings import load_model_db, save_model_db
 
 
-def ask_credentials(parent, username="", message=""):
+def ask_credentials(parent, username="", message="", title="Banco modelo - login"):
     """Pede usuario e senha do banco. Retorna (usuario, senha) ou None se cancelar.
 
     A senha so existe em memoria durante a execucao; nada e gravado.
     """
     window = tk.Toplevel(parent)
-    window.title("Banco modelo - login")
+    window.title(title)
     theme.size_window(window, 400, 230 if message else 200)
     window.resizable(False, False)
     window.transient(parent)

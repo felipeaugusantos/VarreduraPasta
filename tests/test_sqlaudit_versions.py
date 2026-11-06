@@ -277,6 +277,35 @@ class SqlAuditSettingsTests(SettingsTestCase):
         self.assertIsNone(settings.load_sqlaudit_config()["tree"]["v"]["fork"])
         self.assertEqual(settings.load_base_directory(), Path(r"C:\Outra"))
 
+    def test_server_defaults_to_the_model_database_server(self):
+        settings.save_model_db("10.0.0.35", 43309, "modelo", "operador")
+        server = settings.load_sqlaudit_server()
+        self.assertEqual((server["host"], server["port"], server["username"], server["tls"]), ("10.0.0.35", 43309, "", "encrypt"))
+
+    def test_server_roundtrip_and_tls_is_normalized(self):
+        settings.save_sqlaudit_server("srv", "3307", "auditor", "verify", "C:\\ca.pem")
+        self.assertEqual(
+            settings.load_sqlaudit_server(),
+            {"host": "srv", "port": 3307, "username": "auditor", "tls": "verify", "ca_file": "C:\\ca.pem"},
+        )
+        settings.save_sqlaudit_server("srv", "abc", "auditor", "qualquer-coisa")
+        loaded = settings.load_sqlaudit_server()
+        self.assertEqual((loaded["port"], loaded["tls"]), (3306, "encrypt"))
+
+    def test_saving_the_tree_keeps_the_server_and_saving_the_server_keeps_the_tree(self):
+        settings.save_sqlaudit_server("srv", 3306, "auditor")
+        settings.save_sqlaudit_config("raiz", {"v": {"base": "", "fork": 3}}, {"v": "BANCO"})
+        self.assertEqual(settings.load_sqlaudit_server()["username"], "auditor")
+        settings.save_sqlaudit_server("outro", 3306, "auditor")
+        config = settings.load_sqlaudit_config()
+        self.assertEqual((config["root"], config["tree"]["v"]["fork"], config["databases"]), ("raiz", 3, {"v": "BANCO"}))
+
+    def test_server_settings_have_no_password_field(self):
+        settings.save_sqlaudit_server("srv", 3306, "auditor")
+        text = settings.SETTINGS_FILE.read_text(encoding="utf-8").lower()
+        self.assertNotIn("password", text)
+        self.assertNotIn("senha", text)
+
     def test_never_stores_credentials(self):
         settings.save_sqlaudit_config("r", {}, {"v": "BANCO"})
         self.assertNotIn("password", settings.SETTINGS_FILE.read_text(encoding="utf-8").lower())
