@@ -7,6 +7,8 @@ Semantico (`MAIOR.MENOR.CORRECAO`).
 
 ## [Nao lancado]
 
+## [2.8.0] - 2026-11-06
+
 ### Adicionado
 - `Monitoramento > Auditoria de Estrutura SQL`: compara a estrutura de cada banco
   `BANCO_AUTCOM_<versao>` com os scripts da versao e de suas bases (somente leitura,
