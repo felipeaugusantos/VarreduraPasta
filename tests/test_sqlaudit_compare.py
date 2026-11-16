@@ -129,6 +129,73 @@ class ScenarioTests(CompareTestCase):
         self.assertNotIn(AUSENTE, {o.status for o in result.operations})
 
 
+PROCEDURE = (
+    "DROP PROCEDURE IF EXISTS ALTER_MOTDEL_255;\n"
+    "DELIMITER $$\n"
+    "CREATE PROCEDURE ALTER_MOTDEL_255()\n"
+    "BEGIN\n"
+    "  DECLARE tbl VARCHAR(64);\n"
+    "  SET @s = CONCAT('ALTER TABLE ', tbl, ' MODIFY MOTDEL VARCHAR(255)');\n"
+    "  PREPARE st FROM @s;\n"
+    "  EXECUTE st;\n"
+    "END$$\n"
+    "DELIMITER ;\n"
+    "CALL ALTER_MOTDEL_255;\n"
+    "DROP PROCEDURE IF EXISTS ALTER_MOTDEL_255;\n"
+)
+
+
+@unittest.skipUnless(AVAILABLE, "sqlglot nao instalado")
+class HiddenEffectTests(CompareTestCase):
+    LAYOUT = {
+        "SCRIPT_1.SQL": "CREATE TABLE A (ID INT NOT NULL, MOTDEL VARCHAR(50), OUTRA VARCHAR(10));",
+        "SCRIPT_2.SQL": PROCEDURE,
+        "SCRIPT_3.SQL": "CREATE TABLE B (ID INT NOT NULL, MOTDEL VARCHAR(50));",
+    }
+
+    def compared(self, a_motdel="varchar(255)", b_motdel="varchar(50)", a_other="varchar(10)"):
+        schema = db_schema(
+            db_table("A", col("ID", "int", null=False), col("MOTDEL", a_motdel), col("OUTRA", a_other)),
+            db_table("B", col("ID", "int", null=False), col("MOTDEL", b_motdel)),
+        )
+        return compare(self.model(**self.LAYOUT), schema)
+
+    def test_column_cited_by_a_later_procedure_is_inconclusive_not_divergent(self):
+        result = self.compared()
+        column = self.column(result, "A", "MOTDEL")
+        self.assertEqual(column.status, INDETERMINADO)
+        self.assertTrue([n for n in column.notes if "SCRIPT_2.SQL" in n and "linha 3" in n])
+        self.assertTrue([w for w in result.warnings if "procedure ou SQL dinamico" in w])
+
+    def test_objects_defined_after_the_procedure_keep_their_verdict(self):
+        result = self.compared(b_motdel="varchar(255)")
+        self.assertEqual(self.column(result, "B", "MOTDEL").status, DIVERGENTE)
+
+    def test_columns_not_cited_by_the_procedure_keep_their_verdict(self):
+        result = self.compared(a_other="varchar(99)")
+        self.assertEqual(self.column(result, "A", "OUTRA").status, DIVERGENTE)
+
+    def test_plain_dml_and_unrelated_procedures_do_not_hide_divergences(self):
+        layout = {
+            "SCRIPT_1.SQL": "CREATE TABLE A (ID INT NOT NULL, MOTDEL VARCHAR(50));",
+            "SCRIPT_2.SQL": "UPDATE A SET MOTDEL = 'x'; INSERT INTO A (ID, MOTDEL) VALUES (1, 'y');",
+            "SCRIPT_3.SQL": "DROP PROCEDURE IF EXISTS ALTER_MOTDEL_255;\nCALL ALTER_MOTDEL_255;",
+        }
+        schema = db_schema(db_table("A", col("ID", "int", null=False), col("MOTDEL", "varchar(255)")))
+        result = compare(self.model(layout=None, **layout), schema)
+        self.assertEqual(self.column(result, "A", "MOTDEL").status, DIVERGENTE)
+        self.assertFalse([w for w in result.warnings if "procedure ou SQL dinamico" in w])
+
+    def test_without_a_call_the_effect_starts_at_the_creation(self):
+        layout = {
+            "SCRIPT_1.SQL": "CREATE TABLE A (ID INT NOT NULL, MOTDEL VARCHAR(50));",
+            "SCRIPT_2.SQL": PROCEDURE.replace("CALL ALTER_MOTDEL_255;\n", ""),
+        }
+        schema = db_schema(db_table("A", col("ID", "int", null=False), col("MOTDEL", "varchar(255)")))
+        result = compare(self.model(layout=None, **layout), schema)
+        self.assertEqual(self.column(result, "A", "MOTDEL").status, INDETERMINADO)
+
+
 class AttributeTests(CompareTestCase):
     def test_equivalent_types_are_compatible(self):
         self.assertEqual(self.one("INTEGER", col("A", "int(11)")).status, COMPATIVEL)

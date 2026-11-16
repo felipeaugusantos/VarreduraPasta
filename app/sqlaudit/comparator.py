@@ -399,8 +399,91 @@ def compare(model, schema, expected_database=None):
         _compare_table(result, state, schema.tables.get(key), schema)
     for key, dropped in model.absent_tables.items():
         _compare_dropped_table(result, dropped, schema.tables.get(key), schema)
+    _hidden_effects(result, model)
     _operation_results(result, model)
     return result
+
+
+_STRUCTURE_WORDS = re.compile(r"\b(ALTER|DROP|RENAME|MODIFY|CHANGE)\b", re.IGNORECASE)
+_ROUTINE = re.compile(r"^\s*CREATE\s+(?:DEFINER\s*=\s*\S+\s+)?(PROCEDURE|FUNCTION)\s+`?([\w$]+)`?", re.IGNORECASE)
+_DYNAMIC = re.compile(r"\b(PREPARE|EXECUTE)\b", re.IGNORECASE)
+
+
+def _mentions(text, name):
+    return bool(name) and re.search(rf"(?<![\w$]){re.escape(name)}(?![\w$])", text, re.IGNORECASE) is not None
+
+
+def _hidden_effect_sources(model, position):
+    """Comandos que o modelo nao interpreta mas que podem executar ALTER/DROP/RENAME por dentro.
+
+    Devolve (posicao_do_efeito, entrada, texto): procedures/funcoes (o efeito vale a partir
+    do `CALL` no mesmo script, ou da criacao se nao houver) e SQL dinamico (PREPARE/EXECUTE).
+    So comandos sem tabela e sem interpretacao; DML comum nao entra.
+    """
+    sources = []
+    entries = [entry for entry in model.unresolved if entry.operation.statement is not None]
+    for entry in entries:
+        text = entry.operation.statement.text
+        if not _STRUCTURE_WORDS.search(text):
+            continue
+        routine = _ROUTINE.match(text)
+        if routine is None and not _DYNAMIC.search(text):
+            continue
+        effect = position[id(entry)]
+        if routine is not None:
+            call = re.compile(rf"^\s*CALL\s+`?{re.escape(routine.group(2))}`?\b", re.IGNORECASE)
+            calls = [
+                position[id(other)]
+                for other in entries
+                if other.provenance.script == entry.provenance.script
+                and other.provenance.version == entry.provenance.version
+                and position[id(other)] > effect
+                and call.match(other.operation.statement.text)
+            ]
+            effect = max(calls) if calls else effect
+        sources.append((effect, entry, text))
+    return sources
+
+
+def _hidden_effects(result, model):
+    """Rebaixa para INDETERMINADO o que um comando nao interpretado pode ter mudado.
+
+    Ex.: uma procedure que faz `ALTER TABLE ... MODIFY MOTDEL VARCHAR(255)` em varias
+    tabelas e e executada com `CALL`. O modelo nao a segue, entao o esperado dos objetos
+    definidos ANTES dela e citados nela pode estar desatualizado.
+    """
+    if not model.unresolved:
+        return
+    position = {id(entry): index for index, entry in enumerate(model.applied)}
+    first = {}
+    for index, entry in enumerate(model.applied):
+        provenance = entry.provenance
+        first.setdefault((provenance.version, provenance.script, provenance.statement_index), index)
+    sources = _hidden_effect_sources(model, position)
+    if not sources:
+        return
+    downgraded = 0
+    for item in result.objects:
+        if item.status not in (DIVERGENTE, AUSENTE) or item.provenance is None:
+            continue
+        origin = first.get((item.provenance.version, item.provenance.script, item.provenance.statement_index))
+        if origin is None:
+            continue
+        names = [item.column] if item.kind == "coluna" else [item.table, item.column]
+        for effect, entry, text in sources:
+            if effect > origin and any(_mentions(text, name) for name in names if name):
+                where = f"{entry.provenance.script}, linha {entry.provenance.line}"
+                item.notes = tuple(item.notes) + (
+                    f"um comando que o modelo nao interpreta ({where}) cita este objeto e pode te-lo alterado",
+                )
+                item.status = INDETERMINADO
+                downgraded += 1
+                break
+    if downgraded:
+        result.warnings.append(
+            f"{downgraded} objeto(s) divergente(s) ou ausente(s) viraram INDETERMINADO porque uma procedure ou "
+            "SQL dinamico nao interpretado cita o objeto e executa ALTER/DROP/RENAME depois da definicao."
+        )
 
 
 def _compare_dropped_table(result, dropped, db_table, schema):
