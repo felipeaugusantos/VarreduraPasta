@@ -209,6 +209,23 @@ class AttributeTests(CompareTestCase):
         self.assertEqual(self.one("TINYINT(01)", col("A", "tinyint(1)")).status, COMPATIVEL)
         self.assertEqual(self.one("VARCHAR(05)", col("A", "varchar(50)")).status, DIVERGENTE)  # 05 != 50
 
+    def test_auto_increment_is_implicitly_not_null(self):
+        self.assertEqual(
+            self.one("INT AUTO_INCREMENT", col("A", "int", null=False, extra="auto_increment")).status, COMPATIVEL
+        )
+        self.assertEqual(self.one("INT", col("A", "int", null=False)).status, DIVERGENTE)  # sem auto_increment continua apontando
+
+    def test_char_defaults_ignore_trailing_spaces_but_varchar_does_not(self):
+        self.assertEqual(self.one("CHAR(1) DEFAULT 'N '", col("A", "char(1)", default="N")).status, COMPATIVEL)
+        self.assertEqual(self.one("CHAR(3) DEFAULT ' '", col("A", "char(3)", default="")).status, COMPATIVEL)
+        self.assertEqual(self.one("VARCHAR(5) DEFAULT 'N '", col("A", "varchar(5)", default="N")).status, DIVERGENTE)
+        self.assertEqual(self.one("CHAR(1) DEFAULT 'S'", col("A", "char(1)", default="N")).status, DIVERGENTE)
+
+    def test_text_blob_json_ignore_a_literal_default(self):
+        self.assertEqual(self.one("TEXT DEFAULT ''", col("A", "text", default=None)).status, COMPATIVEL)
+        self.assertEqual(self.one("LONGTEXT DEFAULT 'x'", col("A", "longtext", default=None)).status, COMPATIVEL)
+        self.assertEqual(self.one("VARCHAR(10) DEFAULT ''", col("A", "varchar(10)", default=None)).status, DIVERGENTE)
+
     def test_type_length_and_unsigned_differences(self):
         self.assertEqual(self.one("VARCHAR(50)", col("A", "varchar(60)")).status, DIVERGENTE)
         self.assertEqual(self.one("INT UNSIGNED", col("A", "int")).status, DIVERGENTE)

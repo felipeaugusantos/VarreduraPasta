@@ -204,14 +204,24 @@ def _expected_default(raw):
     return "unknown", None
 
 
+# TEXT/BLOB/JSON nao aceitam DEFAULT literal no MySQL 5.7: o servidor ignora (modo nao estrito)
+# e o banco fica sem default, mesmo com `DEFAULT ''` no script.
+_NO_DEFAULT_TYPES = {
+    "tinytext", "text", "mediumtext", "longtext", "tinyblob", "blob", "mediumblob", "longblob", "json", "geometry",
+}
+
+
 def _default_difference(spec, db_column, type_text):
     """(Difference|None, inconclusive_note|None)."""
     found = db_column.default
+    base_type = re.split(r"[( ]", type_text, maxsplit=1)[0]
     if not spec.has_default:
         legacy_timestamp = type_text.startswith(("timestamp", "datetime"))
         generated = "generated" in db_column.extra.lower()
         if found is not None and not legacy_timestamp and not generated and not spec.auto_increment:
             return Difference("default", "(sem default)", found), None
+        return None, None
+    if found is None and base_type in _NO_DEFAULT_TYPES:
         return None, None
     kind, value = _expected_default(spec.default)
     if kind == "unknown":
@@ -229,7 +239,11 @@ def _default_difference(spec, db_column, type_text):
         except InvalidOperation:
             same = False
         return (None, None) if same else (Difference("default", str(value), found), None)
-    return (None, None) if found == value else (Difference("default", value, found), None)
+    if base_type == "char":  # o MySQL tira os espacos finais de CHAR: 'N ' e 'N' sao o mesmo valor
+        same = found.rstrip(" ") == value.rstrip(" ")
+    else:
+        same = found == value
+    return (None, None) if same else (Difference("default", value, found), None)
 
 
 def compare_column(spec, db_column, table_state):
@@ -250,6 +264,8 @@ def compare_column(spec, db_column, table_state):
     elif spec.nullable is None and spec.name.lower() in table_state.implicit_not_null:
         if db_column.nullable:  # a chave primaria torna a coluna NOT NULL
             differences.append(Difference("nulabilidade", "NOT NULL (chave primaria)", "NULL"))
+    elif spec.nullable is None and spec.auto_increment:
+        pass  # AUTO_INCREMENT torna a coluna NOT NULL sem o script declarar
     elif spec.nullable is None and not db_column.nullable:
         # NOT NULL sem o script declarar: pode vir de TIMESTAMP legado ou de restricao nao comparada
         if not (table_state.unchecked_elements or expected_type.text.startswith("timestamp")):

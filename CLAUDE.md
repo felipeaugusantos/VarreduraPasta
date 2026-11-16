@@ -259,7 +259,7 @@ achados pelas colunas (o MySQL escolhe o nome). Continuam NAO SUPORTADOS, com o
 motivo, e nunca viram validado: CHECK, particoes, `ROW_FORMAT`/`COMMENT` de tabela,
 indice funcional, `MATCH` em FK, colunas geradas/invisiveis, triggers, procedures,
 views, DML e SQL dinamico. `ALGORITHM=`, `LOCK=` e `AUTO_INCREMENT=N` sao ignorados de
-proposito (nao sao estrutura). Uma acao que o modelo nao segue (ex.: `ALTER COLUMN ...
+proposito (nao sao estrutura). Equivalencias do MySQL tratadas: `AUTO_INCREMENT` implica NOT NULL, CHAR ignora espacos finais no DEFAULT, TEXT/BLOB/JSON ignoram DEFAULT literal, tamanho com zero a esquerda (`char(02)`). Uma acao que o modelo nao segue (ex.: `ALTER COLUMN ...
 SET DEFAULT`) deixa so aquela tabela INDETERMINADA. Procedure/funcao ou SQL dinamico (PREPARE/EXECUTE) com `ALTER/DROP/RENAME` por dentro nao e seguido: objetos definidos antes do efeito (o `CALL` no mesmo script) e citados no texto viram INDETERMINADO, com nota e aviso (`_hidden_effects` em `comparator`).
 
 Script corretivo: `Script corretivo...` (depois de uma analise) grava um `.sql` PARA
