@@ -103,94 +103,116 @@ class SqlAuditWindow:
     def _build(self):
         frame = ttk.Frame(self.window, padding=14)
         frame.pack(fill="both", expand=True)
-        frame.columnconfigure(1, weight=1)
-        frame.rowconfigure(4, weight=1)
+        frame.columnconfigure(0, weight=1)
+        frame.rowconfigure(3, weight=1)
+        section = self._font("section")
 
-        ttk.Label(frame, text="Raiz das versões", style="Muted.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Entry(frame, textvariable=self.root_var).grid(row=0, column=1, sticky="ew", padx=(10, 0))
-        root_buttons = ttk.Frame(frame)
-        root_buttons.grid(row=0, column=2, padx=(8, 0))
+        header = ttk.Frame(frame)
+        header.grid(row=0, column=0, sticky="ew")
+        header.columnconfigure(1, weight=1)
+        self.setup_button = ttk.Button(header, text="▾ Configuração", command=self.toggle_setup)
+        self.setup_button.grid(row=0, column=0)
+        self.setup_summary = ttk.Label(header, text="", style="Muted.TLabel")
+        self.setup_summary.grid(row=0, column=1, sticky="w", padx=(10, 0))
+        self.setup = ttk.Frame(frame)
+        self.setup.grid(row=1, column=0, sticky="ew", pady=(6, 0))
+        self.setup.columnconfigure(0, weight=1)
+
+        # 1. pasta dos scripts
+        folder = ttk.Frame(self.setup)
+        folder.grid(row=0, column=0, sticky="ew")
+        folder.columnconfigure(1, weight=1)
+        ttk.Label(folder, text="1  Pasta dos scripts", font=section).grid(row=0, column=0, columnspan=3, sticky="w")
+        ttk.Entry(folder, textvariable=self.root_var).grid(row=1, column=0, columnspan=2, sticky="ew", pady=(4, 0))
+        root_buttons = ttk.Frame(folder)
+        root_buttons.grid(row=1, column=2, padx=(8, 0), pady=(4, 0))
         self.choose_button = ttk.Button(root_buttons, text="Escolher...", command=self.choose_root)
         self.choose_button.grid(row=0, column=0, padx=(0, 6))
         self.discover_button = ttk.Button(root_buttons, text="Descobrir versões", command=self.discover)
         self.discover_button.grid(row=0, column=1)
+        ttk.Label(
+            folder,
+            text="Pode ser a raiz (com <versão>\\SCRIPTS dentro), a pasta de uma versão ou a própria pasta SCRIPTS.",
+            style="Muted.TLabel",
+        ).grid(row=2, column=0, columnspan=3, sticky="w", pady=(2, 0))
 
-        server = ttk.LabelFrame(frame, text="Servidor MySQL (somente leitura)", padding=8)
-        server.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(10, 0))
-        server.columnconfigure(5, weight=1)
-        ttk.Label(server, text="Servidor:").grid(row=0, column=0, sticky="w")
+        # 2. servidor
+        server = ttk.Frame(self.setup)
+        server.grid(row=1, column=0, sticky="ew", pady=(12, 0))
+        server.columnconfigure(6, weight=1)
+        ttk.Label(server, text="2  Servidor MySQL (somente leitura)", font=section).grid(row=0, column=0, columnspan=8, sticky="w")
+        ttk.Label(server, text="Servidor:").grid(row=1, column=0, sticky="w", pady=(4, 0))
         self.host_entry = ttk.Entry(server, textvariable=self.host_var, width=18)
-        self.host_entry.grid(row=0, column=1, padx=(6, 12))
-        ttk.Label(server, text="Porta:").grid(row=0, column=2, sticky="w")
+        self.host_entry.grid(row=1, column=1, padx=(6, 12), pady=(4, 0))
+        ttk.Label(server, text="Porta:").grid(row=1, column=2, sticky="w", pady=(4, 0))
         self.port_entry = ttk.Entry(server, textvariable=self.port_var, width=7)
-        self.port_entry.grid(row=0, column=3, padx=(6, 12))
+        self.port_entry.grid(row=1, column=3, padx=(6, 12), pady=(4, 0))
         for entry in (self.host_entry, self.port_entry):
             entry.bind("<Return>", lambda _event: self.connect_server())
         self.connect_button = ttk.Button(server, text="Conectar e listar bancos...", command=self.connect_server)
-        self.connect_button.grid(row=0, column=6, padx=(12, 0), sticky="e")
-        ttk.Label(server, text="TLS:").grid(row=0, column=4, sticky="w")
-        self.tls_box = ttk.Combobox(server, textvariable=self.tls_var, values=list(TLS_LABELS.values()), state="readonly", width=38)
-        self.tls_box.grid(row=0, column=5, sticky="w", padx=(6, 0))
-        ttk.Label(server, text="Arquivo da CA:").grid(row=1, column=0, sticky="w", pady=(6, 0))
-        ttk.Entry(server, textvariable=self.ca_var).grid(row=1, column=1, columnspan=5, sticky="ew", padx=(6, 6), pady=(6, 0))
-        ttk.Button(server, text="...", width=3, command=self.choose_ca).grid(row=1, column=6, pady=(6, 0))
+        self.connect_button.grid(row=1, column=4, pady=(4, 0))
+        self.advanced_button = ttk.Button(server, text="Avançado ▸", command=self.toggle_advanced)
+        self.advanced_button.grid(row=1, column=5, padx=(8, 0), pady=(4, 0))
         ttk.Label(
             server,
-            text="Informe servidor e porta e clique em Conectar (ou Enter): pede o usuário e a senha e lista os bancos. "
-            "Usuário e senha não são gravados. Use um usuário só com SELECT.",
+            text="Pede usuário e senha (não são gravados) e lista os bancos. Use um usuário só com SELECT.",
             style="Muted.TLabel",
-        ).grid(row=2, column=0, columnspan=7, sticky="w", pady=(6, 0))
-        ttk.Label(server, text="Ignorar tabelas com prefixo:").grid(row=3, column=0, columnspan=2, sticky="w", pady=(6, 0))
-        ttk.Entry(server, textvariable=self.ignored_var).grid(row=3, column=2, columnspan=4, sticky="ew", padx=(6, 6), pady=(6, 0))
-        ttk.Label(server, text="Separe por vírgula (ex.: CONECTA_). Fora da comparação; a contagem aparece em Avisos.", style="Muted.TLabel").grid(
-            row=4, column=0, columnspan=7, sticky="w"
-        )
+        ).grid(row=2, column=0, columnspan=8, sticky="w", pady=(2, 0))
+        self.advanced = ttk.LabelFrame(server, text="Avançado", padding=8)
+        self.advanced.grid(row=3, column=0, columnspan=8, sticky="ew", pady=(6, 0))
+        self.advanced.columnconfigure(1, weight=1)
+        ttk.Label(self.advanced, text="TLS:").grid(row=0, column=0, sticky="w")
+        self.tls_box = ttk.Combobox(self.advanced, textvariable=self.tls_var, values=list(TLS_LABELS.values()), state="readonly", width=38)
+        self.tls_box.grid(row=0, column=1, sticky="w", padx=(6, 0))
+        ttk.Label(self.advanced, text="Arquivo da CA:").grid(row=1, column=0, sticky="w", pady=(6, 0))
+        ttk.Entry(self.advanced, textvariable=self.ca_var).grid(row=1, column=1, sticky="ew", padx=(6, 6), pady=(6, 0))
+        ttk.Button(self.advanced, text="...", width=3, command=self.choose_ca).grid(row=1, column=2, pady=(6, 0))
+        ttk.Label(self.advanced, text="Ignorar tabelas com prefixo:").grid(row=2, column=0, sticky="w", pady=(6, 0))
+        ttk.Entry(self.advanced, textvariable=self.ignored_var).grid(row=2, column=1, sticky="ew", padx=(6, 6), pady=(6, 0))
+        ttk.Label(
+            self.advanced, text="Separe por vírgula (ex.: CONECTA_). Ficam fora da comparação; a contagem aparece em Avisos.", style="Muted.TLabel"
+        ).grid(row=3, column=0, columnspan=3, sticky="w", pady=(2, 0))
+        self.advanced.grid_remove()
 
-        ttk.Label(frame, text="Versões (clique em ☐ para marcar)", font=self._font("section")).grid(
-            row=2, column=0, columnspan=3, sticky="w", pady=(12, 4)
-        )
-        versions_frame = ttk.Frame(frame)
-        versions_frame.grid(row=3, column=0, columnspan=3, sticky="ew")
-        versions_frame.columnconfigure(0, weight=1)
+        # 3. versoes
+        versions = ttk.Frame(self.setup)
+        versions.grid(row=2, column=0, sticky="ew", pady=(12, 0))
+        versions.columnconfigure(0, weight=1)
+        ttk.Label(versions, text="3  Versões a auditar (clique em ☐ para marcar)", font=section).grid(row=0, column=0, sticky="w")
+        table_frame = ttk.Frame(versions)
+        table_frame.grid(row=1, column=0, sticky="ew", pady=(4, 0))
+        table_frame.columnconfigure(0, weight=1)
         columns = ("use", "version", "base", "fork", "database", "state")
-        self.versions_table = ttk.Treeview(versions_frame, columns=columns, show="headings", height=4, selectmode="browse")
+        self.versions_table = ttk.Treeview(table_frame, columns=columns, show="headings", height=3, selectmode="browse")
         headings = {"use": "Auditar", "version": "Versão", "base": "Base", "fork": "Fork", "database": "Banco", "state": "Situação"}
         widths = {"use": 60, "version": 150, "base": 150, "fork": 70, "database": 320, "state": 200}
         for column in columns:
             anchor = "w" if column in ("database", "state") else "center"
             self.versions_table.heading(column, text=headings[column], anchor=anchor)
             self.versions_table.column(column, width=widths[column], anchor=anchor, stretch=column == "database")
-        scroll = ttk.Scrollbar(versions_frame, orient="vertical", command=self.versions_table.yview)
+        scroll = ttk.Scrollbar(table_frame, orient="vertical", command=self.versions_table.yview)
         self.versions_table.configure(yscrollcommand=scroll.set)
         self.versions_table.grid(row=0, column=0, sticky="ew")
         scroll.grid(row=0, column=1, sticky="ns")
         self.versions_table.bind("<Button-1>", self._on_versions_click)
         self.versions_table.bind("<Double-1>", lambda _event: self.edit_selected())
-        version_buttons = ttk.Frame(versions_frame)
-        version_buttons.grid(row=0, column=2, padx=(8, 0), sticky="n")
+        version_buttons = ttk.Frame(versions)
+        version_buttons.grid(row=2, column=0, sticky="w", pady=(6, 0))
         self.edit_button = ttk.Button(version_buttons, text="Editar versão...", command=self.edit_selected)
-        self.edit_button.grid(row=0, column=0, pady=(0, 4), sticky="ew")
-        ttk.Button(version_buttons, text="Bancos...", command=self.choose_databases).grid(row=1, column=0, pady=(0, 4), sticky="ew")
-        ttk.Button(version_buttons, text="Marcar todas", command=lambda: self._check_all(True)).grid(row=2, column=0, pady=(0, 4), sticky="ew")
-        ttk.Button(version_buttons, text="Desmarcar todas", command=lambda: self._check_all(False)).grid(row=3, column=0, sticky="ew")
+        self.edit_button.grid(row=0, column=0, padx=(0, 6))
+        ttk.Button(version_buttons, text="Escolher banco...", command=self.choose_databases).grid(row=0, column=1, padx=(0, 6))
+        ttk.Button(version_buttons, text="Marcar todas", command=lambda: self._check_all(True)).grid(row=0, column=2, padx=(0, 6))
+        ttk.Button(version_buttons, text="Desmarcar todas", command=lambda: self._check_all(False)).grid(row=0, column=3)
 
-        results = ttk.Frame(frame)
-        results.grid(row=4, column=0, columnspan=3, sticky="nsew", pady=(10, 0))
-        results.columnconfigure(0, weight=1)
-        results.rowconfigure(1, weight=1)
-        action_bar = ttk.Frame(results)
-        action_bar.grid(row=0, column=0, sticky="ew")
-        action_bar.columnconfigure(5, weight=1)
-        self.test_button = ttk.Button(action_bar, text="Testar conexão", command=self.test_connection)
-        self.test_button.grid(row=0, column=0, padx=(0, 6))
-        self.analyze_button = ttk.Button(action_bar, text="Analisar", style="Primary.TButton", command=self.analyze)
-        self.analyze_button.grid(row=0, column=1, padx=(0, 6))
-        self.cancel_button = ttk.Button(action_bar, text="Cancelar", command=self.cancel, state="disabled")
-        self.cancel_button.grid(row=0, column=2, padx=(0, 6))
-        self.export_button = ttk.Button(action_bar, text="Exportar...", command=self.export, state="disabled")
-        self.export_button.grid(row=0, column=3, padx=(0, 6))
-        self.fix_button = ttk.Button(action_bar, text="Script corretivo...", command=self.generate_fix_script, state="disabled")
-        self.fix_button.grid(row=0, column=4, padx=(0, 12))
+        # 4. analisar
+        run = ttk.Frame(frame)
+        run.grid(row=2, column=0, sticky="ew", pady=(12, 0))
+        run.columnconfigure(2, weight=1)
+        ttk.Label(run, text="4  Analisar", font=section).grid(row=0, column=0, columnspan=6, sticky="w")
+        self.analyze_button = ttk.Button(run, text="Analisar", style="Primary.TButton", command=self.analyze)
+        self.analyze_button.grid(row=1, column=0, padx=(0, 6), pady=(4, 0))
+        self.cancel_button = ttk.Button(run, text="Cancelar", command=self.cancel, state="disabled")
+        self.cancel_button.grid(row=1, column=1, padx=(0, 12), pady=(4, 0))
         colors = theme.COLORS
         ttk.Style(self.window).configure(
             "Audit.Horizontal.TProgressbar",
@@ -200,22 +222,53 @@ class SqlAuditWindow:
             lightcolor=colors["primary"],
             darkcolor=colors["primary"],
         )
-        self.progress = ttk.Progressbar(action_bar, mode="determinate", maximum=100, style="Audit.Horizontal.TProgressbar")
-        self.progress.grid(row=0, column=5, sticky="ew")
+        self.progress = ttk.Progressbar(run, mode="determinate", maximum=100, style="Audit.Horizontal.TProgressbar")
+        self.progress.grid(row=1, column=2, sticky="ew", padx=(0, 12), pady=(4, 0))
+        self.test_button = ttk.Button(run, text="Testar conexão", command=self.test_connection)
+        self.test_button.grid(row=1, column=3, padx=(0, 6), pady=(4, 0))
+        self.export_button = ttk.Button(run, text="Exportar relatório...", command=self.export, state="disabled")
+        self.export_button.grid(row=1, column=4, padx=(0, 6), pady=(4, 0))
+        self.fix_button = ttk.Button(run, text="Script corretivo...", command=self.generate_fix_script, state="disabled")
+        self.fix_button.grid(row=1, column=5, pady=(4, 0))
+        ttk.Label(run, textvariable=self.status_var, wraplength=1080, justify="left").grid(
+            row=2, column=0, columnspan=6, sticky="w", pady=(6, 0)
+        )
 
-        self.notebook = ttk.Notebook(results)
-        self.notebook.grid(row=1, column=0, sticky="nsew", pady=(8, 0))
+        # resultados
+        self.notebook = ttk.Notebook(frame)
+        self.notebook.grid(row=3, column=0, sticky="nsew", pady=(10, 0))
         self._build_objects_tab()
         self._build_files_tab()
         self._build_warnings_tab()
         self._build_history_tab()
 
-        ttk.Label(frame, textvariable=self.status_var, wraplength=1100, justify="left").grid(
-            row=5, column=0, columnspan=3, sticky="w", pady=(8, 0)
-        )
         footer = ttk.Frame(frame)
-        footer.grid(row=6, column=0, columnspan=3, sticky="e", pady=(8, 0))
+        footer.grid(row=4, column=0, sticky="e", pady=(8, 0))
         ttk.Button(footer, text="Fechar", command=self.close).grid(row=0, column=0)
+
+    def toggle_setup(self, show=None):
+        visible = bool(self.setup.winfo_manager())
+        show = (not visible) if show is None else show
+        if show:
+            self.setup.grid()
+            self.setup_summary.config(text="")
+        else:
+            self.setup.grid_remove()
+            marked = len([v for v in self.order if v in self.checked])
+            folder = Path(self.root_var.get().strip() or ".")
+            self.setup_summary.config(
+                text=f"{folder.name or folder} · {self.host_var.get().strip()}:{self.port_var.get().strip()} · {marked} versão(ões) marcada(s)"
+            )
+        self.setup_button.config(text="▾ Configuração" if show else "▸ Configuração")
+
+    def toggle_advanced(self, show=None):
+        visible = bool(self.advanced.winfo_manager())
+        show = (not visible) if show is None else show
+        if show:
+            self.advanced.grid()
+        else:
+            self.advanced.grid_remove()
+        self.advanced_button.config(text="Avançado ▾" if show else "Avançado ▸")
 
     def _font(self, name):
         fonts = getattr(self.app, "fonts", None)
@@ -251,33 +304,22 @@ class SqlAuditWindow:
     def _build_objects_tab(self):
         tab = ttk.Frame(self.notebook, padding=8)
         tab.columnconfigure(0, weight=1)
-        tab.rowconfigure(1, weight=3)
-        tab.rowconfigure(3, weight=3)
+        tab.rowconfigure(1, weight=4)
+        tab.rowconfigure(4, weight=1)
         self.notebook.add(tab, text="Objetos")
         filters = ttk.Frame(tab)
         filters.grid(row=0, column=0, sticky="ew")
         ttk.Label(filters, text="Estado:").grid(row=0, column=0)
         states = [ALL, PROBLEMS] + [report.label(status) for status in PRECEDENCE]
-        self.state_box = ttk.Combobox(filters, textvariable=self.state_filter, values=states, state="readonly", width=30)
+        self.state_box = ttk.Combobox(filters, textvariable=self.state_filter, values=states, state="readonly", width=26)
         self.state_box.grid(row=0, column=1, padx=(6, 12))
         ttk.Label(filters, text="Versão:").grid(row=0, column=2)
         self.version_box = ttk.Combobox(filters, textvariable=self.version_filter, values=[ALL], state="readonly", width=16)
         self.version_box.grid(row=0, column=3, padx=(6, 12))
         ttk.Label(filters, text="Buscar:").grid(row=0, column=4)
-        ttk.Entry(filters, textvariable=self.search_var, width=18).grid(row=0, column=5, padx=(6, 12))
-        ttk.Label(filters, textvariable=self.count_var, style="Muted.TLabel").grid(row=0, column=6, sticky="w")
-        ttk.Button(filters, text="Por tabela...", command=self.show_table_summary).grid(row=0, column=7, padx=(12, 0))
-        ttk.Button(filters, text="Exportar lista...", command=self.export_objects).grid(row=0, column=8, padx=(6, 0))
-        known_bar = ttk.Frame(filters)
-        known_bar.grid(row=1, column=0, columnspan=9, sticky="w", pady=(6, 0))
-        self.known_button = ttk.Button(known_bar, text="Marcar como conhecida...", command=self.mark_known)
-        self.known_button.grid(row=0, column=0)
-        self.unknown_button = ttk.Button(known_bar, text="Desmarcar", command=self.unmark_known)
-        self.unknown_button.grid(row=0, column=1, padx=(6, 12))
-        ttk.Checkbutton(known_bar, text="Ocultar conhecidas", variable=self.hide_known_var, command=self.apply_filters).grid(row=0, column=2)
-        ttk.Label(known_bar, text="Selecione linhas Divergente/Ausente (Ctrl ou Shift); vale para todos os operadores.", style="Muted.TLabel").grid(
-            row=0, column=3, padx=(12, 0)
-        )
+        ttk.Entry(filters, textvariable=self.search_var, width=22).grid(row=0, column=5, padx=(6, 12))
+        ttk.Checkbutton(filters, text="Ocultar conhecidas", variable=self.hide_known_var, command=self.apply_filters).grid(row=0, column=6)
+        ttk.Label(filters, textvariable=self.count_var, style="Muted.TLabel").grid(row=0, column=7, sticky="w", padx=(12, 0))
         for variable in (self.state_filter, self.version_filter, self.search_var):
             variable.trace_add("write", lambda *_args: self.apply_filters())
         holder, self.results_table = self._table(
@@ -293,9 +335,21 @@ class SqlAuditWindow:
         self.results_table.bind("<Control-a>", self._select_all_rows)
         self.results_table.bind("<Up>", lambda _event: self.window.after_idle(self._see_selection))
         self.results_table.bind("<Down>", lambda _event: self.window.after_idle(self._see_selection))
-        ttk.Label(tab, text="Detalhe (esperado × encontrado)", font=self._font("section")).grid(row=2, column=0, sticky="w", pady=(8, 2))
-        self.detail = tk.Text(tab, height=9, wrap="word", state="disabled", relief="solid", borderwidth=1)
-        self.detail.grid(row=3, column=0, sticky="nsew")
+        tools = ttk.Frame(tab)
+        tools.grid(row=2, column=0, sticky="ew", pady=(6, 0))
+        self.known_button = ttk.Button(tools, text="Marcar como conhecida...", command=self.mark_known)
+        self.known_button.grid(row=0, column=0)
+        self.unknown_button = ttk.Button(tools, text="Desmarcar", command=self.unmark_known)
+        self.unknown_button.grid(row=0, column=1, padx=(6, 12))
+        ttk.Label(tools, text="Selecione Divergente/Ausente (Ctrl+A = todas). Vale para todos.", style="Muted.TLabel").grid(
+            row=0, column=2, sticky="w"
+        )
+        tools.columnconfigure(2, weight=1)
+        ttk.Button(tools, text="Por tabela...", command=self.show_table_summary).grid(row=0, column=3, padx=(12, 6))
+        ttk.Button(tools, text="Exportar lista...", command=self.export_objects).grid(row=0, column=4)
+        ttk.Label(tab, text="Detalhe (esperado × encontrado)", font=self._font("section")).grid(row=3, column=0, sticky="w", pady=(8, 2))
+        self.detail = tk.Text(tab, height=5, wrap="word", state="disabled", relief="solid", borderwidth=1)
+        self.detail.grid(row=4, column=0, sticky="nsew")
 
     def _build_files_tab(self):
         tab = ttk.Frame(self.notebook, padding=8)
@@ -331,6 +385,8 @@ class SqlAuditWindow:
         self.tls_var.set(TLS_LABELS[server["tls"]])
         self.ca_var.set(server["ca_file"])
         self.ignored_var.set(", ".join(load_sqlaudit_ignored_prefixes()))
+        if server["tls"] == TLS_VERIFY or server["ca_file"] or self.ignored_var.get().strip():
+            self.toggle_advanced(True)  # configuracao fora do padrao: mostra, para ninguem esquecer
         self._saved_tree = saved["tree"]
         self._saved_databases = saved["databases"]
         self._saved_username = server["username"]
@@ -935,6 +991,7 @@ class SqlAuditWindow:
         extra += "".join(" ⚠ " + warning for warning in info.get("warnings", []))
         self.status_var.set(report.summary_text(run) + ". Compatível não comprova que o script foi executado." + extra)
         self.refresh_history()
+        self.toggle_setup(False)  # a lista de resultados ganha a tela; "Configuração" reabre
 
     # ---- resultados ----
     def _matching_indexes(self):
