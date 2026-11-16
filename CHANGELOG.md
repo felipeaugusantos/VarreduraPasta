@@ -5,6 +5,17 @@ Todas as alteracoes relevantes deste projeto sao documentadas neste arquivo.
 O formato e baseado em Keep a Changelog e o projeto segue Versionamento
 Semantico (`MAIOR.MENOR.CORRECAO`).
 
+## [2.8.1] - 2026-11-16
+
+### Corrigido
+- Auditoria de Estrutura SQL: `ScriptNT.SQL` e `CADNCM_INSERT.SQL` na pasta `SCRIPTS` sao ignorados (nao entram na analise nem nos avisos de "fora do padrao").
+- Auditoria de Estrutura SQL: a leitura do banco estourava o tempo (`Lost connection ... read operation timed out`) em bancos grandes. O limite passou de 60 s para 10 min e a consulta das chaves estrangeiras passou a filtrar tambem o esquema em `REFERENTIAL_CONSTRAINTS`.
+- Auditoria de Estrutura SQL: `Descobrir versoes` nao fazia nada quando a pasta
+  escolhida era a propria `SCRIPTS` (ou a pasta da versao). Agora a pasta `SCRIPTS`,
+  a pasta da versao e uma pasta com `.SQL` valem como uma unica versao (ja marcada),
+  com o banco sugerido pela pasta ancestral (ex.: `379.48.2.30`) e escolhido depois em
+  `Conectar e listar bancos...`. Sem versoes, a mensagem explica o que escolher.
+
 ## [2.8.0] - 2026-11-06
 
 ### Adicionado
@@ -48,13 +59,6 @@ Semantico (`MAIOR.MENOR.CORRECAO`).
   confirmacao. O campo Banco da edicao da versao passa a ser uma lista.
 
 ### Corrigido
-- Auditoria de Estrutura SQL: `ScriptNT.SQL` e `CADNCM_INSERT.SQL` na pasta `SCRIPTS` sao ignorados (nao entram na analise nem nos avisos de "fora do padrao").
-- Auditoria de Estrutura SQL: a leitura do banco estourava o tempo (`Lost connection ... read operation timed out`) em bancos grandes. O limite passou de 60 s para 10 min e a consulta das chaves estrangeiras passou a filtrar tambem o esquema em `REFERENTIAL_CONSTRAINTS`.
-- Auditoria de Estrutura SQL: `Descobrir versoes` nao fazia nada quando a pasta
-  escolhida era a propria `SCRIPTS` (ou a pasta da versao). Agora a pasta `SCRIPTS`,
-  a pasta da versao e uma pasta com `.SQL` valem como uma unica versao (ja marcada),
-  com o banco sugerido pela pasta ancestral (ex.: `379.48.2.30`) e escolhido depois em
-  `Conectar e listar bancos...`. Sem versoes, a mensagem explica o que escolher.
 - Registro compartilhado da Auditoria de Estrutura SQL (`auditoria_estrutura_sql.log`):
   no Windows, `open("a")` nao e atomico e dois operadores gravando juntos podiam
   sobrescrever a linha um do outro (o CI perdeu 2 a 5 de 100 linhas). Agora a gravacao
