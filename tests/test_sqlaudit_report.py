@@ -131,5 +131,29 @@ class ExportTests(ReportTestCase):
         self.assertEqual(report.label("NAO_SUPORTADO"), "Não suportado")
 
 
+class WriteRowsCsvTests(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.tmp = Path(self._tmp.name)
+
+    def test_writes_header_rows_and_neutralizes_formulas(self):
+        rows = [{"versao": "1.0", "tabela": "T", "estado": "DIVERGENTE", "notas": "=1+1", "linha": 5}]
+        path = self.tmp / "lista.csv"
+        self.assertEqual(report.write_rows_csv(rows, path), 1)
+        with path.open(encoding="utf-8-sig", newline="") as handle:
+            data = list(csv.reader(handle, delimiter=";"))
+        self.assertEqual(tuple(data[0]), report.CSV_COLUMNS)
+        by_name = dict(zip(data[0], data[1]))
+        self.assertEqual((by_name["versao"], by_name["linha"], by_name["banco"]), ("1.0", "5", ""))
+        self.assertEqual(by_name["notas"], "'=1+1")
+        self.assertEqual([p.name for p in self.tmp.iterdir()], ["lista.csv"])
+
+    def test_rejects_other_extensions_and_leaves_no_file(self):
+        with self.assertRaises(ValueError):
+            report.write_rows_csv([], self.tmp / "lista.txt")
+        self.assertEqual(list(self.tmp.iterdir()), [])
+
+
 if __name__ == "__main__":
     unittest.main()

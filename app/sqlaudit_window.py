@@ -265,6 +265,7 @@ class SqlAuditWindow:
         ttk.Entry(filters, textvariable=self.search_var, width=18).grid(row=0, column=5, padx=(6, 12))
         ttk.Label(filters, textvariable=self.count_var, style="Muted.TLabel").grid(row=0, column=6, sticky="w")
         ttk.Button(filters, text="Por tabela...", command=self.show_table_summary).grid(row=0, column=7, padx=(12, 0))
+        ttk.Button(filters, text="Exportar lista...", command=self.export_objects).grid(row=0, column=8, padx=(6, 0))
         for variable in (self.state_filter, self.version_filter, self.search_var):
             variable.trace_add("write", lambda *_args: self.apply_filters())
         holder, self.results_table = self._table(
@@ -912,10 +913,8 @@ class SqlAuditWindow:
         self.refresh_history()
 
     # ---- resultados ----
-    def apply_filters(self):
-        table = self.results_table
-        table.delete(*table.get_children())
-        self.shown = {}
+    def _matching_indexes(self):
+        """Indices de `self.rows` que passam pelos filtros atuais (sem o limite de linhas da tela)."""
         state = self.state_filter.get()
         version = self.version_filter.get()
         needle = self.search_var.get().strip().lower()
@@ -931,6 +930,37 @@ class SqlAuditWindow:
             if needle and needle not in " ".join(str(row[k]) for k in ("tabela", "coluna", "script", "diferencas", "notas")).lower():
                 continue
             matching.append(index)
+        return matching
+
+    def export_objects(self):
+        matching = self._matching_indexes()
+        if not matching:
+            messagebox.showinfo(TITLE, "Não há objetos na lista para exportar.", parent=self.window)
+            return
+        rows = [dict(self.rows[index]) for index in matching]
+        name = f"objetos-sql-{datetime.now():%Y%m%d-%H%M}.csv"
+        path = filedialog.asksaveasfilename(
+            title="Exportar objetos", defaultextension=".csv", initialfile=name,
+            filetypes=[("Planilha CSV", "*.csv")], parent=self.window,
+        )
+        if not path:
+            return
+
+        def write():
+            try:
+                total = report.write_rows_csv(rows, path)
+            except (OSError, ValueError) as error:
+                return ("exported", f"✖ Não foi possível exportar: {error}")
+            return ("exported", f"✔ {total} objeto(s) gravado(s) em {path}")
+
+        self.status_var.set("Exportando...")
+        self._start("exportando", write)
+
+    def apply_filters(self):
+        table = self.results_table
+        table.delete(*table.get_children())
+        self.shown = {}
+        matching = self._matching_indexes()
         for index in matching[:MAX_ROWS_SHOWN]:
             row = self.rows[index]
             obj = row["tabela"] + (f".{row['coluna']}" if row["coluna"] else "")
@@ -947,7 +977,7 @@ class SqlAuditWindow:
         self.count_var.set(
             f"{min(len(matching), MAX_ROWS_SHOWN)} de {len(matching)}"
             + (f" (total {total})" if len(matching) != total else "")
-            + ("; refine os filtros ou exporte" if len(matching) > MAX_ROWS_SHOWN else "")
+            + ("; refine os filtros ou use Exportar lista" if len(matching) > MAX_ROWS_SHOWN else "")
         )
         self._set_detail("")
 

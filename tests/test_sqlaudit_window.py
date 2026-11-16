@@ -654,6 +654,45 @@ class IgnoredPrefixWindowTests(WindowTestCase):
         self.assertEqual([r[1] for r in rows], ["CLIENTES"])
         self.assertEqual(rows[0][0], "48.2.30.72")
 
+    def test_export_list_writes_only_what_the_filters_match_even_past_the_screen_limit(self):
+        import csv
+
+        self.start()
+        self.run_analysis()
+        self.sa.state_filter.set("Todos")
+        path = self.tmp / "objetos.csv"
+        with patch("app.sqlaudit_window.filedialog.asksaveasfilename", return_value=str(path)):
+            self.sa.export_objects()
+            self.pump()
+        self.assertIn("gravado", self.sa.status_var.get())
+        with path.open(encoding="utf-8-sig", newline="") as handle:
+            rows = list(csv.reader(handle, delimiter=";"))
+        self.assertEqual(rows[0][:6], ["versao", "banco", "tipo", "tabela", "coluna", "estado"])
+        self.assertEqual(len(rows) - 1, len(self.sa.rows))
+        self.sa.search_var.set("CLI_EMAIL")
+        narrowed = self.tmp / "so_email.csv"
+        with patch("app.sqlaudit_window.filedialog.asksaveasfilename", return_value=str(narrowed)):
+            self.sa.export_objects()
+            self.pump()
+        with narrowed.open(encoding="utf-8-sig", newline="") as handle:
+            data = list(csv.reader(handle, delimiter=";"))[1:]
+        self.assertTrue(data)
+        self.assertTrue(all("CLI_EMAIL" in row[4] for row in data))
+        self.assertLess(len(data), len(self.sa.rows))
+        self.assertNotIn(PASSWORD, path.read_text(encoding="utf-8-sig"))
+
+    def test_export_list_with_no_rows_or_cancelled_dialog_writes_nothing(self):
+        self.start()
+        with patch("app.sqlaudit_window.messagebox.showinfo") as info, \
+             patch("app.sqlaudit_window.filedialog.asksaveasfilename") as save:
+            self.sa.export_objects()
+        info.assert_called_once()
+        save.assert_not_called()
+        self.run_analysis()
+        with patch("app.sqlaudit_window.filedialog.asksaveasfilename", return_value=""):
+            self.sa.export_objects()
+        self.assertFalse(list(self.tmp.glob("*.csv")))
+
     def test_summary_without_analysis_says_so(self):
         self.open(root=False)
         with patch("app.sqlaudit_window.messagebox.showinfo") as info:

@@ -10,6 +10,7 @@ Semantico (`MAIOR.MENOR.CORRECAO`).
 ### Adicionado
 - Auditoria de Estrutura SQL: campo `Ignorar tabelas com prefixo` (ex.: `CONECTA_`, separado por virgula, salvo nas configuracoes). Essas tabelas saem da comparacao, dos scripts por arquivo, do relatorio e do script corretivo; a contagem de objetos ignorados aparece em Avisos. Serve para tabelas gerenciadas fora dos scripts das versoes (ex.: as do banco modelo).
 - Auditoria de Estrutura SQL: botao `Por tabela...` na aba Objetos, com a contagem de objetos por tabela (divergente, ausente, indeterminado, compativel), das mais problematicas para as menos.
+- Auditoria de Estrutura SQL: botao `Exportar lista...` na aba Objetos. Grava em CSV (`;`, UTF-8) exatamente os objetos que passam pelos filtros atuais (estado, versao, busca), sem o limite de linhas da tela, tambem ao ver uma auditoria do historico.
 
 ### Corrigido
 - Auditoria de Estrutura SQL: `ScriptNT.SQL` e `CADNCM_INSERT.SQL` na pasta `SCRIPTS` sao ignorados (nao entram na analise nem nos avisos de "fora do padrao").

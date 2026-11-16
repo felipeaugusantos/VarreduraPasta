@@ -227,6 +227,27 @@ def build_html(run):
     return "".join(out)
 
 
+def write_rows_csv(rows, path):
+    """Grava linhas no formato de `object_rows` em CSV (`;`, UTF-8 com BOM), de forma atomica.
+
+    Serve para exportar so o que a aba Objetos esta mostrando (filtros aplicados).
+    Levanta OSError/ValueError.
+    """
+    path = Path(path)
+    if path.suffix.lower() != ".csv":
+        raise ValueError("Use a extensao .csv.")
+    temp = path.with_name(f".{path.name}.tmp")
+    try:
+        with temp.open("w", encoding="utf-8-sig", newline="") as handle:
+            writer = csv.writer(handle, delimiter=";")
+            writer.writerow(CSV_COLUMNS)
+            writer.writerows([_safe_cell(row.get(column, "")) for column in CSV_COLUMNS] for row in rows)
+        os.replace(temp, path)
+    finally:
+        temp.unlink(missing_ok=True)
+    return len(rows)
+
+
 def write_report(run, path):
     """Grava o relatorio no formato da extensao, de forma atomica. Levanta OSError/ValueError."""
     path = Path(path)
