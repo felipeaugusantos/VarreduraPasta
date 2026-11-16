@@ -78,14 +78,16 @@ def _product_root_name(folder):
 
 def _has_sql_files(folder):
     try:
-        return any(entry.is_file() and entry.name.lower().endswith(".sql") for entry in os.scandir(folder))
+        with os.scandir(folder) as entries:
+            return any(entry.is_file() and entry.name.lower().endswith(".sql") for entry in entries)
     except OSError:
         return False
 
 
 def _children(folder):
     try:
-        return [Path(e.path) for e in os.scandir(folder) if e.is_dir()]
+        with os.scandir(folder) as entries:
+            return [Path(e.path) for e in entries if e.is_dir()]
     except OSError:
         return []
 

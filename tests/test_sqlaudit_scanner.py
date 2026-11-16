@@ -52,6 +52,16 @@ class ScanTests(ScannerTestCase):
         result = scan_sql_files(self.root)
         self.assertEqual(sorted(f.relative.lower() for f in result.files), ["script_1.sql", os.path.join("sub", "script_2.sql")])
 
+    def test_known_non_sequence_files_are_ignored_without_warning(self):
+        self.write("SCRIPT_1.SQL")
+        self.write("ScriptNT.SQL")
+        self.write("sub/cadncm_insert.sql")
+        result = scan_sql_files(self.root)
+        self.assertEqual([f.relative for f in result.files], ["SCRIPT_1.SQL"])
+        self.assertFalse([w for w in result.warnings if "fora do padrao" in w])
+        self.assertEqual(result.skipped, [])
+        self.assertEqual(len(scan_sql_files(self.root, ignored_names=frozenset()).files), 3)
+
     def test_unnumbered_files_come_last_and_are_reported(self):
         self.write("ajuste.sql")
         self.write("SCRIPT_7.SQL")

@@ -15,6 +15,8 @@ MAX_FILE_BYTES = 10 * 1024 * 1024
 MAX_FILES = 50000
 HASH_CHUNK_BYTES = 1024 * 1024
 MAX_GAP_RANGES = 20
+# Arquivos da pasta SCRIPTS que nao fazem parte da sequencia: nunca lidos nem avisados.
+IGNORED_FILE_NAMES = frozenset({"scriptnt.sql", "cadncm_insert.sql"})
 _NUMBERED_NAME = re.compile(r"^SCRIPT_(\d+)\.sql$", re.IGNORECASE)
 
 
@@ -67,7 +69,9 @@ def file_sha256(path):
     return digest.hexdigest()
 
 
-def scan_sql_files(root, max_file_bytes=MAX_FILE_BYTES, max_files=MAX_FILES, cancel_event=None, progress=None):
+def scan_sql_files(
+    root, max_file_bytes=MAX_FILE_BYTES, max_files=MAX_FILES, cancel_event=None, progress=None, ignored_names=IGNORED_FILE_NAMES
+):
     """Lista os `.sql` (qualquer caixa) de `root` e subpastas, em ordem de aplicacao.
 
     Arquivos grandes demais, ilegiveis ou que resolvam para fora de `root`
@@ -83,7 +87,7 @@ def scan_sql_files(root, max_file_bytes=MAX_FILE_BYTES, max_files=MAX_FILES, can
     for directory, subdirectories, names in os.walk(root, followlinks=False):
         subdirectories.sort(key=str.lower)
         for name in sorted(names, key=str.lower):
-            if not name.lower().endswith(".sql"):
+            if not name.lower().endswith(".sql") or name.lower() in ignored_names:
                 continue
             if cancel_event is not None and cancel_event.is_set():
                 result.cancelled = True
