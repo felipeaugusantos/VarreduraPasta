@@ -1448,12 +1448,13 @@ class SqlAuditWindow:
         if not path:
             return
         run = self.run
+        server = (self.host_var.get().strip(), self.port_var.get().strip())
 
         def work():
             audited = [a for a in run.versions if a.model is not None and a.comparison is not None]
-            plans = [fix_suggestions.build_fix_plan(a.model, a.comparison, a.version, a.database) for a in audited]
+            plans = [fix_suggestions.build_fix_plan(a.model, a.comparison, a.version, a.database, a.schema) for a in audited]
             try:
-                fix_suggestions.write_script(plans, path, user=run.user)
+                fix_suggestions.write_script(plans, path, user=run.user, server=server)
             except (OSError, ValueError) as error:
                 return ("info", f"✖ Não foi possível gravar o script: {error}")
             commands = sum(len(plan.items) for plan in plans)
@@ -1466,7 +1467,7 @@ class SqlAuditWindow:
                 f"✔ Script corretivo gravado em {path}: {commands} comando(s), {commented} comentado(s) para revisão, "
                 f"{untouched} achado(s) sem correção automática"
                 + (f", {skipped_versions} versão(ões) sem resultado fora do arquivo" if skipped_versions else "")
-                + ". REVISE e faça backup antes de usar; o sistema não executa nada.",
+                + ". Traz seções de BACKUP e DESFAZER. REVISE antes de usar; o sistema não executa nada.",
             )
 
         self.status_var.set("Gerando o script corretivo...")

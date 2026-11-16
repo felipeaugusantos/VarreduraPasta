@@ -348,5 +348,157 @@ class ScriptFileTests(CompareTestCase):
             self.assertNotIn(forbidden, text.lower() if forbidden != "ExpectedModel" else text)
 
 
+@unittest.skipUnless(AVAILABLE, "sqlglot nao instalado")
+class BackupAndUndoTests(CompareTestCase):
+    NOW = None
+
+    def plan_with_schema(self, scripts, tables):
+        model = self.model(**scripts)
+        schema = db_schema(*tables)
+        return build_fix_plan(model, compare(model, schema), "1.1", "BANCO_X", schema)
+
+    @staticmethod
+    def section(text, marker):
+        """Linhas depois do titulo da ultima secao `marker` (o titulo tambem aparece no cabecalho)."""
+        return text.rsplit(marker, 1)[1].split("\n", 1)[1]
+
+    def undo_lines(self, text):
+        section = text.rsplit("SECAO 3 - DESFAZER", 1)[1]
+        return [line for line in section.splitlines() if line.startswith("-- ALTER") or line.startswith("-- DROP")]
+
+    def test_header_explains_why_there_is_no_begin_rollback(self):
+        text = render_script([self.plan_with_schema({"SCRIPT_1.SQL": "CREATE TABLE T (A INT);"}, [db_table("T", col("A", "int"))])])
+        self.assertIn("COMMIT IMPLICITO", text)
+        self.assertIn("BEGIN / ROLLBACK", text)
+        self.assertIn("SECAO 1 - BACKUP", text)
+        self.assertIn("SECAO 2 - APLICAR", text)
+        self.assertIn("SECAO 3 - DESFAZER", text)
+        self.assertIn("SEM --force", text)
+        self.assertFalse([line for line in text.splitlines() if re.match(r"^(BEGIN|START TRANSACTION|ROLLBACK|COMMIT)\b", line, re.IGNORECASE)])
+
+    def test_backup_section_lists_only_existing_altered_tables_with_dump_and_commented_copies(self):
+        from datetime import datetime
+
+        plan = self.plan_with_schema(
+            {"SCRIPT_1.SQL": "CREATE TABLE T (A INT, B INT); CREATE TABLE NOVA (X INT);"},
+            [db_table("T", col("A", "int"))],
+        )
+        text = render_script([plan], now=datetime(2026, 11, 16, 15, 30), server=("10.0.0.35", "43309"))
+        backup = self.section(text, "SECAO 1 - BACKUP").split("SECAO 2 - APLICAR", 1)[0]
+        self.assertIn("1 tabela(s) alterada(s)", text)
+        self.assertIn("mysqldump -h 10.0.0.35 -P 43309 -u <USUARIO> -p --single-transaction BANCO_X T >", backup)
+        self.assertIn("backup_BANCO_X_20261116-1530.sql", backup)
+        self.assertIn("-- CREATE TABLE `bkp_20261116_T` LIKE `T`;", backup)
+        self.assertIn("-- INSERT INTO `bkp_20261116_T` SELECT * FROM `T`;", backup)
+        self.assertNotIn("NOVA", backup)  # tabela criada do zero nao tem o que copiar
+        live = [line for line in backup.splitlines() if line.strip() and not line.startswith("--")]
+        self.assertEqual(live, [])  # nada na secao de backup roda sozinho
+
+    def test_backup_uses_placeholders_without_server_and_refuses_unsafe_names(self):
+        plan = self.plan_with_schema({"SCRIPT_1.SQL": "CREATE TABLE T (A INT, B INT);"}, [db_table("T", col("A", "int"))])
+        text = render_script([plan])
+        self.assertIn("-h <SERVIDOR> -P <PORTA>", text)
+        evil = render_script([plan], server=("host; rm -rf /", "43309"))
+        self.assertNotIn("rm -rf", evil)
+        self.assertIn("-h <SERVIDOR>", evil)
+        self.assertEqual(len(fix.backup_table_name("X" * 100, __import__("datetime").datetime(2026, 1, 2))), 64)
+
+    def test_undo_of_a_modify_restores_the_original_definition_from_the_database(self):
+        original = col("A", "varchar(20)", null=False, default="x", charset="latin1", collation="latin1_swedish_ci", comment="codigo")
+        plan = self.plan_with_schema({"SCRIPT_1.SQL": "CREATE TABLE T (A VARCHAR(50) NOT NULL DEFAULT 'x');"}, [db_table("T", original)])
+        (item,) = plan.items
+        self.assertEqual(
+            item.undo,
+            "ALTER TABLE `T` MODIFY COLUMN `A` varchar(20) CHARACTER SET latin1 COLLATE latin1_swedish_ci NOT NULL DEFAULT 'x' COMMENT 'codigo';",
+        )
+        operations = parse_text(item.undo)
+        self.assertTrue(operations and all(op.interpreted for op in operations), item.undo)
+
+    def test_undo_keeps_nullable_default_null_timestamps_and_auto_increment(self):
+        plan = self.plan_with_schema(
+            {"SCRIPT_1.SQL": "CREATE TABLE T (A VARCHAR(50), D TIMESTAMP, ID INT NOT NULL AUTO_INCREMENT, KEY (ID));"},
+            [db_table("T", col("A", "varchar(20)"), col("D", "datetime", null=False, default="CURRENT_TIMESTAMP", extra="on update CURRENT_TIMESTAMP"),
+                      col("ID", "int", null=False, extra="auto_increment"))],
+        )
+        undo = {i.label: i.undo for i in plan.items}
+        self.assertIn("DEFAULT NULL", undo["coluna T.A"])
+        self.assertNotIn("'CURRENT_TIMESTAMP'", " ".join(undo.values()))
+        self.assertIn("DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP", undo["coluna T.D"])
+        self.assertEqual(undo["indice T.ID"], "")  # nome automatico: nao ha comando seguro, so a observacao
+        for statement in (u for u in undo.values() if u):
+            operations = parse_text(statement)
+            self.assertTrue(operations and all(op.interpreted for op in operations), statement)
+
+    def test_undo_of_added_things_removes_them(self):
+        plan = self.plan_with_schema(
+            {"SCRIPT_1.SQL": "CREATE TABLE T (A INT, C INT, KEY IX (A), CONSTRAINT F FOREIGN KEY (A) REFERENCES O (ID), PRIMARY KEY (A));"},
+            [db_table("T", col("A", "int"))],
+        )
+        undo = {i.label: i.undo for i in plan.items}
+        self.assertEqual(undo["coluna T.C"], "ALTER TABLE `T` DROP COLUMN `C`;")
+        self.assertEqual(undo["indice T.IX"], "ALTER TABLE `T` DROP INDEX `IX`;")
+        self.assertEqual(undo["chave estrangeira T.F"], "ALTER TABLE `T` DROP FOREIGN KEY `F`;")
+        self.assertEqual(undo["chave primaria T.PRIMARY"], "ALTER TABLE `T` DROP PRIMARY KEY;")
+
+    def test_undo_of_changed_index_foreign_key_primary_key_and_options_uses_the_database_version(self):
+        plan = self.plan_with_schema(
+            {"SCRIPT_1.SQL": "CREATE TABLE T (A INT NOT NULL, B INT NOT NULL, KEY IX (A, B), CONSTRAINT F FOREIGN KEY (A) REFERENCES O (ID) ON DELETE CASCADE, PRIMARY KEY (A, B)) ENGINE=InnoDB;"},
+            [db_table("T", col("A", "int", null=False), col("B", "int", null=False),
+                      indexes=[idx("IX", "A"), idx("PRIMARY", "A", unique=True)],
+                      foreign_keys=[fk("F", ["B"], "O", ["ID"])], engine="MyISAM")],
+        )
+        undo = {i.label: i.undo for i in plan.items}
+        self.assertEqual(undo["indice T.IX"], "ALTER TABLE `T` DROP INDEX `IX`, ADD INDEX `IX` (`A`);")
+        self.assertEqual(undo["chave primaria T.PRIMARY"], "ALTER TABLE `T` DROP PRIMARY KEY, ADD PRIMARY KEY (`A`);")
+        self.assertEqual(
+            undo["chave estrangeira T.F"],
+            "ALTER TABLE `T` DROP FOREIGN KEY `F`, ADD CONSTRAINT `F` FOREIGN KEY (`B`) REFERENCES `O` (`ID`);",
+        )
+        self.assertTrue([i for i in plan.items if i.undo == "ALTER TABLE `T` ENGINE=MyISAM;"])
+
+    def test_undo_of_removed_objects_re_adds_what_the_database_had_but_data_needs_the_backup(self):
+        plan = self.plan_with_schema(
+            {"SCRIPT_1.SQL": "CREATE TABLE T (A INT, B INT, KEY IX (A)); CREATE TABLE V (X INT);",
+             "SCRIPT_2.SQL": "ALTER TABLE T DROP COLUMN B; ALTER TABLE T DROP INDEX IX; DROP TABLE V;"},
+            [db_table("T", col("A", "int"), col("B", "varchar(9)", default="z"), indexes=[idx("IX", "A")]), db_table("V", col("X", "int"))],
+        )
+        by_label = {i.label: i for i in plan.items}
+        column = by_label["coluna T.B"]
+        self.assertEqual(column.undo, "ALTER TABLE `T` ADD COLUMN `B` varchar(9) NULL DEFAULT 'z';")
+        self.assertIn("BACKUP", column.undo_note)
+        self.assertEqual(by_label["indice T.IX"].undo, "ALTER TABLE `T` ADD INDEX `IX` (`A`);")
+        table = by_label["tabela V"]
+        self.assertEqual(table.undo, "")
+        self.assertIn("BACKUP", table.undo_note)
+
+    def test_without_the_original_schema_the_undo_says_to_restore_from_backup(self):
+        model = self.model(**{"SCRIPT_1.SQL": "CREATE TABLE T (A VARCHAR(50));"})
+        plan = build_fix_plan(model, compare(model, db_schema(db_table("T", col("A", "varchar(20)")))), "1.1", "BANCO_X")
+        (item,) = plan.items
+        self.assertEqual(item.undo, "")
+        self.assertIn("restaure do backup", item.undo_note)
+
+    def test_the_undo_section_is_fully_commented_and_in_reverse_order(self):
+        plan = self.plan_with_schema(
+            {"SCRIPT_1.SQL": "CREATE TABLE T (A VARCHAR(50), C INT, D INT);"},
+            [db_table("T", col("A", "varchar(20)"))],
+        )
+        text = render_script([plan])
+        undo_section = self.section(text, "SECAO 3 - DESFAZER")
+        live = [line for line in undo_section.splitlines() if line.strip() and not line.startswith("--")]
+        self.assertEqual(live, [])
+        labels = [line for line in undo_section.splitlines() if line.startswith("-- desfazer:")]
+        self.assertEqual(labels, [f"-- desfazer: {item.label}" for item in reversed([i for i in plan.items if i.undo or i.undo_note])])
+        # o texto das secoes 1 e 3 nunca vira comando vivo: os comandos vivos so existem na secao 2
+        applied = text.rsplit("SECAO 2 - APLICAR", 1)[1].split("SECAO 3 - DESFAZER", 1)[0]
+        self.assertTrue([line for line in applied.splitlines() if line.startswith("ALTER TABLE")])
+
+    def test_the_new_sections_carry_no_secrets(self):
+        plan = self.plan_with_schema({"SCRIPT_1.SQL": "CREATE TABLE T (A VARCHAR(50));"}, [db_table("T", col("A", "varchar(20)"))])
+        text = render_script([plan], server=("10.0.0.35", "43309")).lower()
+        for forbidden in ("password", "senha", "sha256", "expectedmodel"):
+            self.assertNotIn(forbidden, text)
+
+
 if __name__ == "__main__":
     unittest.main()

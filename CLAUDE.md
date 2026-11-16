@@ -271,7 +271,7 @@ engine) e todo DROP de coluna/tabela; o `USE <banco>` tambem vem comentado. Cada
 comando traz motivo, diferenca, risco e script/linha de origem. Indice ou FK de nome
 automatico que diverge nao e corrigido (o nome real no banco nao e conhecido). O SQL
 gerado e relido pelo parser do proprio sistema nos testes. O modelo esperado fica
-so em memoria (`VersionAudit.model`), nunca no historico nem nos relatorios. Cada
+so em memoria (`VersionAudit.model`), nunca no historico nem nos relatorios. O arquivo tem 3 secoes por versao: BACKUP (mysqldump e copias `bkp_*`, comentados), APLICAR e DESFAZER (comentado, volta ao que o banco tinha; usa `VersionAudit.schema`, so em memoria). Nao ha BEGIN/ROLLBACK: DDL do MySQL faz COMMIT implicito. Cada
 geracao grava `Auditoria SQL script_corretivo` na Auditoria.
 
 Historico: cada analise e gravada em `%LOCALAPPDATA%\VarreduraSistema\sqlaudit.db`

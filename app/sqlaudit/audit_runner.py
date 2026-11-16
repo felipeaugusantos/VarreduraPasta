@@ -79,6 +79,8 @@ class VersionAudit:
     # Modelo esperado usado na comparacao: so em memoria (alimenta o script corretivo);
     # nunca vai para o historico nem para os relatorios.
     model: object = field(default=None, repr=False, compare=False)
+    # Esquema lido do banco: tambem so em memoria (alimenta o DESFAZER do script corretivo).
+    schema: object = field(default=None, repr=False, compare=False)
 
 
 @dataclass
@@ -226,6 +228,7 @@ def _audit_version(request, item, audit, scans, parse_cache, report, cancel_even
         return
     audit.server_version = schema.server_version
     audit.tls_verified = schema.tls_verified
+    audit.schema = schema
 
     report("comparando", 0.8)
     audit.comparison = ignore_tables(compare(model, schema, expected_database=item.database), request.ignored_prefixes)

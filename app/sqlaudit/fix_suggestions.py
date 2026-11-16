@@ -15,6 +15,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 from app.sqlaudit.comparator import AUSENTE, DIVERGENTE
 from app.sqlaudit.expected_model import OBJ_COLUMN, OBJ_FOREIGN, OBJ_INDEX, OBJ_PRIMARY, OBJ_TABLE
@@ -50,6 +51,8 @@ class FixItem:
     source: str = ""  # "SCRIPT_x.SQL linha n"
     warnings: tuple = ()
     order: tuple = (10**12, 0)  # (numero do script, linha): mantem a ordem original dentro do grupo
+    undo: str = ""  # comando que volta ao estado lido do banco (vai comentado, na secao DESFAZER)
+    undo_note: str = ""  # quando nao ha como desfazer so com SQL: o que fazer
 
     @property
     def commented(self):
@@ -65,6 +68,7 @@ class FixPlan:
     skipped: list = field(default_factory=list)  # (rotulo, motivo): achado firme que nao deu para corrigir
     not_handled: dict = field(default_factory=dict)  # estado -> quantidade (INDETERMINADO, ERRO...)
     notes: list = field(default_factory=list)
+    schema: object = field(default=None, repr=False)  # DbSchema lido do banco (so em memoria)
 
     @property
     def commented_count(self):
@@ -176,6 +180,73 @@ def alter(table, clause):
     return f"ALTER TABLE {quote(table)} {clause};"
 
 
+_NOW_DEFAULT = re.compile(r"^(current_timestamp|now|localtime|localtimestamp)(\(\d*\))?$", re.IGNORECASE)
+
+
+def db_column_definition(column):
+    """Definicao de uma coluna como ELA ESTA no banco (para desfazer). Levanta FixError se nao der."""
+    extra = (column.extra or "").lower()
+    if "generated" in extra:
+        raise FixError("a coluna e gerada ou tem default por expressao: revise manualmente")
+    parts = [quote(column.name), _safe_type(column.column_type)]
+    if column.charset:
+        parts += ["CHARACTER SET", _word(column.charset, "charset")]
+    if column.collation:
+        parts += ["COLLATE", _word(column.collation, "colacao")]
+    parts.append("NULL" if column.nullable else "NOT NULL")
+    if column.default is not None:
+        default = str(column.default)
+        parts += ["DEFAULT", default if _NOW_DEFAULT.match(default) else literal(default)]
+    elif column.nullable:
+        parts += ["DEFAULT", "NULL"]
+    if "auto_increment" in extra:
+        parts.append("AUTO_INCREMENT")
+    match = re.search(r"on update (current_timestamp(?:\(\d*\))?|now\(\d*\))", extra)
+    if match:
+        parts += ["ON UPDATE", match.group(1).upper()]
+    if column.comment:
+        parts += ["COMMENT", literal(column.comment)]
+    return " ".join(parts)
+
+
+def db_index_definition(index):
+    kind = index.index_type.lower() if index.index_type.lower() in ("fulltext", "spatial") else ""
+    spec = SimpleNamespace(unique=index.unique, kind=kind, name=index.name, columns=index.columns, prefixes=index.prefixes)
+    return index_definition(spec)
+
+
+def db_foreign_key_definition(fk):
+    spec = SimpleNamespace(
+        name=fk.name, columns=fk.columns, ref_schema="", ref_table=fk.ref_table, ref_columns=fk.ref_columns,
+        on_delete=fk.delete_rule if fk.delete_rule not in ("", "RESTRICT", "NO ACTION") else "",
+        on_update=fk.update_rule if fk.update_rule not in ("", "RESTRICT", "NO ACTION") else "",
+    )
+    return foreign_key_definition(spec)
+
+
+def _db_table(plan, table):
+    schema = plan.schema
+    return schema.tables.get(str(table).lower()) if schema is not None else None
+
+
+def _undo(plan, table, build):
+    """(comando, nota): `build(DbTable)` monta o SQL a partir do que o banco tinha; FixError vira nota."""
+    db_table = _db_table(plan, table)
+    if db_table is None:
+        return "", "o esquema original nao foi guardado: restaure do backup"
+    try:
+        return build(db_table), ""
+    except (FixError, KeyError) as error:
+        return "", f"nao foi possivel montar o comando de desfazer ({error}): restaure do backup"
+
+
+def _pk_columns(db_table):
+    primary = db_table.indexes.get("primary")
+    if primary is None:
+        raise FixError("o banco nao tinha chave primaria")
+    return primary.columns
+
+
 # -- plano --
 
 def _origin(obj):
@@ -194,9 +265,12 @@ def _differences(obj):
     return "; ".join(f"{d.attribute}: esperado {d.expected}, encontrado {d.found}" for d in obj.differences)
 
 
-def build_fix_plan(model, comparison, version="", database=""):
-    """FixPlan de uma versao. `model` e o ExpectedModel e `comparison` o ComparisonResult dele."""
-    plan = FixPlan(version, database or comparison.database)
+def build_fix_plan(model, comparison, version="", database="", schema=None):
+    """FixPlan de uma versao. `model` e o ExpectedModel e `comparison` o ComparisonResult dele.
+
+    `schema` (DbSchema lido do banco, opcional) permite montar o DESFAZER com a definicao original.
+    """
+    plan = FixPlan(version, database or comparison.database, schema=schema)
     if model.unresolved:
         plan.notes.append(
             f"{len(model.unresolved)} comando(s) dos scripts nao foram interpretados (DML, SQL dinamico...): "
@@ -221,10 +295,10 @@ def build_fix_plan(model, comparison, version="", database=""):
     return plan
 
 
-def _item(plan, obj, label, statement, reason, risk, bucket, destructive=False, warnings=()):
+def _item(plan, obj, label, statement, reason, risk, bucket, destructive=False, warnings=(), undo="", undo_note=""):
     return FixItem(
         plan.version, plan.database, obj.table, label, statement, reason, risk, destructive, bucket,
-        _origin(obj), tuple(warnings), _order(obj),
+        _origin(obj), tuple(warnings), _order(obj), undo, undo_note,
     )
 
 
@@ -252,26 +326,32 @@ def _table(model, plan, obj, label):
         warnings = []
         if state.unchecked_elements:
             warnings.append("CHECK e opcoes que a auditoria nao compara NAO foram incluidos")
-        items = [_item(plan, obj, label, create_table_statement(state), "tabela ausente no banco", RISK_LOW, BUCKET_CREATE_TABLE, warnings=warnings)]
+        items = [_item(plan, obj, label, create_table_statement(state), "tabela ausente no banco", RISK_LOW, BUCKET_CREATE_TABLE, warnings=warnings,
+                       undo=f"DROP TABLE {quote(state.name)};")]
         for fk in state.foreign_keys.values():  # depois que todas as tabelas existirem
             items.append(
                 _item(plan, obj, f"chave estrangeira {state.name}.{fk.spec.name}",
                       alter(state.name, "ADD " + foreign_key_definition(fk.spec, named=not fk.auto_named)),
                       "chave estrangeira da tabela ausente", RISK_MEDIUM, BUCKET_FOREIGN,
-                      warnings=["falha se ja houver linhas que violem a referencia"])
+                      warnings=["falha se ja houver linhas que violem a referencia"],
+                      undo=(alter(state.name, f"DROP FOREIGN KEY {quote(fk.spec.name)}") if not fk.auto_named else ""),
+                      undo_note=("" if not fk.auto_named else "a tabela inteira some no DROP TABLE acima"))
             )
         return items
     items = []
     for difference in obj.differences:
         if difference.attribute == "engine":
+            undo, note = _undo(plan, state.name, lambda t, d=difference: alter(state.name, "ENGINE=" + _word(d.found, "engine")))
             items.append(_item(plan, obj, label, alter(state.name, "ENGINE=" + _word(difference.expected, "engine")), _differences(obj), RISK_HIGH, BUCKET_OPTIONS,
-                               warnings=["trocar o engine reconstroi a tabela e pode demorar"]))
+                               warnings=["trocar o engine reconstroi a tabela e pode demorar"], undo=undo, undo_note=note))
         elif difference.attribute == "charset_tabela":
+            undo, note = _undo(plan, state.name, lambda t, d=difference: alter(state.name, "DEFAULT CHARACTER SET " + _word(d.found, "charset")))
             items.append(_item(plan, obj, label, alter(state.name, "DEFAULT CHARACTER SET " + _word(difference.expected, "charset")), _differences(obj), RISK_MEDIUM, BUCKET_OPTIONS,
-                               warnings=["muda so o padrao da tabela; as colunas existentes nao sao convertidas"]))
+                               warnings=["muda so o padrao da tabela; as colunas existentes nao sao convertidas"], undo=undo, undo_note=note))
         elif difference.attribute == "collation_tabela":
+            undo, note = _undo(plan, state.name, lambda t, d=difference: alter(state.name, "DEFAULT COLLATE " + _word(d.found, "colacao")))
             items.append(_item(plan, obj, label, alter(state.name, "DEFAULT COLLATE " + _word(difference.expected, "colacao")), _differences(obj), RISK_MEDIUM, BUCKET_OPTIONS,
-                               warnings=["muda so o padrao da tabela; as colunas existentes nao sao convertidas"]))
+                               warnings=["muda so o padrao da tabela; as colunas existentes nao sao convertidas"], undo=undo, undo_note=note))
     if not items:
         raise FixError("diferenca de tabela sem correcao automatica")
     return items
@@ -293,7 +373,8 @@ def _column(model, plan, obj, label):
         not_null = spec.nullable is False or spec.name.lower() in state.implicit_not_null
         risk = RISK_MEDIUM if not_null and not spec.has_default else RISK_LOW
         warnings = ["NOT NULL sem DEFAULT: as linhas existentes recebem o valor padrao do tipo"] if risk == RISK_MEDIUM else []
-        return [_item(plan, obj, label, alter(state.name, f"ADD COLUMN {definition}{place}"), "coluna ausente no banco", risk, BUCKET_COLUMN, warnings=warnings)]
+        return [_item(plan, obj, label, alter(state.name, f"ADD COLUMN {definition}{place}"), "coluna ausente no banco", risk, BUCKET_COLUMN, warnings=warnings,
+                      undo=alter(state.name, f"DROP COLUMN {quote(spec.name)}"))]
     attributes = {d.attribute for d in obj.differences}
     if "coluna_gerada" in attributes:
         raise FixError("o banco tem coluna gerada que o script nao tem: revise manualmente")
@@ -303,7 +384,12 @@ def _column(model, plan, obj, label):
         risk, warnings = RISK_HIGH, ["mudar tipo/charset/colacao converte os dados e pode truncar ou falhar"]
     elif any(d.attribute == "nulabilidade" and d.expected.startswith("NOT NULL") for d in obj.differences):
         risk, warnings = RISK_HIGH, ["falha se existirem linhas com NULL nesta coluna"]
-    return [_item(plan, obj, label, alter(state.name, f"MODIFY COLUMN {definition}"), _differences(obj), risk, BUCKET_COLUMN, warnings=warnings)]
+    def back(db_table):
+        original = db_table.columns[(obj.column or "").lower()]
+        return alter(state.name, f"MODIFY COLUMN {db_column_definition(original)}")
+
+    undo, note = _undo(plan, state.name, back)
+    return [_item(plan, obj, label, alter(state.name, f"MODIFY COLUMN {definition}"), _differences(obj), risk, BUCKET_COLUMN, warnings=warnings, undo=undo, undo_note=note)]
 
 
 def _index(model, plan, obj, label):
@@ -313,11 +399,18 @@ def _index(model, plan, obj, label):
         raise FixError("o indice nao esta no modelo")
     warnings = ["falha se ja houver valores repetidos"] if index.spec.unique else []
     if obj.status == AUSENTE:
-        return [_item(plan, obj, label, alter(state.name, "ADD " + index_definition(index.spec, name=not index.auto_named)), "indice ausente no banco", RISK_MEDIUM if index.spec.unique else RISK_LOW, BUCKET_INDEX, warnings=warnings)]
+        named = not index.auto_named
+        return [_item(plan, obj, label, alter(state.name, "ADD " + index_definition(index.spec, name=named)), "indice ausente no banco", RISK_MEDIUM if index.spec.unique else RISK_LOW, BUCKET_INDEX, warnings=warnings,
+                      undo=(alter(state.name, f"DROP INDEX {quote(index.spec.name)}") if named else ""),
+                      undo_note=("" if named else "indice de nome automatico: veja o nome criado com SHOW INDEX e remova-o"))]
     if index.auto_named:
         raise FixError("o indice tem nome automatico: o nome real no banco nao e conhecido, revise manualmente")
     clause = f"DROP INDEX {quote(index.spec.name)}, ADD " + index_definition(index.spec)
-    return [_item(plan, obj, label, alter(state.name, clause), _differences(obj), RISK_MEDIUM, BUCKET_INDEX, warnings=warnings)]
+    undo, note = _undo(
+        plan, state.name,
+        lambda t: alter(state.name, f"DROP INDEX {quote(index.spec.name)}, ADD " + db_index_definition(t.indexes[index.spec.name.lower()])),
+    )
+    return [_item(plan, obj, label, alter(state.name, clause), _differences(obj), RISK_MEDIUM, BUCKET_INDEX, warnings=warnings, undo=undo, undo_note=note)]
 
 
 def _primary(model, plan, obj, label):
@@ -327,9 +420,11 @@ def _primary(model, plan, obj, label):
     columns = _columns(state.primary_key.spec.columns)
     if obj.status == AUSENTE:
         return [_item(plan, obj, label, alter(state.name, f"ADD PRIMARY KEY {columns}"), "chave primaria ausente no banco", RISK_MEDIUM, BUCKET_PRIMARY,
-                      warnings=["falha se houver NULL ou valores repetidos nas colunas"])]
+                      warnings=["falha se houver NULL ou valores repetidos nas colunas"],
+                      undo=alter(state.name, "DROP PRIMARY KEY"))]
+    undo, note = _undo(plan, state.name, lambda t: alter(state.name, f"DROP PRIMARY KEY, ADD PRIMARY KEY {_columns(_pk_columns(t))}"))
     return [_item(plan, obj, label, alter(state.name, f"DROP PRIMARY KEY, ADD PRIMARY KEY {columns}"), _differences(obj), RISK_HIGH, BUCKET_PRIMARY,
-                  warnings=["trocar a chave primaria reconstroi a tabela e pode falhar"])]
+                  warnings=["trocar a chave primaria reconstroi a tabela e pode falhar"], undo=undo, undo_note=note)]
 
 
 def _foreign(model, plan, obj, label):
@@ -339,11 +434,18 @@ def _foreign(model, plan, obj, label):
         raise FixError("a chave estrangeira nao esta no modelo")
     warnings = ["falha se ja houver linhas que violem a referencia"]
     if obj.status == AUSENTE:
-        return [_item(plan, obj, label, alter(state.name, "ADD " + foreign_key_definition(fk.spec, named=not fk.auto_named)), "chave estrangeira ausente no banco", RISK_MEDIUM, BUCKET_FOREIGN, warnings=warnings)]
+        named = not fk.auto_named
+        return [_item(plan, obj, label, alter(state.name, "ADD " + foreign_key_definition(fk.spec, named=named)), "chave estrangeira ausente no banco", RISK_MEDIUM, BUCKET_FOREIGN, warnings=warnings,
+                      undo=(alter(state.name, f"DROP FOREIGN KEY {quote(fk.spec.name)}") if named else ""),
+                      undo_note=("" if named else "chave de nome automatico: veja o nome criado com SHOW CREATE TABLE e remova-a"))]
     if fk.auto_named:
         raise FixError("a chave tem nome automatico: o nome real no banco nao e conhecido, revise manualmente")
     clause = f"DROP FOREIGN KEY {quote(fk.spec.name)}, ADD " + foreign_key_definition(fk.spec)
-    return [_item(plan, obj, label, alter(state.name, clause), _differences(obj), RISK_MEDIUM, BUCKET_FOREIGN, warnings=warnings)]
+    undo, note = _undo(
+        plan, state.name,
+        lambda t: alter(state.name, f"DROP FOREIGN KEY {quote(fk.spec.name)}, ADD " + db_foreign_key_definition(t.foreign_keys[fk.spec.name.lower()])),
+    )
+    return [_item(plan, obj, label, alter(state.name, clause), _differences(obj), RISK_MEDIUM, BUCKET_FOREIGN, warnings=warnings, undo=undo, undo_note=note)]
 
 
 def _removed(model, plan, obj, label):
@@ -351,15 +453,21 @@ def _removed(model, plan, obj, label):
     why = (obj.notes[0] if obj.notes else "removido por um script") + "; ainda existe no banco"
     name = obj.column or ""
     if obj.kind == OBJ_TABLE:
-        return [_item(plan, obj, label, f"DROP TABLE {quote(obj.table)};", why, RISK_HIGH, BUCKET_DROP_TABLE, destructive=True, warnings=["APAGA a tabela e todos os dados"])]
+        return [_item(plan, obj, label, f"DROP TABLE {quote(obj.table)};", why, RISK_HIGH, BUCKET_DROP_TABLE, destructive=True, warnings=["APAGA a tabela e todos os dados"],
+                      undo_note="so o BACKUP recupera a tabela e os dados (restaure o dump ou a copia bkp_*)")]
     if obj.kind == OBJ_COLUMN:
-        return [_item(plan, obj, label, alter(obj.table, f"DROP COLUMN {quote(name)}"), why, RISK_HIGH, BUCKET_DROP_COLUMN, destructive=True, warnings=["APAGA a coluna e os dados dela"])]
+        undo, note = _undo(plan, obj.table, lambda t: alter(obj.table, f"ADD COLUMN {db_column_definition(t.columns[name.lower()])}"))
+        note = (note + "; " if note else "") + "os DADOS da coluna so voltam pelo BACKUP"
+        return [_item(plan, obj, label, alter(obj.table, f"DROP COLUMN {quote(name)}"), why, RISK_HIGH, BUCKET_DROP_COLUMN, destructive=True, warnings=["APAGA a coluna e os dados dela"], undo=undo, undo_note=note)]
     if obj.kind == OBJ_INDEX:
-        return [_item(plan, obj, label, alter(obj.table, f"DROP INDEX {quote(name)}"), why, RISK_MEDIUM, BUCKET_INDEX)]
+        undo, note = _undo(plan, obj.table, lambda t: alter(obj.table, "ADD " + db_index_definition(t.indexes[name.lower()])))
+        return [_item(plan, obj, label, alter(obj.table, f"DROP INDEX {quote(name)}"), why, RISK_MEDIUM, BUCKET_INDEX, undo=undo, undo_note=note)]
     if obj.kind == OBJ_PRIMARY:
-        return [_item(plan, obj, label, alter(obj.table, "DROP PRIMARY KEY"), why, RISK_HIGH, BUCKET_PRIMARY, warnings=["pode falhar se a coluna for AUTO_INCREMENT ou usada por chave estrangeira"])]
+        undo, note = _undo(plan, obj.table, lambda t: alter(obj.table, f"ADD PRIMARY KEY {_columns(_pk_columns(t))}"))
+        return [_item(plan, obj, label, alter(obj.table, "DROP PRIMARY KEY"), why, RISK_HIGH, BUCKET_PRIMARY, warnings=["pode falhar se a coluna for AUTO_INCREMENT ou usada por chave estrangeira"], undo=undo, undo_note=note)]
     if obj.kind == OBJ_FOREIGN:
-        return [_item(plan, obj, label, alter(obj.table, f"DROP FOREIGN KEY {quote(name)}"), why, RISK_MEDIUM, BUCKET_DROP_FK)]
+        undo, note = _undo(plan, obj.table, lambda t: alter(obj.table, "ADD " + db_foreign_key_definition(t.foreign_keys[name.lower()])))
+        return [_item(plan, obj, label, alter(obj.table, f"DROP FOREIGN KEY {quote(name)}"), why, RISK_MEDIUM, BUCKET_DROP_FK, undo=undo, undo_note=note)]
     raise FixError("tipo de objeto removido sem correcao automatica")
 
 
@@ -370,21 +478,108 @@ HEADER = """-- =================================================================
 --
 -- Gerado pela Auditoria de Estrutura SQL a partir da COMPARACAO entre os scripts
 -- e o banco. O sistema NAO executou nada e NAO altera o banco.
---   * Faca BACKUP antes. Revise cada comando e rode primeiro em homologacao.
+--   * Revise cada comando e rode primeiro em homologacao (copia do banco).
 --   * Comandos de risco ALTO e todo DROP de coluna/tabela estao COMENTADOS:
 --     so rodam se voce descomentar de proposito.
 --   * Achados INDETERMINADOS ou nao suportados NAO geram comando.
 --   * Compatibilidade estrutural nao prova que um script foi executado.
+--
+-- SOBRE BEGIN / ROLLBACK
+--   No MySQL, CREATE/ALTER/DROP TABLE fazem COMMIT IMPLICITO: nao existe transacao
+--   que desfaca esses comandos. Por isso, em vez de BEGIN/ROLLBACK, cada versao traz:
+--     SECAO 1 - BACKUP   (faca ANTES de aplicar)
+--     SECAO 2 - APLICAR  (os comandos corretivos)
+--     SECAO 3 - DESFAZER (tudo comentado; volta a estrutura ao que o banco tinha)
+--   Rode com `mysql ... < arquivo.sql` SEM --force: o cliente PARA no primeiro erro.
+--   O DESFAZER restaura a ESTRUTURA. Dados apagados ou truncados so o BACKUP recupera.
 -- ======================================================================
 """
+
+_SHELL_WORD = re.compile(r"^[A-Za-z0-9_.$-]+$")
+BACKUP_PREFIX = "bkp"
 
 
 def _commented(text):
     return "\n".join("-- " + line if line else "--" for line in text.splitlines())
 
 
-def render_script(plans, user="", now=None):
-    """Texto do arquivo .sql com todas as versoes. `plans`: lista de FixPlan."""
+def _shell_word(value, placeholder):
+    return str(value) if _SHELL_WORD.match(str(value or "")) else placeholder
+
+
+def backup_table_name(table, now):
+    """Nome da copia dentro do banco (no maximo 64 caracteres, limite do MySQL)."""
+    return f"{BACKUP_PREFIX}_{now:%Y%m%d}_{table}"[:64]
+
+
+def _backup_tables(plan):
+    """Tabelas que ja existem e serao alteradas (as criadas do zero nao precisam de backup)."""
+    created = {item.table.lower() for item in plan.items if item.bucket == BUCKET_CREATE_TABLE}
+    seen, tables = set(), []
+    for item in plan.items:
+        key = item.table.lower()
+        if key in created or key in seen:
+            continue
+        seen.add(key)
+        tables.append(item.table)
+    return sorted(tables, key=str.lower)
+
+
+def _backup_section(plan, now, server):
+    tables = _backup_tables(plan)
+    lines = [
+        "-- ======================================================================",
+        f"-- SECAO 1 - BACKUP ({len(tables)} tabela(s) alterada(s)): faca ANTES de aplicar",
+        "-- ======================================================================",
+    ]
+    if not tables:
+        lines += ["-- Nenhuma tabela existente sera alterada (so criacoes): nada a copiar.", ""]
+        return lines
+    host = _shell_word(server[0] if server else "", "<SERVIDOR>")
+    port = _shell_word(server[1] if server else "", "<PORTA>")
+    database = _shell_word(plan.database, "<BANCO>")
+    names = " ".join(_shell_word(t, "<TABELA>") for t in tables)
+    lines += [
+        "-- a) Copia completa pelo mysqldump (linha de comando do Windows/Linux, nao e SQL).",
+        "--    O usuario precisa de SELECT e LOCK TABLES; o -p sem valor faz o mysqldump perguntar no terminal:",
+        f"--    mysqldump -h {host} -P {port} -u <USUARIO> -p --single-transaction {database} {names} > backup_{database}_{now:%Y%m%d-%H%M}.sql",
+        "--",
+        "-- b) Copia dentro do proprio banco (opcional; so para tabelas pequenas).",
+        "--    Descomente para criar as copias; apague as bkp_* depois de validar.",
+    ]
+    for table in tables:
+        copy = backup_table_name(table, now)
+        lines.append(_commented(f"CREATE TABLE {quote(copy)} LIKE {quote(table)};"))
+        lines.append(_commented(f"INSERT INTO {quote(copy)} SELECT * FROM {quote(table)};"))
+    lines.append("")
+    return lines
+
+
+def _undo_section(plan):
+    lines = [
+        "-- ======================================================================",
+        "-- SECAO 3 - DESFAZER (tudo comentado): so use se precisar voltar atras",
+        "-- Ordem inversa da SECAO 2. Restaura a ESTRUTURA lida do banco; dados so pelo BACKUP.",
+        "-- ======================================================================",
+    ]
+    wrote = False
+    for item in reversed(plan.items):
+        if not (item.undo or item.undo_note):
+            continue
+        wrote = True
+        lines.append(f"-- desfazer: {item.label}")
+        if item.undo:
+            lines.append(_commented(item.undo))
+        if item.undo_note:
+            lines.append(f"--   obs: {item.undo_note}")
+    if not wrote:
+        lines.append("-- Nada a desfazer.")
+    lines.append("")
+    return lines
+
+
+def render_script(plans, user="", now=None, server=None):
+    """Texto do arquivo .sql com todas as versoes. `plans`: lista de FixPlan; `server`: (host, porta)."""
     now = now or datetime.now()
     lines = [HEADER, f"-- Gerado em {now:%d/%m/%Y %H:%M}" + (f" por {user}" if user else ""), ""]
     for plan in plans:
@@ -395,6 +590,12 @@ def render_script(plans, user="", now=None):
             "-- ----------------------------------------------------------------------",
             _commented(f"USE {quote(plan.database)};"),
             "",
+        ]
+        lines += _backup_section(plan, now, server)
+        lines += [
+            "-- ======================================================================",
+            "-- SECAO 2 - APLICAR",
+            "-- ======================================================================",
         ]
         for note in plan.notes:
             lines.append(_commented("ATENCAO: " + note))
@@ -418,15 +619,16 @@ def render_script(plans, user="", now=None):
             lines.append("")
         if not plan.items:
             lines += ["-- Nenhum comando para esta versao.", ""]
+        lines += _undo_section(plan)
     return "\n".join(lines).rstrip() + "\n"
 
 
-def write_script(plans, path, user="", now=None):
+def write_script(plans, path, user="", now=None, server=None):
     """Grava o .sql de forma atomica. Levanta OSError/ValueError."""
     path = Path(path)
     if path.suffix.lower() != ".sql":
         raise ValueError("Use a extensao .sql.")
-    text = render_script(plans, user, now)
+    text = render_script(plans, user, now, server)
     temp = path.with_name(f".{path.name}.tmp")
     try:
         temp.write_text(text, encoding="utf-8", newline="\n")

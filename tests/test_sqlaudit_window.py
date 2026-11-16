@@ -933,6 +933,28 @@ class FixScriptTests(WindowTestCase):
         self.assertEqual(str(self.sa.fix_button.cget("state")), "disabled")
         self.sa._set_busy("")
 
+    def test_script_brings_backup_with_the_server_and_an_undo_from_the_database_definition(self):
+        self.start()
+        self.analyze("varchar(20)")
+        path = self.tmp / "com_backup.sql"
+        self.generate(path)
+        text = path.read_text(encoding="utf-8")
+        self.assertIn("mysqldump -h 10.0.0.35 -P 43309 -u <USUARIO> -p --single-transaction BANCO_AUTCOM_379_48_02_30_72 CLIENTES", text)
+        self.assertIn("SECAO 3 - DESFAZER", text)
+        # o desfazer volta ao que o banco tinha (varchar(20)), e esta todo comentado
+        self.assertIn("-- ALTER TABLE `CLIENTES` MODIFY COLUMN `CLI_EMAIL` varchar(20) NULL DEFAULT NULL;", text)
+        self.assertNotIn("restaure do backup", text.split("SECAO 3 - DESFAZER")[-1].split("desfazer: coluna CLIENTES.CLI_EMAIL")[1][:120])
+        self.assertNotIn(PASSWORD, text)
+
+    def test_the_schema_read_from_the_database_stays_in_memory_only(self):
+        self.start()
+        self.analyze("varchar(20)")
+        (audit,) = self.sa.run.versions
+        self.assertIsNotNone(audit.schema)
+        self.assertNotIn("DbSchema", repr(audit))  # fora do repr, como o modelo esperado
+        self.assertNotIn("CLI_EMAIL", shared_log.log_path(self.control).read_text(encoding="utf-8"))
+        self.assertNotIn(PASSWORD, repr(audit))
+
     def test_generates_a_reviewable_script_and_logs_it_without_secrets(self):
         self.start()
         self.analyze("varchar(20)")  # o script pede varchar(200): divergencia de tipo
