@@ -105,6 +105,7 @@ class ComparisonResult:
     operations: list = field(default_factory=list)
     warnings: list = field(default_factory=list)
     disclaimer: str = DISCLAIMER
+    ignored: dict = field(default_factory=dict)  # tabela -> objetos ignorados por prefixo configurado
 
     def object_counts(self):
         counts = {}
@@ -130,6 +131,58 @@ class ComparisonResult:
         for summary in grouped.values():
             summary.status = worst(summary.counts)
         return sorted(grouped.values(), key=lambda s: (s.version, s.number if s.number is not None else 10**12, s.script))
+
+
+def normalize_prefixes(prefixes):
+    """Prefixos limpos, sem repeticao e em minusculas (a comparacao ignora a caixa)."""
+    seen = []
+    for item in prefixes or ():
+        text = str(item).strip().lower()
+        if text and text not in seen:
+            seen.append(text)
+    return tuple(seen)
+
+
+def ignore_tables(result, prefixes):
+    """Tira do resultado as tabelas cujo nome comeca com um dos prefixos.
+
+    Nada some em silencio: a contagem fica em `result.ignored` e um aviso e acrescentado.
+    """
+    prefixes = normalize_prefixes(prefixes)
+    if not prefixes:
+        return result
+
+    def hidden(table):
+        return str(table or "").lower().startswith(prefixes)
+
+    kept = []
+    for item in result.objects:
+        if hidden(item.table):
+            result.ignored[item.table] = result.ignored.get(item.table, 0) + 1
+        else:
+            kept.append(item)
+    result.objects = kept
+    result.operations = [item for item in result.operations if not hidden(item.applied.operation.table)]
+    if result.ignored:
+        total = sum(result.ignored.values())
+        result.warnings.append(
+            f"{total} objeto(s) de {len(result.ignored)} tabela(s) ignorados pelo prefixo configurado: "
+            + ", ".join(prefixes) + "."
+        )
+    return result
+
+
+def table_summary(result):
+    """Contagem de objetos por tabela e estado, das mais problematicas para as menos."""
+    rows = {}
+    for item in result.objects:
+        counts = rows.setdefault(item.table, {})
+        counts[item.status] = counts.get(item.status, 0) + 1
+    ranked = sorted(
+        rows.items(),
+        key=lambda pair: (-(pair[1].get(DIVERGENTE, 0) + pair[1].get(AUSENTE, 0)), pair[0].lower()),
+    )
+    return [(table, counts) for table, counts in ranked]
 
 
 # -- comparacao de atributos --

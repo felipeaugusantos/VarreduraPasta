@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from app.sqlaudit.comparator import ComparisonError, compare
+from app.sqlaudit.comparator import ComparisonError, compare, ignore_tables
 from app.sqlaudit.db_reader import TLS_ENCRYPT, AuditDbError, connect_readonly
 from app.sqlaudit.expected_model import build_expected_model
 from app.sqlaudit.file_scanner import SqlFileError, scan_sql_files
@@ -46,6 +46,7 @@ class AuditRequest:
     folders: dict  # versao -> VersionFolder (todas as descobertas, para a cadeia de bases)
     tree: object  # VersionTree
     server: ServerConnection
+    ignored_prefixes: tuple = ()  # tabelas com esses prefixos ficam fora da comparacao
 
 
 @dataclass(frozen=True)
@@ -227,7 +228,7 @@ def _audit_version(request, item, audit, scans, parse_cache, report, cancel_even
     audit.tls_verified = schema.tls_verified
 
     report("comparando", 0.8)
-    audit.comparison = compare(model, schema, expected_database=item.database)
+    audit.comparison = ignore_tables(compare(model, schema, expected_database=item.database), request.ignored_prefixes)
 
     base = tree.nodes[item.version].base
     if base:
@@ -238,6 +239,6 @@ def _audit_version(request, item, audit, scans, parse_cache, report, cancel_even
         if cancelled():
             return
         audit.fork_hint = suggest_fork(
-            compare(base_model, schema), base_version=base, earliest_restore=schema.earliest_table_creation()
+            ignore_tables(compare(base_model, schema), request.ignored_prefixes), base_version=base, earliest_restore=schema.earliest_table_creation()
         )
     report("pronto", 1.0)

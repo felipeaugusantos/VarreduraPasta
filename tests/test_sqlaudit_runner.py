@@ -86,6 +86,17 @@ class RunAuditTests(RunnerTestCase):
         self.assertEqual((hint.candidate, hint.first_missing), (2, 3))  # B nao existe no banco da filha
         self.assertEqual(audit.server_version, "8.0.36")
 
+    def test_ignored_prefix_keeps_those_tables_out_of_the_comparison(self):
+        self.tree.set_base(CHILD, BASE, fork=2)
+        request = self.request(CHILD)
+        request.ignored_prefixes = ("clientes",)
+        run = run_audit(request, connector=connector_for(self.banks()))
+        (audit,) = run.versions
+        self.assertEqual(audit.error, "")
+        self.assertEqual(audit.comparison.objects, [])
+        self.assertIn("CLIENTES", audit.comparison.ignored)
+        self.assertTrue([w for w in audit.comparison.warnings if "ignorados pelo prefixo" in w])
+
     def test_records_the_sha256_of_every_script_used_with_its_origin(self):
         import hashlib
 

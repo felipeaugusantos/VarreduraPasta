@@ -256,6 +256,32 @@ def save_sqlaudit_config(root, tree, databases):
     _save_settings(data)
 
 
+def load_sqlaudit_ignored_prefixes():
+    """Prefixos de tabela que a Auditoria de Estrutura SQL deixa fora da comparacao."""
+    value = _load_settings().get("sqlaudit")
+    raw = value.get("ignored_prefixes") if isinstance(value, dict) else None
+    result = []
+    for item in raw if isinstance(raw, list) else ():
+        text = str(item).strip()
+        if text and text.lower() not in (p.lower() for p in result):
+            result.append(text)
+    return result
+
+
+@_synchronized
+def save_sqlaudit_ignored_prefixes(prefixes):
+    data = _load_settings()
+    current = data.get("sqlaudit") if isinstance(data.get("sqlaudit"), dict) else {}
+    cleaned = []
+    for item in prefixes or ():
+        text = str(item).strip()
+        if text and text.lower() not in (p.lower() for p in cleaned):
+            cleaned.append(text)
+    current["ignored_prefixes"] = cleaned
+    data["sqlaudit"] = current
+    _save_settings(data)
+
+
 def load_sqlaudit_server():
     """Servidor da auditoria. Sem valor salvo, usa o servidor do banco modelo (e o mesmo MySQL).
 

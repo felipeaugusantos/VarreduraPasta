@@ -615,6 +615,52 @@ class HistoryTests(WindowTestCase):
         self.assertIn("indisponível", self.sa.status_var.get())
 
 
+class IgnoredPrefixWindowTests(WindowTestCase):
+    DATABASE = "BANCO_AUTCOM_379_48_02_30_72"
+
+    def start(self):
+        self.open(root=False)
+        self.discover()
+
+    def run_analysis(self):
+        banks = {self.DATABASE: responses_for(self.DATABASE, [("CLI_ID", "int"), ("CLI_EMAIL", "varchar(200)")])}
+        with self.login(), self.connection(**banks):
+            self.sa.analyze()
+            self.pump()
+
+    def test_prefix_is_saved_applied_to_the_analysis_and_reported(self):
+        from app import settings
+
+        self.start()
+        self.sa.ignored_var.set("clientes, TMP_ ,clientes")
+        self.run_analysis()
+        self.assertEqual(settings.load_sqlaudit_ignored_prefixes(), ["clientes", "TMP_"])
+        self.assertEqual(self.sa.results_table.get_children(), ())
+        (audit,) = self.sa.run.versions
+        self.assertTrue(audit.comparison.ignored)
+        texts = [self.sa.warnings_table.item(i, "values")[1] for i in self.sa.warnings_table.get_children()]
+        self.assertTrue([t for t in texts if "ignorados pelo prefixo" in t])
+
+    def test_without_prefix_everything_is_compared_and_summary_by_table_lists_tables(self):
+        self.start()
+        self.run_analysis()
+        self.assertTrue(self.sa.results_table.get_children())
+        before = set(self.sa.window.winfo_children())
+        self.sa.show_table_summary()
+        (dialog,) = [w for w in self.sa.window.winfo_children() if w not in before]
+        self.addCleanup(dialog.destroy)
+        tables = [w for w in dialog.winfo_children() if w.winfo_class() == "Treeview"]
+        rows = [tables[0].item(i, "values") for i in tables[0].get_children()]
+        self.assertEqual([r[1] for r in rows], ["CLIENTES"])
+        self.assertEqual(rows[0][0], "48.2.30.72")
+
+    def test_summary_without_analysis_says_so(self):
+        self.open(root=False)
+        with patch("app.sqlaudit_window.messagebox.showinfo") as info:
+            self.sa.show_table_summary()
+        info.assert_called_once()
+
+
 class SharedForkTests(WindowTestCase):
     def start(self):
         self.open(root=False)

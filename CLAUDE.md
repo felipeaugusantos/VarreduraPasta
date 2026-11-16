@@ -246,7 +246,7 @@ casa o banco sugerido com a lista (ignora maiusculas), mostra "existe/nao existe
 servidor" e deixa escolher ou digitar. Banco que nao esta na lista aparece como `Banco
 nao encontrado` na tabela e em Avisos, e analisar um banco fora da lista pede
 confirmacao. A lista fica so em memoria; a senha continua sendo pedida a cada operacao.
-Descoberta, teste de conexao, analise e exportacao rodam em thread + fila; cada
+Tabelas gerenciadas fora dos scripts das versoes (ex.: `CONECTA_*`, criadas pelos scripts do banco modelo) podem ficar fora da comparacao pelo campo `Ignorar tabelas com prefixo` (`ignored_prefixes` em `settings.json`, `ignore_tables` em `comparator`); a contagem ignorada vai para Avisos e `Por tabela...` resume os objetos por tabela. Descoberta, teste de conexao, analise e exportacao rodam em thread + fila; cada
 analise gera uma linha `Auditoria SQL concluida|cancelada` na Auditoria. COMPATIVEL
 nao prova que o script foi executado.
 

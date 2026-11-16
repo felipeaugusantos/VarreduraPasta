@@ -18,13 +18,15 @@ from app.logging_utils import write_log
 from app.model_db_dialogs import ask_credentials
 from app.settings import (
     load_sqlaudit_config,
+    load_sqlaudit_ignored_prefixes,
     load_sqlaudit_server,
     save_sqlaudit_config,
+    save_sqlaudit_ignored_prefixes,
     save_sqlaudit_server,
 )
 from app.sqlaudit import audit_runner, fix_suggestions, report, shared_log
 from app.sqlaudit.audit_store import AuditStore
-from app.sqlaudit.comparator import PRECEDENCE, worst
+from app.sqlaudit.comparator import AUSENTE, COMPATIVEL, DIVERGENTE, INDETERMINADO, PRECEDENCE, table_summary, worst
 from app.sqlaudit.db_reader import TLS_ENCRYPT, TLS_VERIFY
 from app.sqlaudit.version_discovery import discover_versions, version_sort_key
 from app.sqlaudit.version_tree import TreeError, VersionTree
@@ -89,6 +91,7 @@ class SqlAuditWindow:
         self.version_filter = tk.StringVar(value=ALL)
         self.search_var = tk.StringVar()
         self.count_var = tk.StringVar()
+        self.ignored_var = tk.StringVar()
         self.origin_var = tk.StringVar(value=ORIGIN_LOCAL)
 
         self._build()
@@ -135,6 +138,11 @@ class SqlAuditWindow:
             "Usuário e senha não são gravados. Use um usuário só com SELECT.",
             style="Muted.TLabel",
         ).grid(row=2, column=0, columnspan=7, sticky="w", pady=(6, 0))
+        ttk.Label(server, text="Ignorar tabelas com prefixo:").grid(row=3, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        ttk.Entry(server, textvariable=self.ignored_var).grid(row=3, column=2, columnspan=4, sticky="ew", padx=(6, 6), pady=(6, 0))
+        ttk.Label(server, text="Separe por vírgula (ex.: CONECTA_). Fora da comparação; a contagem aparece em Avisos.", style="Muted.TLabel").grid(
+            row=4, column=0, columnspan=7, sticky="w"
+        )
 
         ttk.Label(frame, text="Versões (clique em ☐ para marcar)", font=self._font("section")).grid(
             row=2, column=0, columnspan=3, sticky="w", pady=(12, 4)
@@ -256,6 +264,7 @@ class SqlAuditWindow:
         ttk.Label(filters, text="Buscar:").grid(row=0, column=4)
         ttk.Entry(filters, textvariable=self.search_var, width=18).grid(row=0, column=5, padx=(6, 12))
         ttk.Label(filters, textvariable=self.count_var, style="Muted.TLabel").grid(row=0, column=6, sticky="w")
+        ttk.Button(filters, text="Por tabela...", command=self.show_table_summary).grid(row=0, column=7, padx=(12, 0))
         for variable in (self.state_filter, self.version_filter, self.search_var):
             variable.trace_add("write", lambda *_args: self.apply_filters())
         holder, self.results_table = self._table(
@@ -306,6 +315,7 @@ class SqlAuditWindow:
         self.port_var.set(str(server["port"]))
         self.tls_var.set(TLS_LABELS[server["tls"]])
         self.ca_var.set(server["ca_file"])
+        self.ignored_var.set(", ".join(load_sqlaudit_ignored_prefixes()))
         self._saved_tree = saved["tree"]
         self._saved_databases = saved["databases"]
         self._saved_username = server["username"]
@@ -320,6 +330,10 @@ class SqlAuditWindow:
         save_sqlaudit_config(self.root_var.get(), self.tree.to_saved(), self.databases)
         port = self.port_var.get().strip()
         save_sqlaudit_server(self.host_var.get(), port, self._saved_username, self._tls_mode(), self.ca_var.get())
+        save_sqlaudit_ignored_prefixes(self._ignored_prefixes())
+
+    def _ignored_prefixes(self):
+        return [part.strip() for part in self.ignored_var.get().replace(";", ",").split(",") if part.strip()]
 
     # ---- ocupado / fila ----
     def _set_busy(self, busy):
@@ -841,6 +855,7 @@ class SqlAuditWindow:
             folders=dict(self.folders),
             tree=self.tree,
             server=server,
+            ignored_prefixes=tuple(self._ignored_prefixes()),
         )
         self.cancel_event = threading.Event()
         cancel = self.cancel_event
@@ -935,6 +950,36 @@ class SqlAuditWindow:
             + ("; refine os filtros ou exporte" if len(matching) > MAX_ROWS_SHOWN else "")
         )
         self._set_detail("")
+
+    def show_table_summary(self):
+        audits = [audit for audit in (self.run.versions if self.run else []) if audit.comparison is not None]
+        if not audits:
+            messagebox.showinfo(TITLE, "Faça uma análise primeiro.", parent=self.window)
+            return
+        dialog = tk.Toplevel(self.window)
+        dialog.title("Objetos por tabela")
+        dialog.transient(self.window)
+        dialog.geometry("820x480")
+        columns = ("version", "table", "bad", "missing", "unknown", "ok")
+        headings = {"version": "Versão", "table": "Tabela", "bad": "Divergente", "missing": "Ausente", "unknown": "Indeterminado", "ok": "Compatível"}
+        widths = {"version": 150, "table": 280, "bad": 90, "missing": 80, "unknown": 100, "ok": 90}
+        table = ttk.Treeview(dialog, columns=columns, show="headings")
+        for column in columns:
+            table.heading(column, text=headings[column])
+            table.column(column, width=widths[column], anchor="w" if column in ("version", "table") else "center")
+        scroll = ttk.Scrollbar(dialog, orient="vertical", command=table.yview)
+        table.configure(yscrollcommand=scroll.set)
+        table.pack(side="left", fill="both", expand=True)
+        scroll.pack(side="right", fill="y")
+        for audit in audits:
+            for name, counts in table_summary(audit.comparison):
+                table.insert(
+                    "", "end",
+                    values=(
+                        audit.version, name, counts.get(DIVERGENTE, 0), counts.get(AUSENTE, 0),
+                        counts.get(INDETERMINADO, 0), counts.get(COMPATIVEL, 0),
+                    ),
+                )
 
     def _see_selection(self):
         selection = self.results_table.selection()
