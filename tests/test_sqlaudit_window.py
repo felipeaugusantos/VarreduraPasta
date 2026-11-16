@@ -700,6 +700,143 @@ class IgnoredPrefixWindowTests(WindowTestCase):
         info.assert_called_once()
 
 
+class KnownFindingsTests(WindowTestCase):
+    DATABASE = "BANCO_AUTCOM_379_48_02_30_72"
+
+    def start(self):
+        self.open(root=False)
+        self.discover()
+
+    def run_analysis(self, email_type="varchar(100)"):
+        banks = {self.DATABASE: responses_for(self.DATABASE, [("CLI_ID", "int"), ("CLI_EMAIL", email_type)])}
+        with self.login(), self.connection(**banks):
+            self.sa.analyze()
+            self.pump()
+
+    def table_rows(self):
+        table = self.sa.results_table
+        return [table.item(i, "values") for i in table.get_children()]
+
+    def select_divergent(self):
+        self.sa.state_filter.set("Divergente")
+        table = self.sa.results_table
+        table.selection_set(table.get_children())
+        self.assertEqual(len(table.selection()), 1)
+
+    def mark(self, reason="sem impacto"):
+        with patch("app.sqlaudit_window.simpledialog.askstring", return_value=reason):
+            self.sa.mark_known()
+            self.pump()
+
+    def test_marking_hides_the_finding_for_everyone_and_keeps_the_reason(self):
+        self.start()
+        self.run_analysis()
+        self.select_divergent()
+        self.mark("coluna ja nasceu com 100")
+        self.assertEqual(self.table_rows(), [])
+        self.assertIn("conhecida(s) ocultas", self.sa.count_var.get())
+        events = shared_log.read_events(self.control)
+        self.assertEqual([(e.event, e.version) for e in events if e.event == "conhecida"], [("conhecida", "48.2.30.72")])
+        self.sa.hide_known_var.set(False)
+        self.sa.apply_filters()
+        (row,) = self.table_rows()
+        self.assertTrue(row[0].endswith("✓"))
+        self.sa.results_table.selection_set(self.sa.results_table.get_children())
+        self.sa.show_detail()
+        self.assertIn("coluna ja nasceu com 100", self.sa.detail.get("1.0", "end"))
+        self.assertNotIn(PASSWORD, shared_log.log_path(self.control).read_text(encoding="utf-8"))
+
+    def test_known_findings_survive_a_new_window(self):
+        self.start()
+        self.run_analysis()
+        self.select_divergent()
+        self.mark()
+        self.sa.window.destroy()
+        self.start()
+        self.assertEqual(len(self.sa.known), 1)
+        self.run_analysis()
+        self.sa.state_filter.set("Divergente")
+        self.assertEqual(self.table_rows(), [])
+
+    def test_a_changed_finding_comes_back(self):
+        self.start()
+        self.run_analysis("varchar(100)")
+        self.select_divergent()
+        self.mark()
+        self.run_analysis("varchar(150)")  # o banco mudou: outro achado
+        self.sa.state_filter.set("Divergente")
+        (row,) = self.table_rows()
+        self.assertFalse(row[0].endswith("✓"))
+        self.assertIn("varchar(150)", row[4])
+
+    def test_unmark_brings_the_finding_back(self):
+        self.start()
+        self.run_analysis()
+        self.select_divergent()
+        self.mark()
+        self.sa.hide_known_var.set(False)
+        self.sa.state_filter.set("Divergente")
+        self.sa.results_table.selection_set(self.sa.results_table.get_children())
+        self.sa.unmark_known()
+        self.pump()
+        self.assertEqual(self.sa.known, {})
+        self.sa.hide_known_var.set(True)
+        self.sa.apply_filters()
+        self.assertEqual(len(self.table_rows()), 1)
+
+    def test_only_divergent_or_missing_can_be_marked_and_nothing_selected_asks(self):
+        self.start()
+        self.run_analysis()
+        self.sa.state_filter.set("Compatível")
+        table = self.sa.results_table
+        table.selection_set(table.get_children())
+        with patch("app.sqlaudit_window.messagebox.showinfo") as info, \
+             patch("app.sqlaudit_window.simpledialog.askstring") as ask:
+            self.sa.mark_known()
+            table.selection_set(())
+            self.sa.mark_known()
+        self.assertEqual(info.call_count, 2)
+        ask.assert_not_called()
+        self.assertEqual(self.sa.known, {})
+
+    def test_cancelling_the_reason_dialog_marks_nothing(self):
+        self.start()
+        self.run_analysis()
+        self.select_divergent()
+        with patch("app.sqlaudit_window.simpledialog.askstring", return_value=None):
+            self.sa.mark_known()
+        self.assertEqual(self.sa.known, {})
+        self.assertFalse(shared_log.log_path(self.control).exists() and "conhecida" in shared_log.log_path(self.control).read_text(encoding="utf-8"))
+
+    def test_write_failure_is_reported_and_nothing_is_marked(self):
+        self.start()
+        self.run_analysis()
+        self.select_divergent()
+        with patch("app.sqlaudit_window.shared_log.append_events", side_effect=OSError("rede fora")):
+            self.mark()
+        self.assertIn("Não foi possível gravar", self.sa.status_var.get())
+        self.assertEqual(self.sa.known, {})
+
+    def test_export_list_follows_the_hidden_known_filter(self):
+        import csv
+
+        self.start()
+        self.run_analysis()
+        self.select_divergent()
+        self.mark()
+        self.sa.state_filter.set("Divergente")
+        path = self.tmp / "sem_conhecidas.csv"
+        with patch("app.sqlaudit_window.messagebox.showinfo") as info:
+            self.sa.export_objects()
+        info.assert_called_once()  # nada sobrou na lista: avisa e nao grava
+        self.sa.hide_known_var.set(False)
+        with patch("app.sqlaudit_window.filedialog.asksaveasfilename", return_value=str(path)):
+            self.sa.export_objects()
+            self.pump()
+        with path.open(encoding="utf-8-sig", newline="") as handle:
+            self.assertEqual(len(list(csv.reader(handle, delimiter=";"))) - 1, 1)
+
+
 class SharedForkTests(WindowTestCase):
     def start(self):
         self.open(root=False)

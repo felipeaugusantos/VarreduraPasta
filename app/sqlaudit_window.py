@@ -11,7 +11,7 @@ import threading
 import tkinter as tk
 from datetime import datetime
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from app import theme
 from app.logging_utils import write_log
@@ -92,6 +92,8 @@ class SqlAuditWindow:
         self.search_var = tk.StringVar()
         self.count_var = tk.StringVar()
         self.ignored_var = tk.StringVar()
+        self.hide_known_var = tk.BooleanVar(value=True)
+        self.known = {}  # chave -> SharedKnown (achados aceitos, da pasta de controle)
         self.origin_var = tk.StringVar(value=ORIGIN_LOCAL)
 
         self._build()
@@ -219,11 +221,11 @@ class SqlAuditWindow:
         fonts = getattr(self.app, "fonts", None)
         return fonts[name] if fonts and name in fonts else None
 
-    def _table(self, parent, columns, headings, widths, stretch, height=6):
+    def _table(self, parent, columns, headings, widths, stretch, height=6, selectmode="browse"):
         holder = ttk.Frame(parent)
         holder.columnconfigure(0, weight=1)
         holder.rowconfigure(0, weight=1)
-        table = ttk.Treeview(holder, columns=columns, show="headings", height=height, selectmode="browse")
+        table = ttk.Treeview(holder, columns=columns, show="headings", height=height, selectmode=selectmode)
         for column in columns:
             table.heading(column, text=headings[column], anchor="w")
             table.column(column, width=widths[column], anchor="w", stretch=column in stretch)
@@ -266,6 +268,16 @@ class SqlAuditWindow:
         ttk.Label(filters, textvariable=self.count_var, style="Muted.TLabel").grid(row=0, column=6, sticky="w")
         ttk.Button(filters, text="Por tabela...", command=self.show_table_summary).grid(row=0, column=7, padx=(12, 0))
         ttk.Button(filters, text="Exportar lista...", command=self.export_objects).grid(row=0, column=8, padx=(6, 0))
+        known_bar = ttk.Frame(filters)
+        known_bar.grid(row=1, column=0, columnspan=9, sticky="w", pady=(6, 0))
+        self.known_button = ttk.Button(known_bar, text="Marcar como conhecida...", command=self.mark_known)
+        self.known_button.grid(row=0, column=0)
+        self.unknown_button = ttk.Button(known_bar, text="Desmarcar", command=self.unmark_known)
+        self.unknown_button.grid(row=0, column=1, padx=(6, 12))
+        ttk.Checkbutton(known_bar, text="Ocultar conhecidas", variable=self.hide_known_var, command=self.apply_filters).grid(row=0, column=2)
+        ttk.Label(known_bar, text="Selecione linhas Divergente/Ausente (Ctrl ou Shift); vale para todos os operadores.", style="Muted.TLabel").grid(
+            row=0, column=3, padx=(12, 0)
+        )
         for variable in (self.state_filter, self.version_filter, self.search_var):
             variable.trace_add("write", lambda *_args: self.apply_filters())
         holder, self.results_table = self._table(
@@ -274,9 +286,11 @@ class SqlAuditWindow:
             {"state": "Estado", "version": "Versão", "kind": "Tipo", "object": "Objeto", "detail": "Detalhe", "script": "Script:linha"},
             {"state": 110, "version": 160, "kind": 70, "object": 250, "detail": 380, "script": 150},
             {"object", "detail"},
+            selectmode="extended",
         )
         holder.grid(row=1, column=0, sticky="nsew", pady=(8, 0))
         self.results_table.bind("<<TreeviewSelect>>", lambda _event: self.show_detail())
+        self.results_table.bind("<Control-a>", self._select_all_rows)
         self.results_table.bind("<Up>", lambda _event: self.window.after_idle(self._see_selection))
         self.results_table.bind("<Down>", lambda _event: self.window.after_idle(self._see_selection))
         ttk.Label(tab, text="Detalhe (esperado × encontrado)", font=self._font("section")).grid(row=2, column=0, sticky="w", pady=(8, 2))
@@ -340,7 +354,7 @@ class SqlAuditWindow:
     def _set_busy(self, busy):
         self.busy = busy
         idle = not busy
-        for button in (self.choose_button, self.discover_button, self.test_button, self.analyze_button, self.edit_button, self.connect_button):
+        for button in (self.choose_button, self.discover_button, self.test_button, self.analyze_button, self.edit_button, self.connect_button, self.known_button, self.unknown_button):
             button.config(state="normal" if idle else "disabled")
         self.export_button.config(state="normal" if idle and self.run is not None else "disabled")
         self.fix_button.config(state="normal" if idle and self._fixable() else "disabled")
@@ -384,6 +398,8 @@ class SqlAuditWindow:
             self.progress.config(value=round(message[2] * 100))
         elif kind == "discovered":
             self._set_busy("")
+            if len(message) > 4:
+                self.known = message[4]
             self._apply_discovery(message[1], message[2], message[3])
         elif kind == "tested":
             self._set_busy("")
@@ -406,6 +422,12 @@ class SqlAuditWindow:
         elif kind == "exported":
             self._set_busy("")
             self.status_var.set(message[1])
+        elif kind == "known":
+            self._set_busy("")
+            if message[1] is not None:
+                self.known = message[1]
+            self.apply_filters()
+            self.status_var.set(message[2])
         elif kind == "error":
             self._set_busy("")
             self.status_var.set("✖ " + message[1])
@@ -431,12 +453,14 @@ class SqlAuditWindow:
 
         def work():
             result = discover_versions(Path(root))
-            forks, warning = {}, ""
+            forks, known, warning = {}, {}, ""
             try:
-                forks = shared_log.latest_forks(shared_log.read_events())
+                events = shared_log.read_events()
+                forks = shared_log.latest_forks(events)
+                known = shared_log.latest_known(events)
             except OSError as error:
-                warning = f"Registro compartilhado de forks indisponível: {error}"
-            return ("discovered", result, forks, warning)
+                warning = f"Registro compartilhado (forks e achados conhecidos) indisponível: {error}"
+            return ("discovered", result, forks, warning, known)
 
         self._start("descobrindo", work)
 
@@ -918,6 +942,7 @@ class SqlAuditWindow:
         state = self.state_filter.get()
         version = self.version_filter.get()
         needle = self.search_var.get().strip().lower()
+        hide_known = self.hide_known_var.get() and bool(self.known)
         by_label = {report.label(status): status for status in PRECEDENCE}
         matching = []
         for index, row in enumerate(self.rows):
@@ -928,6 +953,8 @@ class SqlAuditWindow:
             if version != ALL and row["versao"] != version:
                 continue
             if needle and needle not in " ".join(str(row[k]) for k in ("tabela", "coluna", "script", "diferencas", "notas")).lower():
+                continue
+            if hide_known and shared_log.row_key(row) in self.known:
                 continue
             matching.append(index)
         return matching
@@ -969,7 +996,10 @@ class SqlAuditWindow:
                 "",
                 "end",
                 iid=str(index),
-                values=(report.label(row["estado"]), row["versao"], row["tipo"], obj, row["diferencas"] or row["notas"], origin),
+                values=(
+                    report.label(row["estado"]) + (" ✓" if shared_log.row_key(row) in self.known else ""),
+                    row["versao"], row["tipo"], obj, row["diferencas"] or row["notas"], origin,
+                ),
                 tags=self._tag(row["estado"]),
             )
             self.shown[str(index)] = row
@@ -978,8 +1008,76 @@ class SqlAuditWindow:
             f"{min(len(matching), MAX_ROWS_SHOWN)} de {len(matching)}"
             + (f" (total {total})" if len(matching) != total else "")
             + ("; refine os filtros ou use Exportar lista" if len(matching) > MAX_ROWS_SHOWN else "")
+            + self._known_note()
         )
         self._set_detail("")
+
+    def _known_note(self):
+        if not self.known:
+            return ""
+        hidden = sum(1 for row in self.rows if shared_log.row_key(row) in self.known)
+        if not hidden:
+            return ""
+        return f"; {hidden} conhecida(s) " + ("ocultas" if self.hide_known_var.get() else "marcadas com ✓")
+
+    def _select_all_rows(self, _event=None):
+        self.results_table.selection_set(self.results_table.get_children())
+        return "break"
+
+    def _selected_rows(self):
+        return [self.shown[iid] for iid in self.results_table.selection() if iid in self.shown]
+
+    def mark_known(self):
+        rows = self._selected_rows()
+        if not rows:
+            messagebox.showinfo(TITLE, "Selecione ao menos um achado na lista (Ctrl+A seleciona todos).", parent=self.window)
+            return
+        eligible = [row for row in rows if row["estado"] in ("DIVERGENTE", "AUSENTE")]
+        skipped = len(rows) - len(eligible)
+        if not eligible:
+            messagebox.showinfo(TITLE, "Só achados Divergente ou Ausente podem ser marcados como conhecidos.", parent=self.window)
+            return
+        eligible = [row for row in eligible if shared_log.row_key(row) not in self.known]
+        if not eligible:
+            messagebox.showinfo(TITLE, "Os achados selecionados já estão marcados como conhecidos.", parent=self.window)
+            return
+        reason = simpledialog.askstring(
+            TITLE,
+            f"Marcar {len(eligible)} achado(s) como conhecido(s) para todos os operadores.\n"
+            "Motivo (aparece nos detalhes; ex.: \"coluna já nasceu com 20, sem impacto\"):",
+            parent=self.window,
+        )
+        if reason is None:
+            return
+        user = audit_runner.os_user()
+        events = [shared_log.known_event(user, row, reason) for row in eligible]
+        note = f" ({skipped} linha(s) que não são Divergente/Ausente ficaram de fora)" if skipped else ""
+        self._write_known(events, f"✔ {len(eligible)} achado(s) marcado(s) como conhecido(s).{note}")
+
+    def unmark_known(self):
+        rows = [row for row in self._selected_rows() if shared_log.row_key(row) in self.known]
+        if not rows:
+            messagebox.showinfo(
+                TITLE,
+                "Selecione achados já conhecidos (marcados com ✓). Para vê-los, desligue \"Ocultar conhecidas\".",
+                parent=self.window,
+            )
+            return
+        user = audit_runner.os_user()
+        events = [shared_log.known_event(user, row, marked=False) for row in rows]
+        self._write_known(events, f"✔ {len(rows)} achado(s) deixaram de ser conhecido(s).")
+
+    def _write_known(self, events, success):
+        def work():
+            try:
+                shared_log.append_events(events)
+                known = shared_log.latest_known(shared_log.read_events())
+            except OSError as error:
+                return ("known", None, f"✖ Não foi possível gravar na pasta de controle: {error}")
+            return ("known", known, success)
+
+        self.status_var.set("Gravando...")
+        self._start("registrando", work)
 
     def show_table_summary(self):
         audits = [audit for audit in (self.run.versions if self.run else []) if audit.comparison is not None]
@@ -1038,6 +1136,9 @@ class SqlAuditWindow:
             lines.extend("  • " + part for part in row["notas"].split("; "))
         if row["estado"] == "COMPATIVEL":
             lines.append("Compatível com os scripts; isso não comprova que algum script foi executado.")
+        known = self.known.get(shared_log.row_key(row))
+        if known is not None:
+            lines.append(f"Conhecida: marcada por {known.user} em {known.timestamp}" + (f" — {known.reason}" if known.reason else ""))
         self._set_detail("\n".join(lines))
 
     def _set_detail(self, text):

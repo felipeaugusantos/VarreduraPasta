@@ -8,8 +8,13 @@ nao misturar com o controle de scripts feitos (`scripts_banco_modelo.log`).
 Eventos:
 - `auditoria`: resumo de uma analise concluida (contagens por estado; sem SQL, sem senha);
 - `fork`: o operador declara que a versao nasceu da base ate `SCRIPT_<n>`. E a unica
-  fonte certa do ponto de fork (os dumps nao sao guardados).
+  fonte certa do ponto de fork (os dumps nao sao guardados);
+- `conhecida` / `desmarcada`: o operador aceita (ou deixa de aceitar) um achado
+  DIVERGENTE/AUSENTE ja investigado. A chave e versao + objeto + assinatura do achado
+  (estado e diferencas): se o banco mudar, a assinatura muda e o achado volta a aparecer.
 """
+
+import hashlib
 
 import os
 import sys
@@ -23,6 +28,9 @@ from app.settings import load_script_control_directory
 FILE_NAME = "auditoria_estrutura_sql.log"
 EVENT_AUDIT = "auditoria"
 EVENT_FORK = "fork"
+EVENT_KNOWN = "conhecida"
+EVENT_UNKNOWN = "desmarcada"
+MAX_REASON_CHARS = 200
 SEPARATOR = " | "
 APPEND_RETRY_ATTEMPTS = 5
 APPEND_RETRY_DELAY_SECONDS = 0.3
@@ -184,6 +192,63 @@ def audit_event(user, audit, now=None):
         summary = ",".join(f"{status.lower()}:{count}" for status, count in sorted(counts.items()))
         detail = f"banco={audit.database}; mysql={audit.server_version}; scripts={audit.scripts_total}; objetos={summary or '-'}"
     return SharedEvent(now_text(now), user, audit.version, EVENT_AUDIT, detail)
+
+
+@dataclass(frozen=True)
+class SharedKnown:
+    key: tuple
+    state: str
+    reason: str
+    user: str
+    timestamp: str
+
+
+def signature(state, differences):
+    """Identifica o achado: se o estado ou as diferencas mudarem, deixa de ser o mesmo achado."""
+    text = f"{state}|{differences}".encode("utf-8")
+    return hashlib.sha256(text).hexdigest()[:12]
+
+
+def known_key(version, kind, table, column, sig):
+    return (str(version), str(kind), str(table).lower(), str(column or "").lower(), str(sig))
+
+
+def row_key(row):
+    """Chave de uma linha de `report.object_rows` (ou do historico)."""
+    return known_key(
+        row["versao"], row["tipo"], row["tabela"], row["coluna"], signature(row["estado"], row["diferencas"])
+    )
+
+
+def known_event(user, row, reason="", marked=True, now=None):
+    reason = " ".join(str(reason).replace("; ", ", ").split())[:MAX_REASON_CHARS]
+    detail = (
+        f"tipo={row['tipo']}; tabela={row['tabela']}; coluna={row['coluna'] or ''}; "
+        f"assinatura={signature(row['estado'], row['diferencas'])}; estado={row['estado']}; motivo={reason}"
+    )
+    return SharedEvent(now_text(now), user, row["versao"], EVENT_KNOWN if marked else EVENT_UNKNOWN, detail)
+
+
+def latest_known(events):
+    """Achados aceitos: o ultimo evento de cada chave vence (`desmarcada` remove)."""
+    result = {}
+    for event in events:
+        if event.event not in (EVENT_KNOWN, EVENT_UNKNOWN):
+            continue
+        text = event.detail
+        reason = ""
+        head, separator, tail = text.partition("; motivo=")
+        if separator:
+            reason = tail.strip()
+        fields = _fields(head)
+        if not fields.get("assinatura"):
+            continue
+        key = known_key(event.version, fields.get("tipo", ""), fields.get("tabela", ""), fields.get("coluna", ""), fields["assinatura"])
+        if event.event == EVENT_UNKNOWN:
+            result.pop(key, None)
+        else:
+            result[key] = SharedKnown(key, fields.get("estado", ""), reason, event.user, event.timestamp)
+    return result
 
 
 def latest_forks(events):
