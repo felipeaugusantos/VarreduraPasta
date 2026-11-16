@@ -15,8 +15,8 @@ Observacoes:
 from dataclasses import dataclass, field
 
 CONNECT_TIMEOUT_SECONDS = 10
-READ_TIMEOUT_SECONDS = 60
-MAX_EXECUTION_MS = 60000
+READ_TIMEOUT_SECONDS = 600  # information_schema de banco grande (ou servidor ocupado) pode demorar
+MAX_EXECUTION_MS = 600000
 TLS_ENCRYPT = "encrypt"  # criptografa, NAO confere o certificado
 TLS_VERIFY = "verify"  # confere o certificado (precisa do arquivo da CA)
 
@@ -37,7 +37,7 @@ SQL_FOREIGN_KEYS = (
     "k.REFERENCED_COLUMN_NAME, r.DELETE_RULE, r.UPDATE_RULE "
     "FROM information_schema.KEY_COLUMN_USAGE k JOIN information_schema.REFERENTIAL_CONSTRAINTS r "
     "ON r.CONSTRAINT_SCHEMA = k.CONSTRAINT_SCHEMA AND r.CONSTRAINT_NAME = k.CONSTRAINT_NAME AND r.TABLE_NAME = k.TABLE_NAME "
-    "WHERE k.TABLE_SCHEMA = %s AND k.REFERENCED_TABLE_NAME IS NOT NULL "
+    "WHERE k.TABLE_SCHEMA = %s AND r.CONSTRAINT_SCHEMA = %s AND k.REFERENCED_TABLE_NAME IS NOT NULL "
     "ORDER BY k.TABLE_NAME, k.CONSTRAINT_NAME, k.ORDINAL_POSITION"
 )
 SQL_COLUMNS = (
@@ -264,7 +264,7 @@ class AuditConnection:
 
     def _read_foreign_keys(self, schema, database):
         grouped = {}
-        for table_name, name, column, _pos, ref_table, ref_column, delete_rule, update_rule in self._query(SQL_FOREIGN_KEYS, (database,)):
+        for table_name, name, column, _pos, ref_table, ref_column, delete_rule, update_rule in self._query(SQL_FOREIGN_KEYS, (database, database)):
             table = schema.tables.get(str(table_name).lower())
             if table is None:
                 continue

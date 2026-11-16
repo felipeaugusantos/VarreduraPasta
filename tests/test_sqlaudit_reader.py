@@ -166,7 +166,9 @@ class ReadSchemaTests(ReaderTestCase):
         audit, _ = self.connect(connection)
         audit.read_schema("BANCO_X")
         queries = [(statement, params) for statement, params in connection.executed if params is not None]
-        self.assertEqual({params for _statement, params in queries}, {("BANCO_X",)})
+        self.assertEqual({params for _statement, params in queries}, {("BANCO_X",), ("BANCO_X", "BANCO_X")})
+        for _statement, params in queries:
+            self.assertEqual(set(params), {"BANCO_X"})
         for statement, _params in queries:
             self.assertNotIn("BANCO_X", statement)
 

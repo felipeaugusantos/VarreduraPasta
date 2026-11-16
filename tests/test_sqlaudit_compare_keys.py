@@ -279,7 +279,8 @@ class ReaderKeyTests(ReaderTestCase):
         audit.read_schema("BANCO_X")
         for statement, params in connection.executed:
             if statement in (db_reader.SQL_INDEXES, db_reader.SQL_FOREIGN_KEYS):
-                self.assertEqual(params, ("BANCO_X",))
+                self.assertEqual(set(params), {"BANCO_X"})
+                self.assertEqual(len(params), statement.count("%s"))
                 self.assertNotIn("BANCO_X", statement)
                 self.assertTrue(statement.lstrip().startswith("SELECT"))
 

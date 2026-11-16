@@ -48,6 +48,7 @@ Semantico (`MAIOR.MENOR.CORRECAO`).
   confirmacao. O campo Banco da edicao da versao passa a ser uma lista.
 
 ### Corrigido
+- Auditoria de Estrutura SQL: a leitura do banco estourava o tempo (`Lost connection ... read operation timed out`) em bancos grandes. O limite passou de 60 s para 10 min e a consulta das chaves estrangeiras passou a filtrar tambem o esquema em `REFERENTIAL_CONSTRAINTS`.
 - Auditoria de Estrutura SQL: `Descobrir versoes` nao fazia nada quando a pasta
   escolhida era a propria `SCRIPTS` (ou a pasta da versao). Agora a pasta `SCRIPTS`,
   a pasta da versao e uma pasta com `.SQL` valem como uma unica versao (ja marcada),
