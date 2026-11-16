@@ -46,7 +46,9 @@ def _attributes(rest):
 
 def _numbers(args):
     parts = [part.strip() for part in args.strip("()").split(",")]
-    return parts if all(part.isdigit() for part in parts) and parts != [""] else None
+    if not all(part.isdigit() for part in parts) or parts == [""]:
+        return None
+    return [str(int(part)) for part in parts]  # `char(02)` e `char(2)` sao o mesmo tipo no MySQL
 
 
 def normalize_type(text):

@@ -135,6 +135,13 @@ class AttributeTests(CompareTestCase):
         self.assertEqual(self.one("BOOLEAN", col("A", "tinyint(1)")).status, COMPATIVEL)
         self.assertEqual(self.one("DECIMAL(10, 2)", col("A", "decimal(10,2)")).status, COMPATIVEL)
 
+    def test_leading_zeros_in_lengths_are_the_same_type(self):
+        self.assertEqual(self.one("CHAR(02)", col("A", "char(2)")).status, COMPATIVEL)
+        self.assertEqual(self.one("VARCHAR(003)", col("A", "varchar(3)")).status, COMPATIVEL)
+        self.assertEqual(self.one("DECIMAL(012,02)", col("A", "decimal(12,2)")).status, COMPATIVEL)
+        self.assertEqual(self.one("TINYINT(01)", col("A", "tinyint(1)")).status, COMPATIVEL)
+        self.assertEqual(self.one("VARCHAR(05)", col("A", "varchar(50)")).status, DIVERGENTE)  # 05 != 50
+
     def test_type_length_and_unsigned_differences(self):
         self.assertEqual(self.one("VARCHAR(50)", col("A", "varchar(60)")).status, DIVERGENTE)
         self.assertEqual(self.one("INT UNSIGNED", col("A", "int")).status, DIVERGENTE)

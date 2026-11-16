@@ -13,6 +13,7 @@ Semantico (`MAIOR.MENOR.CORRECAO`).
 - Auditoria de Estrutura SQL: botao `Exportar lista...` na aba Objetos. Grava em CSV (`;`, UTF-8) exatamente os objetos que passam pelos filtros atuais (estado, versao, busca), sem o limite de linhas da tela, tambem ao ver uma auditoria do historico.
 
 ### Corrigido
+- Auditoria de Estrutura SQL: tamanho com zero a esquerda (`CHAR(02)`, `VARCHAR(003)`) era apontado como divergente de `char(2)`/`varchar(3)`; o MySQL os trata como iguais.
 - Auditoria de Estrutura SQL: `ScriptNT.SQL` e `CADNCM_INSERT.SQL` na pasta `SCRIPTS` sao ignorados (nao entram na analise nem nos avisos de "fora do padrao").
 - Auditoria de Estrutura SQL: a leitura do banco estourava o tempo (`Lost connection ... read operation timed out`) em bancos grandes. O limite passou de 60 s para 10 min e a consulta das chaves estrangeiras passou a filtrar tambem o esquema em `REFERENTIAL_CONSTRAINTS`.
 - Auditoria de Estrutura SQL: `Descobrir versoes` nao fazia nada quando a pasta
