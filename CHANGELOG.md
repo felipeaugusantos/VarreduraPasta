@@ -5,13 +5,11 @@ Todas as alteracoes relevantes deste projeto sao documentadas neste arquivo.
 O formato e baseado em Keep a Changelog e o projeto segue Versionamento
 Semantico (`MAIOR.MENOR.CORRECAO`).
 
-## [Nao lancado]
+## [2.8.1] - 2026-11-16
 
 ### Adicionado
 - Auditoria de Estrutura SQL: campo `Ignorar tabelas com prefixo` (ex.: `CONECTA_`, separado por virgula, salvo nas configuracoes). Essas tabelas saem da comparacao, dos scripts por arquivo, do relatorio e do script corretivo; a contagem de objetos ignorados aparece em Avisos. Serve para tabelas gerenciadas fora dos scripts das versoes (ex.: as do banco modelo).
 - Auditoria de Estrutura SQL: botao `Por tabela...` na aba Objetos, com a contagem de objetos por tabela (divergente, ausente, indeterminado, compativel), das mais problematicas para as menos.
-
-## [2.8.1] - 2026-11-16
 
 ### Corrigido
 - Auditoria de Estrutura SQL: `ScriptNT.SQL` e `CADNCM_INSERT.SQL` na pasta `SCRIPTS` sao ignorados (nao entram na analise nem nos avisos de "fora do padrao").
