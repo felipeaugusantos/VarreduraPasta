@@ -170,6 +170,37 @@ def changed_after_done(events, directory):
     return changed
 
 
+STATE_DONE = "feito"
+STATE_PENDING = "pendente"
+STATE_CHANGED = "alterado"
+
+
+def _same_name(name):
+    return str(name).replace("\\", "/").lower()
+
+
+def ledger_states(names, directory, control_directory=None):
+    """Estado de cada script no controle compartilhado (so leitura, sem efeitos colaterais).
+
+    Devolve {nome: feito|pendente|alterado}; `nome` e o do chamador (barra normal ou invertida).
+    Levanta OSError se o registro nao puder ser lido.
+    """
+    control_directory = Path(control_directory or load_script_control_directory())
+    events = read_ledger(control_directory)
+    done = {_same_name(name) for name in done_scripts(events)}
+    changed = {_same_name(name) for name in changed_after_done(events, directory)}
+    states = {}
+    for name in names:
+        key = _same_name(name)
+        if key in changed:
+            states[name] = STATE_CHANGED
+        elif key in done:
+            states[name] = STATE_DONE
+        else:
+            states[name] = STATE_PENDING
+    return states
+
+
 def _relative_file_list(directory):
     directory = Path(directory)
     files = []

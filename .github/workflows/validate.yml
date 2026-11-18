@@ -4,7 +4,31 @@ on:
   push:
   pull_request:
 
+concurrency:
+  group: validar-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  testes-linux:
+    # Rapido: py_compile + suite completa sem Windows (Tk virtual). Pega erro de logica cedo.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Dependencias
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb python3-tk
+          python -m pip install -r requirements.txt
+      - name: Compilar
+        run: python -m py_compile main.py $(git ls-files 'app/*.py' 'app/**/*.py' 'tests/*.py')
+      - name: Testes
+        run: xvfb-run -a python -m unittest discover -s tests -t .
+
   tests:
     runs-on: windows-latest
     steps:

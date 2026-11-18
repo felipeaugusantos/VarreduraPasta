@@ -19,7 +19,14 @@ from app import theme
 from app.logging_utils import write_log
 from app import saved_login, secret_store
 from app.model_db_dialogs import ask_credentials
-from app.settings import load_model_check_directory, load_model_db, save_model_check_directory, save_model_db
+from app import script_monitor
+from app.settings import (
+    load_model_check_directory,
+    load_model_db,
+    load_script_directory,
+    save_model_check_directory,
+    save_model_db,
+)
 from app.sqlaudit import model_check, model_fix
 from app.sqlaudit.model_check import (
     STATUS_DUPLICATE,
@@ -84,6 +91,7 @@ class ModelCheckWindow:
         self.busy = ""
         self.run = None
         self.shown = {}
+        self.control = {}  # estado no controle compartilhado (feito/pendente/alterado), so da pasta do monitor
         self.server_databases = []  # bancos que o usuario enxerga (so em memoria)
         self._login = None  # ultimo login usado (so em memoria)
 
@@ -213,10 +221,10 @@ class ModelCheckWindow:
         table_frame.grid(row=5, column=0, sticky="nsew")
         table_frame.columnconfigure(0, weight=1)
         table_frame.rowconfigure(0, weight=1)
-        columns = ("script", "result", "detail")
+        columns = ("script", "result", "control", "detail")
         self.table = ttk.Treeview(table_frame, columns=columns, show="headings", selectmode="browse")
-        widths = {"script": 360, "result": 130, "detail": 520}
-        headings = {"script": "Script", "result": "Resultado", "detail": "Detalhe (o que falta rodar)"}
+        widths = {"script": 340, "result": 120, "control": 100, "detail": 440}
+        headings = {"script": "Script", "result": "Resultado", "control": "Controle", "detail": "Detalhe (o que falta rodar)"}
         for column in columns:
             self.table.heading(column, text=headings[column], anchor="w")
             self.table.column(column, width=widths[column], anchor="w", stretch=column in ("script", "detail"))
@@ -227,6 +235,7 @@ class ModelCheckWindow:
         self.table.tag_configure("missing", background=colors["row_warning"])
         self.table.tag_configure("error", background=colors["row_error"])
         self.table.tag_configure("none", foreground=colors["muted"])
+        self.table.tag_configure("conflict", background=colors["row_error"])
         self.table.bind("<<TreeviewSelect>>", lambda _event: self.show_detail())
         self.table.bind("<Double-1>", lambda _event: self.open_script())
 
@@ -236,11 +245,13 @@ class ModelCheckWindow:
 
         footer = ttk.Frame(frame)
         footer.grid(row=8, column=0, sticky="e", pady=(10, 0))
+        self.mark_button = ttk.Button(footer, text="Marcar OK como feito...", command=self.mark_ok_done, state="disabled")
+        self.mark_button.grid(row=0, column=0, padx=(0, 6))
         self.fix_button = ttk.Button(footer, text="Gerar script do que falta...", command=self.generate_missing_script)
-        self.fix_button.grid(row=0, column=0, padx=(0, 6))
-        ttk.Button(footer, text="Abrir script", command=self.open_script).grid(row=0, column=1, padx=(0, 6))
+        self.fix_button.grid(row=0, column=1, padx=(0, 6))
+        ttk.Button(footer, text="Abrir script", command=self.open_script).grid(row=0, column=2, padx=(0, 6))
         if not self.embedded:
-            ttk.Button(footer, text="Fechar", command=self.close).grid(row=0, column=2)
+            ttk.Button(footer, text="Fechar", command=self.close).grid(row=0, column=3)
 
     def _tile(self, parent, column, key, label, color):
         """Cartao de resumo: numero grande + rotulo; clicar filtra a lista."""
@@ -296,6 +307,7 @@ class ModelCheckWindow:
         self.order_button.config(state="normal" if idle and self.run is not None and self.run.results else "disabled")
         has_pending = self.run is not None and any(item.status == STATUS_MISSING for item in self.run.results)
         self.plan_button.config(state="normal" if idle and has_pending else "disabled")
+        self.mark_button.config(state="normal" if idle and self._markable() else "disabled")
         if idle:
             self.progress.config(value=0)
 
@@ -326,8 +338,13 @@ class ModelCheckWindow:
             self.progress.config(value=message[1])
             self.status_var.set(message[2])
         elif kind == "done":
+            self.control = message[2] if len(message) > 2 else {}
             self._set_busy("")
             self._finish(message[1])
+        elif kind == "marked":
+            self.control = message[3]
+            self._set_busy("")
+            self._after_mark(message[1], message[2])
         elif kind == "databases":
             self._set_busy("")
             self._on_databases(message[1], message[2], message[3])
@@ -500,7 +517,7 @@ class ModelCheckWindow:
                 )
             except ModelCheckError as error:
                 return ("error", str(error))
-            return ("done", run)
+            return ("done", run, self._load_control(directory, [item.script for item in run.results]))
 
         self._start("comparando", work)
 
@@ -548,7 +565,14 @@ class ModelCheckWindow:
         matching.sort(key=lambda item: (order.get(item.status, 9), _natural(item.script)))
         for item in matching[:MAX_ROWS]:
             tag = {STATUS_MISSING: "missing", STATUS_ERROR: "error", STATUS_NO_STRUCTURE: "none", STATUS_DUPLICATE: "none"}.get(item.status, "")
-            self.table.insert("", "end", iid=item.script, values=(item.script, item.label, item.detail), tags=(tag,) if tag else ())
+            state = self.control.get(item.script, "")
+            if state == script_monitor.STATE_DONE and item.status == STATUS_MISSING:
+                tag = "conflict"  # marcado como feito, mas o banco ainda nao tem tudo
+            self.table.insert(
+                "", "end", iid=item.script,
+                values=(item.script, item.label, state.capitalize() if state else "—", item.detail),
+                tags=(tag,) if tag else (),
+            )
             self.shown[item.script] = item
         total = len(self.run.results)
         self.count_var.set(f"{min(len(matching), MAX_ROWS)} de {len(matching)}" + (f" (total {total})" if len(matching) != total else ""))
@@ -561,6 +585,11 @@ class ModelCheckWindow:
             self._set_detail("")
             return
         lines = [f"Script: {item.script}", f"Resultado: {item.label}"]
+        state = self.control.get(item.script)
+        if state:
+            lines.append(f"Controle: {state}")
+            if state == script_monitor.STATE_DONE and item.status == STATUS_MISSING:
+                lines.append("⚠ Marcado como feito no controle, mas ainda falta no banco: confira se foi rodado no banco certo.")
         if item.status == STATUS_ERROR:
             lines.append(item.error)
         if item.missing:
@@ -590,6 +619,59 @@ class ModelCheckWindow:
         self.detail.delete("1.0", "end")
         self.detail.insert("1.0", text)
         self.detail.config(state="disabled")
+
+    # ---- controle compartilhado (lista de Scripts Banco Modelo) ----
+    @staticmethod
+    def _load_control(directory, names):
+        """Estado no controle so quando a pasta comparada e a do monitor (senao os nomes nao casam)."""
+        try:
+            if Path(directory).resolve() != Path(load_script_directory()).resolve():
+                return {}
+            return script_monitor.ledger_states(names, directory)
+        except OSError:
+            return {}
+
+    def _markable(self):
+        """Scripts que estao OK no banco mas ainda pendentes (ou alterados) no controle."""
+        if self.run is None:
+            return []
+        return [
+            item.script for item in self.run.results
+            if item.status == STATUS_OK
+            and self.control.get(item.script) in (script_monitor.STATE_PENDING, script_monitor.STATE_CHANGED)
+        ]
+
+    def mark_ok_done(self):
+        names = self._markable()
+        if not names or self.busy:
+            return
+        preview = "\n".join(names[:15]) + (f"\n... +{len(names) - 15} script(s)" if len(names) > 15 else "")
+        if not messagebox.askyesno(
+            TITLE,
+            f"Marcar {len(names)} script(s) OK como feito para todos os operadores?\n\n{preview}\n\n"
+            "OK significa que o banco já tem o que o script cria; não prova que ele foi executado.",
+            parent=self.window,
+        ):
+            return
+        directory = self.directory
+        everything = [item.script for item in self.run.results]
+
+        def work():
+            try:
+                marked, _skipped = script_monitor.mark_scripts_done(
+                    [str(Path(name)) for name in names], directory=directory,
+                    detail="conferido no banco modelo",
+                )
+                return ("marked", marked, len(names), self._load_control(directory, everything))
+            except OSError as error:
+                return ("error", f"Não foi possível gravar no controle compartilhado: {error}")
+
+        self._start("marcando", work)
+
+    def _after_mark(self, marked, requested):
+        self.status_var.set(f"✔ {len(marked)} de {requested} script(s) marcado(s) como feito no controle compartilhado.")
+        write_log(f"Scripts Banco Modelo marcado_feito_pelo_banco | usuario={self.user} | quantidade={len(marked)}")
+        self.apply_filters()
 
     def show_order(self):
         """Janela com a ordem sugerida para rodar o que falta (quem cria vem antes de quem precisa)."""

@@ -73,17 +73,82 @@ class ModelCheckWindowTests(WindowTestCase):
         by_name = {row[0].replace("\\", "/"): row for row in rows}
         ok = by_name["0_GERAL/SCRIPT_GER_1.sql"]
         self.assertEqual(ok[1], "OK")
-        self.assertIn("Tudo ja esta no banco", ok[2])
+        self.assertIn("Tudo ja esta no banco", ok[3])
         falta = by_name["0_GERAL/SCRIPT_GER_2.sql"]
         self.assertEqual(falta[1], "Falta rodar")
-        self.assertNotIn("Falta rodar", falta[2])  # o resultado ja diz isso
-        self.assertIn("campo CLIENTES.CLI_FALTA", falta[2])
-        self.assertIn("tabela NOVA", falta[2])
+        self.assertNotIn("Falta rodar", falta[3])  # o resultado ja diz isso
+        self.assertIn("campo CLIENTES.CLI_FALTA", falta[3])
+        self.assertIn("tabela NOVA", falta[3])
         self.assertEqual(by_name["SCRIPT_DADOS.sql"][1], "Sem campos para conferir")
         self.assertEqual(rows[0][1], "Falta rodar")  # o que falta rodar vem primeiro
         self.assertIn("3 script(s)", window.status_var.get())
         self.assertIn("1 falta rodar", window.status_var.get())
         self.assertEqual(str(window.export_button.cget("state")), "normal")
+
+    # ---- controle compartilhado (feito/pendente) ----
+    def use_control(self):
+        from app import script_monitor
+
+        self.control_dir = self.tmp / "controle"
+        settings.save_script_directory(self.scripts)
+        settings.save_script_control_directory(self.control_dir)
+        # o controle ja existe (senao o monitor trataria tudo como base)
+        script_monitor.append_events(
+            [script_monitor.LedgerEvent("2026-01-01 00:00:00", "ana", "SCRIPT_ANTIGO.sql", "feito")], self.control_dir
+        )
+        return script_monitor
+
+    def test_control_column_shows_pending_and_done_from_the_shared_ledger(self):
+        monitor = self.use_control()
+        monitor.mark_scripts_done(["SCRIPT_DADOS.sql"], control_directory=self.control_dir, directory=self.scripts)
+        window = self.open_window()
+        self.compare(window)
+        by_name = {row[0].replace("\\", "/"): row for row in self.table_rows(window)}
+        self.assertEqual(by_name["SCRIPT_DADOS.sql"][2], "Feito")
+        self.assertEqual(by_name["0_GERAL/SCRIPT_GER_1.sql"][2], "Pendente")
+
+    def test_control_is_blank_when_the_folder_is_not_the_monitored_one(self):
+        self.use_control()
+        settings.save_script_directory(self.tmp / "outra")
+        window = self.open_window()
+        self.compare(window)
+        self.assertTrue(all(row[2] == "—" for row in self.table_rows(window)))
+        self.assertEqual(str(window.mark_button.cget("state")), "disabled")
+
+    def test_mark_ok_as_done_writes_only_ok_scripts_to_the_ledger(self):
+        monitor = self.use_control()
+        window = self.open_window()
+        self.compare(window)
+        self.assertEqual(str(window.mark_button.cget("state")), "normal")
+        window.mark_ok_done()
+        self.pump_window(window)
+        events = [e for e in monitor.read_ledger(self.control_dir) if e.event == "feito" and e.user != "ana"]
+        self.assertEqual([e.script.replace("\\", "/") for e in events], ["0_GERAL/SCRIPT_GER_1.sql"])
+        self.assertIn("conferido no banco modelo", events[0].detail)
+        by_name = {row[0].replace("\\", "/"): row for row in self.table_rows(window)}
+        self.assertEqual(by_name["0_GERAL/SCRIPT_GER_1.sql"][2], "Feito")
+        self.assertEqual(by_name["0_GERAL/SCRIPT_GER_2.sql"][2], "Pendente")  # falta rodar: nao marca
+        self.assertEqual(str(window.mark_button.cget("state")), "disabled")
+        self.assertTrue(any("marcado_feito_pelo_banco" in line for line in self.logged))
+
+    def test_declining_the_confirmation_writes_nothing(self):
+        monitor = self.use_control()
+        window = self.open_window()
+        self.compare(window)
+        with patch("app.model_check_window.messagebox.askyesno", return_value=False):
+            window.mark_ok_done()
+        self.assertEqual([e for e in monitor.read_ledger(self.control_dir) if e.script != "SCRIPT_ANTIGO.sql"], [])
+
+    def test_done_in_the_ledger_but_missing_in_the_database_is_flagged(self):
+        monitor = self.use_control()
+        monitor.mark_scripts_done(["0_GERAL/SCRIPT_GER_2.sql"], control_directory=self.control_dir, directory=self.scripts)
+        window = self.open_window()
+        self.compare(window)
+        window.table.selection_set("0_GERAL/SCRIPT_GER_2.sql")
+        window.show_detail()
+        text = window.detail.get("1.0", "end")
+        self.assertIn("Marcado como feito no controle, mas ainda falta no banco", text)
+        self.assertIn("conflict", window.table.item("0_GERAL/SCRIPT_GER_2.sql", "tags"))
 
     def test_summary_tiles_show_the_counts_and_clicking_one_filters_the_list(self):
         window = self.open_window()
@@ -161,7 +226,7 @@ class ModelCheckWindowTests(WindowTestCase):
         sep = __import__("os").sep
         name_676, name_677 = "2_WEBSERVICE" + sep + "SCRIPT_WS_676.sql", "2_WEBSERVICE" + sep + "SCRIPT_WS_677.sql"
         rows = {row[0]: row for row in self.table_rows(window)}
-        self.assertIn("criado por", rows[name_677][2])
+        self.assertIn("criado por", rows[name_677][3])
         window.table.selection_set(name_677)
         window.show_detail()
         text = window.detail.get("1.0", "end")
@@ -288,7 +353,7 @@ class ModelCheckWindowTests(WindowTestCase):
         copy = "3_TAENTREGUE" + sep + "SCRIPT_ENTREGA_676.sql"
         rows = {row[0]: row for row in self.table_rows(window)}
         self.assertEqual(rows[copy][1], "Copia identica")
-        self.assertIn("Conteudo identico a", rows[copy][2])
+        self.assertIn("Conteudo identico a", rows[copy][3])
         self.assertEqual(window.tiles["Copia identica"].number.cget("text"), "1")
         window.table.selection_set(copy)
         window.show_detail()

@@ -19,7 +19,7 @@ class RuntimeDataPathTests(unittest.TestCase):
         ):
             self.assertEqual(
                 data_directory(),
-                Path(r"C:\Users\operador\AppData\Local\VarreduraSistema"),
+                Path(r"C:\Users\operador\AppData\Local") / "VarreduraSistema",
             )
 
     def test_explicit_data_directory_has_priority(self):

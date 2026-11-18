@@ -8,6 +8,9 @@ Semantico (`MAIOR.MENOR.CORRECAO`).
 ## [2.8.1] - 2026-11-16
 
 ### Adicionado
+- `Comparar com o banco modelo` mostra a coluna `Controle` (Feito / Pendente / Alterado) lida do registro compartilhado de `Scripts Banco Modelo` (so quando a pasta comparada e a monitorada; leitura sem efeitos colaterais, `ledger_states`). Script marcado como feito que ainda falta no banco fica destacado com aviso. Botao `Marcar OK como feito...` (com confirmacao) grava `feito` no controle so para os scripts OK e pendentes, evitando cruzar as duas listas a mao.
+- Integracao continua: job `testes-linux` (py_compile + suite com Tk virtual) alem do job Windows; testes `test_actions` e `test_runtime` independentes de plataforma (suite verde tambem no Linux).
+- `scripts/publish_release.ps1`: publica `dist\VarreduraSistema` na pasta oficial conferindo `versao.txt` x `app/__init__.py`, SHA-256 do ZIP e recusando sobrescrever versao mais nova (`-Force`); `versao.txt` vai por ultimo; `-DryRun` so simula; `settings.json` nunca vai.
 - Consulta SVN reorganizada: revisao, requisito e `Consultar` (destaque) na mesma linha, caminho base discreto no topo, foco inicial na revisao, mais espaco para resultados e duplo clique copia a revisao.
 - Visual da tela inicial mais limpo: janela dimensionada e centralizada para caber na tela (antes cortava o botao Atualizar e o painel de detalhes em telas menores), faixa de destaque no cabecalho, cartoes com legenda discreta e numeros maiores, linhas da tabela mais altas e cabecalhos em cinza.
 - `Comparar com o banco modelo` agora fica na tela inicial: alternador `Projetos | Banco modelo` no cabecalho (e `Monitoramento > Comparar com o banco modelo`), sem janelas empilhadas. O botao `Comparar com o banco` do monitor de scripts abre esse painel. O visual ficou mais leve (rotulos sem negrito). A janela propria continua existindo internamente (`open_model_check_window`).
