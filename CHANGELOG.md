@@ -8,6 +8,7 @@ Semantico (`MAIOR.MENOR.CORRECAO`).
 ## [2.8.1] - 2026-11-16
 
 ### Adicionado
+- `Scripts Banco Modelo` ganhou cartoes de resumo no topo (Pendentes, Alterados depois de marcados, Ja feitos e Scripts na pasta), atualizados a cada verificacao; em caso de erro de leitura mostram `–`.
 - Auditoria, Scripts Banco Modelo e Status dos Jobs do Jenkins no mesmo estilo da tela inicial: cartoes de resumo (`theme.stat_row`; Jenkins: jobs/falha/em andamento/sucesso; Auditoria: registros/erros/bloqueados), rotulos discretos, titulo de secao em maiusculas pequenas, colunas de texto alinhadas a esquerda e linhas da Auditoria coloridas (erro em vermelho, bloqueado/cancelado em amarelo).
 - Tela inicial alinhada ao prototipo web: alternador `Projetos | Banco modelo` com a visao ativa preenchida, cartoes de contagem alinhados a esquerda e sem faixa colorida (o cartao filtrado ganha borda azul), titulo do projeto alinhado a esquerda na tabela e titulos dos grupos de botoes em maiusculas pequenas.
 - `Comparar com o banco modelo` mostra a coluna `Controle` (Feito / Pendente / Alterado) lida do registro compartilhado de `Scripts Banco Modelo` (so quando a pasta comparada e a monitorada; leitura sem efeitos colaterais, `ledger_states`). Script marcado como feito que ainda falta no banco fica destacado com aviso. Botao `Marcar OK como feito...` (com confirmacao) grava `feito` no controle so para os scripts OK e pendentes, evitando cruzar as duas listas a mao.

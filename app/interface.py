@@ -2276,6 +2276,27 @@ class VersionScannerApp(tk.Tk):
 
         pending_table.tag_configure("changed", background=theme.COLORS["row_warning"])
 
+        cards, card_values = theme.stat_row(
+            frame,
+            (
+                ("pending", "Pendentes", "warn"),
+                ("changed", "Alterados depois de marcados", "error"),
+                ("done", "Já feitos", "ok"),
+                ("total", "Scripts na pasta", "primary"),
+            ),
+        )
+
+        def show_counts(pending=None, changed=None, total=None):
+            values = {
+                "pending": (pending, "aguardando marcação"),
+                "changed": (changed, "o arquivo mudou"),
+                "done": (None if total is None else total - pending, "no controle compartilhado"),
+                "total": (total, "na pasta monitorada"),
+            }
+            for key, (count, note) in values.items():
+                card_values[key][0].config(text="–" if count is None else str(count))
+                card_values[key][1].config(text=note)
+
         def update_result(result):
             if not monitor_window.winfo_exists():
                 return
@@ -2285,7 +2306,9 @@ class VersionScannerApp(tk.Tk):
             history_table.delete(*history_table.get_children())
             if result.error:
                 status_var.set(result.error)
+                show_counts()
                 return
+            show_counts(len(result.pending), len(result.changed), result.total_files)
             for script in result.pending:
                 pending_table.insert(
                     "",
@@ -2467,6 +2490,16 @@ class VersionScannerApp(tk.Tk):
         ttk.Button(button_bar, text="Abrir pasta", command=open_folder).grid(row=0, column=5, padx=(0, 8))
         ttk.Button(button_bar, text="Verificar agora", command=verify_now).grid(row=0, column=6, padx=(0, 8))
         ttk.Button(button_bar, text="Fechar", command=monitor_window.destroy).grid(row=0, column=7)
+
+        # Cartoes no topo: desce as linhas ja montadas em uma e reaproveita os pesos.
+        for child in frame.grid_slaves():
+            child.grid_configure(row=int(child.grid_info()["row"]) + 1)
+        frame.rowconfigure(3, weight=0)
+        frame.rowconfigure(6, weight=0)
+        frame.rowconfigure(4, weight=3)
+        frame.rowconfigure(7, weight=2)
+        cards.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 12))
+        show_counts()
 
         # Abrir a tela so consulta; nao grava "verificado" na Auditoria.
         self._run_script_monitor_check(show_without_news=False, on_result=update_result)
