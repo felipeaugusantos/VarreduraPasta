@@ -69,6 +69,7 @@ Nao distribuir `settings.json` junto do pacote. Dados persistentes ficam em
 | `main.py` | Entrada da aplicacao. Instancia `VersionScannerApp`. |
 | `app/interface.py` | UI Tkinter, menus, telas, botoes e orquestracao. |
 | `app/theme.py` | Paleta, fontes e estilos ttk (tema `clam`), aplicados no Tk principal. |
+| `app/svn_window.py` | Janela Consulta SVN (`SvnSearchMixin`, misturado em `VersionScannerApp`). |
 | `app/scanner.py` | Varredura dos projetos e montagem dos resultados. |
 | `app/version_reader.py` | Leitura de `FileVersion`/`ProductVersion` via WinAPI. |
 | `app/actions.py` | Fechamento, copia, limpeza de pasta e validacoes operacionais. |

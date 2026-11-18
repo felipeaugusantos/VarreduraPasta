@@ -94,7 +94,8 @@ def apply_theme(root):
 
     # Grupos de botoes.
     style.configure("Group.TLabelframe", background=c["bg"], relief="flat", borderwidth=0)
-    style.configure("Group.TLabelframe.Label", background=c["bg"], foreground=c["muted"], font=fonts["section"])
+    style.configure("Group.TLabelframe.Label", background=c["bg"], foreground=c["primary"], font=fonts["section"])
+    style.configure("EmptyState.TLabel", background=c["surface"], foreground=c["muted"], font=fonts["panel_title"])
 
     # Botoes.
     style.configure(
@@ -131,9 +132,17 @@ def apply_theme(root):
 
     # Campos.
     style.configure("TEntry", fieldbackground=c["surface"], bordercolor=c["border"], padding=(6, 4))
+    # Destaque do campo em foco (azul), em vez de borda cinza igual a dos demais.
+    style.map(
+        "TEntry",
+        bordercolor=[("focus", c["primary"])],
+        lightcolor=[("focus", c["primary"])],
+        darkcolor=[("focus", c["primary"])],
+    )
     style.configure("TCombobox", fieldbackground=c["surface"], background=c["surface"], bordercolor=c["border"], padding=(6, 4))
     style.map(
         "TCombobox",
+        bordercolor=[("focus", c["primary"])],
         fieldbackground=[("readonly", c["surface"])],
         background=[("active", c["button_hover"])],
     )
@@ -174,7 +183,7 @@ def apply_theme(root):
         fieldbackground=c["surface"],
         foreground=c["text"],
         bordercolor=c["border"],
-        rowheight=28,
+        rowheight=30,
     )
     style.map(
         "Treeview",
@@ -187,7 +196,7 @@ def apply_theme(root):
         foreground=c["text"],
         bordercolor=c["border"],
         relief="flat",
-        padding=(6, 6),
+        padding=(6, 8),
     )
     style.map("Treeview.Heading", background=[("active", c["border"])])
 
