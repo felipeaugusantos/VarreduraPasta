@@ -2,6 +2,7 @@
 
 from tkinter import font as tkfont
 from tkinter import ttk
+import tkinter as tk
 
 
 COLORS = {
@@ -71,6 +72,9 @@ def apply_theme(root):
     style.configure("HeaderMuted.TLabel", background=c["header"], foreground=c["header_muted"], font=fonts["subtitle"])
     style.configure("HeaderUpdate.TLabel", background=c["header"], foreground="#fbbf24", font=fonts["subtitle_bold"])
     style.configure("HeaderAlert.TLabel", background=c["header"], foreground="#f87171", font=fonts["subtitle_bold"])
+
+    # Titulo de secao: pequeno, cinza e em maiusculas (usar com texto ja em maiusculas).
+    style.configure("Section.TLabel", foreground=c["muted"], font=fonts["group"])
 
     # Cartoes de contadores e painel de detalhes.
     style.configure("Card.TFrame", background=c["surface"], relief="solid", borderwidth=1)
@@ -261,3 +265,32 @@ def size_window(window, width, height, margin=40):
             pass
 
     window.after_idle(fit_to_content)
+
+
+def stat_card(parent, caption, color="primary"):
+    """Cartao de resumo igual ao da tela inicial: legenda, numero colorido e detalhe.
+
+    Devolve (cartao, numero, detalhe); quem chama posiciona o cartao e atualiza os textos.
+    """
+    c = COLORS
+    card = tk.Frame(parent, background=c["surface"], highlightthickness=1, highlightbackground=c["border"])
+    body = ttk.Frame(card, style="CardBody.TFrame", padding=(12, 8, 12, 10))
+    body.pack(fill="both", expand=True)
+    ttk.Label(body, text=caption, style="CardCaption.TLabel").pack(anchor="w")
+    value = ttk.Label(body, text="–", style=f"CardValue{color.title()}.TLabel")
+    value.pack(anchor="w")
+    detail = ttk.Label(body, text="", style="CardDetail.TLabel")
+    detail.pack(anchor="w")
+    return card, value, detail
+
+
+def stat_row(parent, definitions):
+    """Linha de cartoes iguais. `definitions`: (chave, legenda, cor). Devolve {chave: (numero, detalhe)}."""
+    row = ttk.Frame(parent)
+    widgets = {}
+    for column, (key, caption, color) in enumerate(definitions):
+        row.columnconfigure(column, weight=1, uniform="stat")
+        card, value, detail = stat_card(row, caption, color)
+        card.grid(row=0, column=column, sticky="ew", padx=(0 if column == 0 else 10, 0))
+        widgets[key] = (value, detail)
+    return row, widgets

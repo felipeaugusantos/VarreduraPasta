@@ -74,6 +74,16 @@ JENKINS_REFRESH_MS = 15 * 1000
 JENKINS_HEADER_CHECK_MS = 5 * 60 * 1000
 
 
+def _audit_row_tag(result):
+    """Cor da linha na Auditoria: erro em vermelho, bloqueado/cancelado em amarelo."""
+    result = str(result).lower()
+    if result.startswith("erro"):
+        return "error"
+    if result in ("bloqueado", "cancelado"):
+        return "warning"
+    return ""
+
+
 class VersionScannerApp(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -1229,13 +1239,25 @@ class VersionScannerApp(tk.Tk):
         theme.size_window(window, 980, 460)
         window.transient(self)
 
-        frame = ttk.Frame(window, padding=12)
+        frame = ttk.Frame(window, padding=(16, 14))
         frame.pack(fill="both", expand=True)
-        frame.rowconfigure(1, weight=1)
+        frame.rowconfigure(2, weight=1)
         frame.columnconfigure(0, weight=1)
 
+        cards, card_values = theme.stat_row(
+            frame,
+            (
+                ("total", "Jobs", "primary"),
+                ("failure", "Com falha", "error"),
+                ("building", "Em andamento", "closing"),
+                ("ok", "Sucesso", "ok"),
+            ),
+        )
+        cards.grid(row=0, column=0, columnspan=2, sticky="ew")
         status_var = tk.StringVar(value="Consultando jobs do Jenkins...")
-        ttk.Label(frame, textvariable=status_var).grid(row=0, column=0, sticky="w")
+        ttk.Label(frame, textvariable=status_var, style="Muted.TLabel").grid(
+            row=1, column=0, columnspan=2, sticky="w", pady=(10, 0)
+        )
 
         columns = ("job", "status", "build", "duracao", "data", "url")
         headings = {
@@ -1257,14 +1279,14 @@ class VersionScannerApp(tk.Tk):
         tree.tag_configure("building", background=theme.COLORS["row_info"])
         tree.tag_configure("aborted", foreground=theme.COLORS["muted"])
         tree.tag_configure("never", foreground=theme.COLORS["muted"])
-        tree.grid(row=1, column=0, sticky="nsew", pady=(8, 0))
+        tree.grid(row=2, column=0, sticky="nsew", pady=(8, 0))
 
         scrollbar = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
-        scrollbar.grid(row=1, column=1, sticky="ns", pady=(8, 0))
+        scrollbar.grid(row=2, column=1, sticky="ns", pady=(8, 0))
         tree.configure(yscrollcommand=scrollbar.set)
 
         button_bar = ttk.Frame(frame)
-        button_bar.grid(row=2, column=0, columnspan=2, sticky="e", pady=(12, 0))
+        button_bar.grid(row=3, column=0, columnspan=2, sticky="e", pady=(12, 0))
 
         refresh_button = ttk.Button(button_bar, text="Atualizar")
         refresh_button.grid(row=0, column=0, padx=(0, 8))
@@ -1319,6 +1341,17 @@ class VersionScannerApp(tk.Tk):
             tree.delete(*tree.get_children())
             state["jobs"] = {job["name"]: job for job in jobs}
             self._apply_jenkins_alert(count_failed_jobs(jobs))
+            counts = {"total": len(jobs), "failure": 0, "building": 0, "ok": 0}
+            for job in jobs:
+                kind = job.get("state")
+                if kind in ("failure", "building"):
+                    counts[kind] += 1
+                elif kind == "success":
+                    counts["ok"] += 1
+            notes = {"total": "no Jenkins", "failure": "precisam de atenção", "building": "rodando agora", "ok": "último build"}
+            for key, (number, note) in card_values.items():
+                number.config(text=str(counts[key]))
+                note.config(text=notes[key])
             for job in sort_jobs_for_display(jobs):
                 iid = job["name"] or str(id(job))
                 tree.insert(
@@ -1735,19 +1768,29 @@ class VersionScannerApp(tk.Tk):
         theme.size_window(audit_window, 1180, 560)
         audit_window.transient(self)
 
-        frame = ttk.Frame(audit_window, padding=12)
+        frame = ttk.Frame(audit_window, padding=(16, 14))
         frame.pack(fill="both", expand=True)
-        frame.rowconfigure(1, weight=1)
+        frame.rowconfigure(2, weight=1)
         frame.columnconfigure(0, weight=1)
 
+        cards, card_values = theme.stat_row(
+            frame,
+            (
+                ("total", "Registros exibidos", "primary"),
+                ("error", "Erros", "error"),
+                ("blocked", "Bloqueados / cancelados", "warn"),
+            ),
+        )
+        cards.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+
         toolbar = ttk.Frame(frame)
-        toolbar.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        toolbar.grid(row=1, column=0, sticky="ew", pady=(0, 8))
         toolbar.columnconfigure(1, weight=1)
         toolbar.columnconfigure(3, weight=1)
 
         source_box = ttk.Frame(toolbar)
         source_box.grid(row=0, column=0, sticky="w")
-        ttk.Label(source_box, text="Origem:").pack(side="left")
+        ttk.Label(source_box, text="Origem", style="Muted.TLabel").pack(side="left")
         source_var = tk.StringVar(value=AUDIT_SOURCE_LOCAL)
         source_combo = ttk.Combobox(
             source_box,
@@ -1757,11 +1800,11 @@ class VersionScannerApp(tk.Tk):
             values=(AUDIT_SOURCE_LOCAL, AUDIT_SOURCE_SHARED),
         )
         source_combo.pack(side="left", padx=(8, 14))
-        ttk.Label(source_box, text="Log:").pack(side="left")
+        ttk.Label(source_box, text="Log", style="Muted.TLabel").pack(side="left")
         log_var = tk.StringVar()
         log_combo = ttk.Combobox(toolbar, textvariable=log_var, state="readonly")
         log_combo.grid(row=0, column=1, sticky="ew", padx=(8, 8))
-        ttk.Label(toolbar, text="Buscar:").grid(row=0, column=2, sticky="w")
+        ttk.Label(toolbar, text="Buscar", style="Muted.TLabel").grid(row=0, column=2, sticky="w")
         filter_var = tk.StringVar()
         filter_entry = ttk.Entry(toolbar, textvariable=filter_var)
         filter_entry.grid(row=0, column=3, sticky="ew", padx=(8, 8))
@@ -1788,7 +1831,7 @@ class VersionScannerApp(tk.Tk):
         result_combo.grid(row=0, column=4, sticky="e", padx=(0, 8))
 
         table_frame = ttk.Frame(frame)
-        table_frame.grid(row=1, column=0, sticky="nsew")
+        table_frame.grid(row=2, column=0, sticky="nsew")
         table_frame.rowconfigure(0, weight=1)
         table_frame.columnconfigure(0, weight=1)
 
@@ -1833,8 +1876,11 @@ class VersionScannerApp(tk.Tk):
         }
         log_tree = ttk.Treeview(table_frame, columns=columns, show="headings")
         for column in columns:
-            log_tree.heading(column, text=headings[column], anchor="center")
-            log_tree.column(column, width=widths[column], anchor="center")
+            anchor = "w" if column in ("timestamp", "projeto", "destino", "motivo") else "center"
+            log_tree.heading(column, text=headings[column], anchor=anchor)
+            log_tree.column(column, width=widths[column], anchor=anchor)
+        log_tree.tag_configure("error", background=theme.COLORS["row_error"])
+        log_tree.tag_configure("warning", background=theme.COLORS["row_warning"])
         y_scroll = ttk.Scrollbar(table_frame, orient="vertical", command=log_tree.yview)
         x_scroll = ttk.Scrollbar(table_frame, orient="horizontal", command=log_tree.xview)
         log_tree.configure(yscrollcommand=y_scroll.set, xscrollcommand=x_scroll.set)
@@ -1936,7 +1982,16 @@ class VersionScannerApp(tk.Tk):
                     "end",
                     iid=str(index),
                     values=tuple(entry.get(column, "") for column in columns),
+                    tags=(_audit_row_tag(entry.get("resultado", "")),),
                 )
+            tags = [_audit_row_tag(entry.get("resultado", "")) for entry in entries]
+            for key, count, note in (
+                ("total", len(entries), "com os filtros atuais"),
+                ("error", tags.count("error"), "resultado erro*"),
+                ("blocked", tags.count("warning"), "bloqueado ou cancelado"),
+            ):
+                card_values[key][0].config(text=str(count))
+                card_values[key][1].config(text=note)
 
         def load_selected_log(_event=None, force=True):
             selected_name = log_var.get()
@@ -2154,7 +2209,7 @@ class VersionScannerApp(tk.Tk):
         theme.size_window(monitor_window, 1040, 620)
         monitor_window.transient(self)
 
-        frame = ttk.Frame(monitor_window, padding=14)
+        frame = ttk.Frame(monitor_window, padding=(16, 14))
         frame.pack(fill="both", expand=True)
         frame.columnconfigure(1, weight=1)
         frame.rowconfigure(3, weight=3)
@@ -2170,7 +2225,7 @@ class VersionScannerApp(tk.Tk):
             row=1, column=0, sticky="w", pady=(4, 0)
         )
         ttk.Label(frame, textvariable=control_var).grid(row=1, column=1, sticky="w", padx=(10, 0), pady=(4, 0))
-        ttk.Label(frame, textvariable=status_var, font=self.fonts["section"]).grid(
+        ttk.Label(frame, textvariable=status_var).grid(
             row=2, column=0, columnspan=2, sticky="w", pady=(12, 6)
         )
 
@@ -2207,7 +2262,7 @@ class VersionScannerApp(tk.Tk):
             style="Muted.TLabel",
         ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(4, 0))
 
-        ttk.Label(frame, text="Últimos registros (todos os operadores)", font=self.fonts["section"]).grid(
+        ttk.Label(frame, text="ÚLTIMOS REGISTROS (TODOS OS OPERADORES)", style="Section.TLabel").grid(
             row=5, column=0, columnspan=2, sticky="w", pady=(14, 6)
         )
         history_table = build_table(
