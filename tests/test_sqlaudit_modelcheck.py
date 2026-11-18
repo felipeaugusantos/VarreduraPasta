@@ -17,6 +17,9 @@ from app.sqlaudit.model_check import (
     run_model_check,
     sql_script_names,
 )
+from app import settings
+from app.sqlaudit.model_check import list_model_databases
+from tests.test_settings import SettingsTestCase
 from tests.test_sqlaudit_compare import col, db_schema, db_table, fk, idx
 from tests.test_sqlaudit_reader import FakeConnection, full_responses
 
@@ -275,6 +278,51 @@ class RunModelCheckTests(unittest.TestCase):
         seen = []
         self.run_check(progress=lambda done, total: seen.append((done, total)))
         self.assertEqual(seen, [(1, 2), (2, 2)])
+
+
+class ListModelDatabasesTests(unittest.TestCase):
+    def connector(self, names):
+        responses = {db_reader.SQL_DATABASES: [(name,) for name in names]}
+        return lambda **options: FakeConnection(responses)
+
+    def test_lists_what_the_user_sees_without_the_internal_databases(self):
+        ok, names, text = list_model_databases(
+            "h", 3306, "u", PASSWORD, connector=self.connector(["information_schema", "BANCO_MODELO", "mysql", "sys"])
+        )
+        self.assertEqual((ok, names), (True, ["BANCO_MODELO"]))
+        self.assertIn("1 banco(s)", text)
+
+    def test_connects_to_the_server_only_never_to_a_database(self):
+        seen = []
+
+        def connector(**options):
+            seen.append(options)
+            return FakeConnection({db_reader.SQL_DATABASES: [("BANCO_MODELO",)]})
+
+        list_model_databases("h", 3306, "u", PASSWORD, connector=connector)
+        self.assertNotIn("database", seen[0])
+
+    def test_no_visible_database_and_failures_explain_without_the_password(self):
+        ok, names, text = list_model_databases("h", 3306, "u", PASSWORD, connector=self.connector(["information_schema"]))
+        self.assertEqual((ok, names), (False, []))
+        self.assertIn("nenhum banco visivel", text.lower())
+
+        def refuse(**options):
+            raise Exception(1045, f"Access denied (using password: YES) {options['password']}")
+
+        ok, names, text = list_model_databases("h", 3306, "u", PASSWORD, connector=refuse)
+        self.assertFalse(ok)
+        self.assertNotIn(PASSWORD, text)
+
+
+class ModelCheckDirectorySettingsTests(SettingsTestCase):
+    def test_defaults_to_the_script_monitor_folder_and_remembers_the_choice(self):
+        self.assertEqual(settings.load_model_check_directory(), settings.load_script_directory())
+        settings.save_model_check_directory("C:/outra/pasta")
+        self.assertEqual(str(settings.load_model_check_directory()), str(Path("C:/outra/pasta")))
+        self.assertNotEqual(settings.load_script_directory(), settings.load_model_check_directory())  # nao mexe na pasta do monitor
+        settings.save_model_check_directory("")
+        self.assertEqual(settings.load_model_check_directory(), settings.load_script_directory())
 
 
 if __name__ == "__main__":

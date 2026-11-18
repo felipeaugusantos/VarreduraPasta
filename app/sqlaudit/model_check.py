@@ -437,6 +437,27 @@ def parse_scripts(directory, names, cancel_event=None, progress=None):
     return parsed, failures
 
 
+def _scrub(text, password):
+    text = str(text)
+    return text.replace(password, "***") if password else text
+
+
+def list_model_databases(host, port, username, password, connector=None, tls=db_reader.TLS_ENCRYPT, ca_file=""):
+    """(ok, bancos, mensagem): conecta so ao servidor e lista os bancos que o usuario enxerga."""
+    try:
+        with db_reader.connect_readonly(
+            host, port, "", username, password, tls=tls, ca_file=ca_file, connector=connector, require_database=False
+        ) as connection:
+            names = connection.list_databases()
+    except db_reader.AuditDbError as error:
+        return False, [], _scrub(error, password)
+    if not names:
+        return False, [], (
+            "Conectado, mas nenhum banco visivel para este usuario. Confira se ele tem SELECT no banco modelo."
+        )
+    return True, names, f"Conectado: {len(names)} banco(s) visivel(is) para o usuario."
+
+
 def run_model_check(
     directory, names, host, port, database, username, password,
     connector=None, cancel_event=None, progress=None, tls=db_reader.TLS_ENCRYPT, ca_file="",

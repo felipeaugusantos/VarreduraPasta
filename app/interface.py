@@ -2347,7 +2347,7 @@ class VersionScannerApp(tk.Tk):
         ttk.Button(
             button_bar,
             text="Comparar com o banco",
-            command=lambda: open_model_check_window(self, monitor_window, Path(path_var.get()), os_user()),
+            command=lambda: open_model_check_window(self, monitor_window, None, os_user()),
         ).grid(row=0, column=1, padx=(0, 8))
         run_button = ttk.Button(button_bar, text="Executar no banco", command=run_selected_in_database)
         run_button.grid(row=0, column=2, padx=(0, 8))

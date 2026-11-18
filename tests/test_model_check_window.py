@@ -127,15 +127,130 @@ class ModelCheckWindowTests(WindowTestCase):
         self.assertIsNone(window.run)
         self.assertEqual(self.table_rows(window), [])
 
-    def test_without_the_model_database_configured_it_asks_to_configure_first(self):
-        settings.save_model_db("", 3306, "", "")
+    def test_missing_pieces_are_asked_for_before_any_login(self):
         window = self.open_window()
-        with patch("app.model_check_window.open_db_settings") as open_settings, \
+        with patch("app.model_check_window.ask_credentials") as ask:
+            window.host_var.set("")
+            window.compare()
+            window.host_var.set("10.0.0.35")
+            window.port_var.set("abc")
+            window.compare()
+            window.port_var.set("43309")
+            window.db_var.set("")
+            window.compare()
+            window.db_var.set("BANCO_MODELO")
+            window.dir_var.set(str(self.tmp / "nao_existe"))
+            window.compare()
+            window.dir_var.set("")
+            window.compare()
+        ask.assert_not_called()
+        self.assertEqual([name for name, _ in self.shown], ["showinfo"] * 5)
+        self.assertIsNone(window.run)
+
+    def test_choose_the_scripts_folder_and_it_is_remembered_for_the_next_time(self):
+        other = self.tmp / "outra_pasta"
+        other.mkdir()
+        (other / "SCRIPT_X.sql").write_bytes(b"ALTER TABLE CLIENTES ADD COLUMN CLI_EMAIL VARCHAR(200);")
+        window = self.open_window()
+        with patch("app.model_check_window.filedialog.askdirectory", return_value=str(other)):
+            window.choose_directory()
+        self.assertEqual(window.dir_var.get(), str(other))
+        self.compare(window)
+        self.assertEqual([row[0] for row in self.table_rows(window)], ["SCRIPT_X.sql"])  # so a pasta escolhida
+        self.assertEqual(str(settings.load_model_check_directory()), str(other))
+        window.window.destroy()
+        from app.model_check_window import open_model_check_window
+
+        again = open_model_check_window(self.app, self.app, None, "ana")
+        self.addCleanup(lambda: again.window.winfo_exists() and again.window.destroy())
+        self.assertEqual(again.dir_var.get(), str(other))
+
+    def test_cancelling_the_folder_dialog_keeps_the_current_folder(self):
+        window = self.open_window()
+        before = window.dir_var.get()
+        with patch("app.model_check_window.filedialog.askdirectory", return_value=""):
+            window.choose_directory()
+        self.assertEqual(window.dir_var.get(), before)
+
+    def list_databases(self, window, names=("information_schema", "BANCO_MODELO", "BANCO_OUTRO", "mysql"), user="leitura"):
+        responses = {db_reader.SQL_DATABASES: [(name,) for name in names]}
+        with patch("app.model_check_window.ask_credentials", return_value=(user, PASSWORD)) as ask, \
+             patch.object(db_reader, "_default_connector", lambda **options: FakeConnection(responses)) as _:
+            window.connect_server()
+            self.pump_window(window)
+        return ask
+
+    def test_connect_lists_the_visible_databases_and_selects_the_saved_one(self):
+        window = self.open_window()
+        ask = self.list_databases(window)
+        ask.assert_called_once()
+        self.assertEqual(list(window.db_box.cget("values")), ["BANCO_MODELO", "BANCO_OUTRO"])  # sem os bancos internos
+        self.assertEqual(window.db_var.get(), "BANCO_MODELO")
+        self.assertIn("2 banco(s)", window.status_var.get())
+        self.assertIn("encontrado", window.status_var.get())
+        self.assertNotIn(PASSWORD, window.status_var.get())
+
+    def test_connect_without_the_saved_database_asks_to_choose_and_the_choice_is_used(self):
+        settings.save_model_db("10.0.0.35", 43309, "", "")
+        window = self.open_window()
+        self.list_databases(window)
+        self.assertEqual(window.db_var.get(), "")
+        self.assertIn("Escolha o banco modelo", window.status_var.get())
+        window.db_var.set("BANCO_OUTRO")
+        data = full_responses("BANCO_OUTRO")
+        with patch("app.model_check_window.ask_credentials", return_value=("leitura", PASSWORD)), self.fake_database(responses=data):
+            window.compare()
+            self.pump_window(window)
+        self.assertEqual(window.run.database, "BANCO_OUTRO")
+        self.assertEqual(settings.load_model_db()["database"], "BANCO_OUTRO")  # o mesmo banco modelo do Executar no banco
+
+    def test_connect_matches_the_database_ignoring_case(self):
+        settings.save_model_db("10.0.0.35", 43309, "banco_modelo", "")
+        window = self.open_window()
+        self.list_databases(window)
+        self.assertEqual(window.db_var.get(), "BANCO_MODELO")
+
+    def test_a_database_outside_the_loaded_list_needs_confirmation(self):
+        window = self.open_window()
+        self.list_databases(window)
+        window.db_var.set("BANCO_FANTASMA")
+        with patch("app.model_check_window.messagebox.askyesno", return_value=False) as confirm, \
              patch("app.model_check_window.ask_credentials") as ask:
             window.compare()
-        open_settings.assert_called_once()
+        confirm.assert_called_once()
         ask.assert_not_called()
-        self.assertEqual(self.shown[0][0], "showinfo")
+        self.assertIsNone(window.run)
+
+    def test_connect_failures_are_messages_without_the_password(self):
+        window = self.open_window()
+
+        def refuse(**options):
+            raise Exception(1045, f"Access denied (using password: YES) {options['password']}")
+
+        with patch("app.model_check_window.ask_credentials", return_value=("leitura", PASSWORD)), \
+             patch.object(db_reader, "_default_connector", refuse):
+            window.connect_server()
+            self.pump_window(window)
+        self.assertIn("✖", window.status_var.get())
+        self.assertNotIn(PASSWORD, window.status_var.get())
+        self.assertEqual(str(window.connect_button.cget("state")), "normal")
+
+    def test_connect_with_no_visible_database_explains_the_permission(self):
+        window = self.open_window()
+        self.list_databases(window, names=("information_schema", "mysql"))
+        self.assertIn("nenhum banco visivel", window.status_var.get().lower())
+
+    def test_connect_asks_for_server_and_port_first_and_cancelled_login_does_nothing(self):
+        window = self.open_window()
+        window.host_var.set("")
+        with patch("app.model_check_window.ask_credentials") as ask:
+            window.connect_server()
+        ask.assert_not_called()
+        window.host_var.set("10.0.0.35")
+        with patch("app.model_check_window.ask_credentials", return_value=None), \
+             patch.object(db_reader, "_default_connector") as connector:
+            window.connect_server()
+        connector.assert_not_called()
 
     def test_a_failing_database_is_a_message_without_the_password_and_the_window_is_usable_again(self):
         window = self.open_window()
@@ -182,7 +297,7 @@ class ModelCheckWindowTests(WindowTestCase):
             self.assertEqual(len(buttons), 1)
             buttons[0].invoke()
         opened.assert_called_once()
-        self.assertEqual(str(opened.call_args.args[2]), str(settings.load_script_directory()))
+        self.assertIsNone(opened.call_args.args[2])  # a janela usa a ultima pasta escolhida (ou a do monitor)
 
 
 if __name__ == "__main__":

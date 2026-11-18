@@ -214,6 +214,26 @@ def save_model_db(host, port, database, username=""):
     _save_settings(data)
 
 
+def load_model_check_directory():
+    """Ultima pasta de scripts usada em `Comparar com o banco`; sem valor, a pasta do monitor de scripts."""
+    value = _load_settings().get("model_check")
+    saved = str(value.get("directory") or "").strip() if isinstance(value, dict) else ""
+    return Path(saved) if saved else load_script_directory()
+
+
+@_synchronized
+def save_model_check_directory(directory):
+    data = _load_settings()
+    current = data.get("model_check") if isinstance(data.get("model_check"), dict) else {}
+    value = str(directory or "").strip()
+    if value:
+        current["directory"] = str(Path(value))
+    else:
+        current.pop("directory", None)
+    data["model_check"] = current
+    _save_settings(data)
+
+
 def load_sqlaudit_config():
     """Raiz das versoes, arvore (base/fork) e banco de cada versao da Auditoria de Estrutura SQL.
 
