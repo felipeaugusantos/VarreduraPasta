@@ -93,7 +93,7 @@ def rebase_url(url, base_url):
     return f"{base.scheme}://{base.netloc}{path}"
 
 
-def test_jenkins_connection(url, username, password, timeout=None):
+def check_jenkins_connection(url, username, password, timeout=None):
     normalized_url = normalize_jenkins_url(url)
     timeout = timeout or DEFAULT_JENKINS_TIMEOUT_SECONDS
     ok, message, payload = _request_json(

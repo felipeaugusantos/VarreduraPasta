@@ -18,7 +18,7 @@ from app.autcom_test import (
     resolve_test_layout,
     run_autcom_test,
     synchronize_zip_files,
-    test_folder_name,
+    build_test_folder_name,
     validate_login_completion,
     validate_process_startup,
 )
@@ -27,17 +27,17 @@ from app.autcom_test import (
 class AutcomTestMappingTests(unittest.TestCase):
     def test_version_selects_branch_and_sub_branch(self):
         self.assertEqual(
-            test_folder_name("379.48.2.30.74.111.181"),
+            build_test_folder_name("379.48.2.30.74.111.181"),
             "PastaTesteCopia_74_111",
         )
         self.assertEqual(
-            test_folder_name("379.48.2.30.74.150.90_CLOUD"),
+            build_test_folder_name("379.48.2.30.74.150.90_CLOUD"),
             "PastaTesteCopia_74_150",
         )
 
     def test_invalid_version_is_rejected(self):
         with self.assertRaises(ValueError):
-            test_folder_name("versao-invalida")
+            build_test_folder_name("versao-invalida")
 
     def test_layout_uses_version_base_directory(self):
         layout = resolve_test_layout(

@@ -6,7 +6,7 @@ from unittest.mock import patch
 from app.jenkins import (
     get_jenkins_jobs_status,
     normalize_jenkins_url,
-    test_jenkins_connection,
+    check_jenkins_connection,
 )
 
 
@@ -32,7 +32,7 @@ class FakeResponse:
 class JenkinsTests(unittest.TestCase):
     def test_remote_http_with_credentials_is_blocked(self):
         with patch("app.jenkins.urlopen") as urlopen_mock:
-            ok, message = test_jenkins_connection(
+            ok, message = check_jenkins_connection(
                 "http://jenkins.interno:8080", "admin", "segredo"
             )
 
@@ -56,7 +56,7 @@ class JenkinsTests(unittest.TestCase):
             return FakeResponse()
 
         with patch("app.jenkins.urlopen", fake_urlopen):
-            ok, message = test_jenkins_connection(
+            ok, message = check_jenkins_connection(
                 "localhost:8080",
                 "admin",
                 "fechadas",
@@ -80,7 +80,7 @@ class JenkinsTests(unittest.TestCase):
             )
 
         with patch("app.jenkins.urlopen", fake_urlopen):
-            ok, message = test_jenkins_connection("localhost:8080", "admin", "erro")
+            ok, message = check_jenkins_connection("localhost:8080", "admin", "erro")
 
         self.assertFalse(ok)
         self.assertEqual(message, "Falha de autenticacao no Jenkins.")
@@ -90,7 +90,7 @@ class JenkinsTests(unittest.TestCase):
             raise URLError("connection refused")
 
         with patch("app.jenkins.urlopen", fake_urlopen):
-            ok, message = test_jenkins_connection("localhost:8080", "admin", "fechadas")
+            ok, message = check_jenkins_connection("localhost:8080", "admin", "fechadas")
 
         self.assertFalse(ok)
         self.assertIn("Nao foi possivel acessar o Jenkins", message)

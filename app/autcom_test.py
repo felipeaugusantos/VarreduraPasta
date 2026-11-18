@@ -53,7 +53,7 @@ class AutcomTestResult:
         return self.status == "OK"
 
 
-def test_folder_name(version_folder_name):
+def build_test_folder_name(version_folder_name):
     parts = str(version_folder_name or "").strip().split(".")
     if len(parts) < 6:
         raise ValueError("Nome da versao nao possui partes suficientes.")
@@ -66,7 +66,7 @@ def test_folder_name(version_folder_name):
 
 def resolve_test_layout(project_path):
     project_path = Path(project_path)
-    expected_name = test_folder_name(project_path.name)
+    expected_name = build_test_folder_name(project_path.name)
     base_directory = project_path.parent
     root = base_directory / expected_name
     if base_directory.exists():

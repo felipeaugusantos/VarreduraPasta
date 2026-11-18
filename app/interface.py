@@ -29,7 +29,7 @@ from app.jenkins import (
     job_label,
     normalize_jenkins_url,
     sort_jobs_for_display,
-    test_jenkins_connection,
+    check_jenkins_connection,
     trigger_build,
 )
 from app.learning import insights_for_project, learn_from_projects
@@ -1102,7 +1102,7 @@ class VersionScannerApp(tk.Tk):
 
             def worker():
                 result_queue.put(
-                    test_jenkins_connection(
+                    check_jenkins_connection(
                         url_var.get(),
                         username_var.get(),
                         password_var.get(),
