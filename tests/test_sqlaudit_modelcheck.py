@@ -257,6 +257,63 @@ class DependencyTests(unittest.TestCase):
 
 
 @unittest.skipUnless(AVAILABLE, "sqlglot nao instalado")
+class DuplicatesAndSelfProviderTests(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.folder = Path(self._tmp.name)
+
+    def write(self, relative, text):
+        path = self.folder / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(text.encode("utf-8"))
+
+    def run_check(self):
+        schema_rows = full_responses("BANCO_MODELO")
+        schema_rows[db_reader.SQL_TABLES] = [("CONECTA_MAP_PRODUTOS", "InnoDB", "latin1_swedish_ci", None)]
+        schema_rows[db_reader.SQL_COLUMNS] = [
+            ("CONECTA_MAP_PRODUTOS", "MAP_CODAUT", 1, "int", "NO", None, "", None, None, ""),
+            ("CONECTA_MAP_PRODUTOS", "MAP_CODPLA", 2, "int", "NO", None, "", None, None, ""),
+        ]
+        schema_rows[db_reader.SQL_INDEXES] = []
+        return run_model_check(
+            self.folder, None, "h", 1, "BANCO_MODELO", "u", PASSWORD, connector=lambda **o: FakeConnection(schema_rows)
+        )
+
+    def test_the_exact_case_of_ws_677_has_one_dependency_and_the_delivered_copy_is_not_a_script_to_run(self):
+        self.write("2_WEBSERVICE/SCRIPT_WS_584.sql", WS_676)
+        self.write("3_TAENTREGUE/SCRIPT_ENTREGA_584.sql", WS_676)  # copia idêntica entregue
+        self.write("2_WEBSERVICE/SCRIPT_WS_668.sql", "ALTER TABLE CONECTA_MAP_PRODUTOS ADD UNIQUE KEY UK_CONECTA_MAP_PRODUTOS_04 (MAP_CODAUT, MAP_CODPLA);")
+        self.write("2_WEBSERVICE/SCRIPT_WS_677.sql", WS_677)
+        run = self.run_check()
+        by_name = {item.script.replace("\\", "/"): item for item in run.results}
+        copy = by_name["3_TAENTREGUE/SCRIPT_ENTREGA_584.sql"]
+        self.assertEqual(copy.status, "COPIA")
+        self.assertEqual(copy.duplicate_of.replace("\\", "/"), "2_WEBSERVICE/SCRIPT_WS_584.sql")
+        self.assertIn("Copia identica de", copy.summary)
+        ws677 = by_name["2_WEBSERVICE/SCRIPT_WS_677.sql"]
+        # so o WS_584 cria a coluna; o indice e recriado pelo proprio 677, entao o WS_668 nao entra
+        self.assertEqual([d.replace("\\", "/") for d in ws677.depends_on], ["2_WEBSERVICE/SCRIPT_WS_584.sql"])
+        order = [name.replace("\\", "/") for name, _ in run_order(run.results)]
+        self.assertEqual(order, ["2_WEBSERVICE/SCRIPT_WS_584.sql", "2_WEBSERVICE/SCRIPT_WS_677.sql"])
+        self.assertEqual(run.counts()["COPIA"], 1)
+        self.assertIn("1 copia identica", __import__("app.sqlaudit.model_check", fromlist=["summary_text"]).summary_text(run))
+
+    def test_different_content_is_never_collapsed_and_whitespace_changes_count_as_different(self):
+        self.write("a/s.sql", "ALTER TABLE CONECTA_MAP_PRODUTOS ADD COLUMN X INT;")
+        self.write("b/s.sql", "ALTER TABLE CONECTA_MAP_PRODUTOS ADD COLUMN X INT; ")
+        run = self.run_check()
+        self.assertEqual({item.status for item in run.results}, {"FALTA"})
+
+    def test_a_script_that_creates_the_object_itself_does_not_depend_on_other_providers(self):
+        schema = db_schema(db_table("T", col("A", "int")))
+        results = {c.script: c for c in check_operations(
+            parsed(**{"s1.sql": "ALTER TABLE T ADD COLUMN X INT;", "s2.sql": "ALTER TABLE T ADD COLUMN X INT;"}), schema, "B")}
+        self.assertEqual(results["s1.sql"].depends_on, [])
+        self.assertEqual(results["s2.sql"].depends_on, [])
+
+
+@unittest.skipUnless(AVAILABLE, "sqlglot nao instalado")
 class RunModelCheckTests(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()

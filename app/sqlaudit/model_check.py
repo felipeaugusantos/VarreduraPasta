@@ -14,6 +14,7 @@ Regras para nao acusar falta que nao existe:
 - o que o sistema nao entende (DML, procedures, SQL dinamico) nao entra na conta.
 """
 
+import hashlib
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
@@ -26,11 +27,13 @@ STATUS_OK = "OK"
 STATUS_MISSING = "FALTA"
 STATUS_NO_STRUCTURE = "SEM_ESTRUTURA"
 STATUS_ERROR = "ERRO"
+STATUS_DUPLICATE = "COPIA"
 STATUS_LABELS = {
     STATUS_OK: "OK",
     STATUS_MISSING: "Falta rodar",
     STATUS_NO_STRUCTURE: "Sem campos para conferir",
     STATUS_ERROR: "Nao foi possivel ler",
+    STATUS_DUPLICATE: "Copia identica",
 }
 
 KIND_TABLE = "tabela"
@@ -49,6 +52,9 @@ class Missing:
     name: str = ""
     detail: str = ""
     providers: tuple = ()  # OUTROS scripts da pasta que criam este objeto (rode antes)
+    # Comando e definicao de origem (para gerar o script do que falta); fora de igualdade e repr.
+    op: object = field(default=None, compare=False, repr=False)
+    spec: object = field(default=None, compare=False, repr=False)
 
     @property
     def text(self):
@@ -74,6 +80,8 @@ class ScriptCheck:
     notes: list = field(default_factory=list)
     unverifiable: int = 0  # comandos que o sistema nao consegue conferir
     error: str = ""
+    operations: list = field(default_factory=list, repr=False, compare=False)  # comandos do script (so quando falta algo)
+    duplicate_of: str = ""  # script de conteudo identico que vale por este (so STATUS_DUPLICATE)
 
     @property
     def label(self):
@@ -94,6 +102,8 @@ class ScriptCheck:
         """Coluna de detalhe da tela: so o que importa, sem repetir o resultado."""
         if self.status == STATUS_ERROR:
             return self.error
+        if self.status == STATUS_DUPLICATE:
+            return f"Conteudo identico a {self.duplicate_of}: confira aquele"
         if self.status == STATUS_NO_STRUCTURE:
             return "So dados ou comandos que o sistema nao consegue conferir"
         if self.status == STATUS_OK:
@@ -107,6 +117,8 @@ class ScriptCheck:
         """Texto curto para a tabela: `OK` ou `Falta rodar: campo T.C, tabela X (+2)`."""
         if self.status == STATUS_ERROR:
             return self.error
+        if self.status == STATUS_DUPLICATE:
+            return f"Copia identica de {self.duplicate_of}"
         if self.status == STATUS_NO_STRUCTURE:
             return self.label
         if self.status == STATUS_OK:
@@ -279,14 +291,16 @@ class _Checker:
     # registro
     def _providers(self, kind, table, name):
         found = self.info.providers.get((kind, table.lower(), (name or "").lower()), [])
+        if self.result.script in found:
+            return ()  # o proprio script (re)cria o objeto: nao depende de outro
         return tuple(script for script in found if script != self.result.script)
 
     def _others(self, mapping, key):
         """Scripts DIFERENTES deste que removem o objeto (o proprio script remover e recriar nao conta)."""
         return bool(mapping.get(key, set()) - {self.result.script})
 
-    def _miss(self, kind, table, name="", detail=""):
-        item = Missing(kind, table, name, detail, providers=self._providers(kind, table, name))
+    def _miss(self, kind, table, name="", detail="", op=None, spec=None):
+        item = Missing(kind, table, name, detail, providers=self._providers(kind, table, name), op=op, spec=spec)
         marker = (kind, table.lower(), name.lower())
         if marker not in self._seen:
             self._seen.add(marker)
@@ -296,9 +310,9 @@ class _Checker:
         self.result.checked += 1
         self.result.present += 1
 
-    def _checked_missing(self, kind, table, name="", detail=""):
+    def _checked_missing(self, kind, table, name="", detail="", op=None, spec=None):
         self.result.checked += 1
-        self._miss(kind, table, name, detail)
+        self._miss(kind, table, name, detail, op, spec)
 
     def _superseded(self, kind, table, name=""):
         """Objeto que outro script remove/renomeia: a ausencia e esperada e o script nao esta pendente."""
@@ -324,7 +338,7 @@ class _Checker:
             return None  # removida por algum script: a ausencia e esperada
         if key not in self._missing_tables:
             self._missing_tables.add(key)
-            self._checked_missing(KIND_TABLE, op.table)
+            self._checked_missing(KIND_TABLE, op.table, op=op)
         return None
 
     # conferencias por tipo de comando
@@ -335,7 +349,7 @@ class _Checker:
             if self._others(self.info.dropped_columns, key):
                 self._superseded(KIND_COLUMN, op.table, spec.name)
                 return
-            self._checked_missing(KIND_COLUMN, op.table, spec.name)
+            self._checked_missing(KIND_COLUMN, op.table, spec.name, op=op, spec=spec)
             return
         self._ok()
         expected, found = normalize_type(spec.data_type), normalize_type(db_column.column_type)
@@ -363,7 +377,7 @@ class _Checker:
             self._superseded(KIND_INDEX, op.table, spec.name)
             return
         if found is None:
-            self._checked_missing(KIND_INDEX, op.table, spec.name or ",".join(spec.columns))
+            self._checked_missing(KIND_INDEX, op.table, spec.name or ",".join(spec.columns), op=op, spec=spec)
             return
         if spec.name and _lower_tuple(found.columns) != _lower_tuple(spec.columns):
             # existe com o mesmo nome, mas com outras colunas: so cobra se nenhum outro script o define diferente
@@ -371,6 +385,7 @@ class _Checker:
                 self._checked_missing(
                     KIND_INDEX, op.table, spec.name,
                     f"no banco: {', '.join(found.columns)}; no script: {', '.join(spec.columns)}",
+                    op=op, spec=spec,
                 )
                 return
         self._ok()
@@ -381,7 +396,7 @@ class _Checker:
             self._superseded(KIND_FOREIGN, op.table, spec.name)
             return
         if found is None:
-            self._checked_missing(KIND_FOREIGN, op.table, spec.name or ",".join(spec.columns))
+            self._checked_missing(KIND_FOREIGN, op.table, spec.name or ",".join(spec.columns), op=op, spec=spec)
         else:
             self._ok()
 
@@ -390,14 +405,14 @@ class _Checker:
             self._superseded(KIND_PRIMARY, op.table)
             return
         if "primary" not in db_table.indexes:
-            self._checked_missing(KIND_PRIMARY, op.table)
+            self._checked_missing(KIND_PRIMARY, op.table, op=op)
         else:
             self._ok()
 
-    def _expect_absent(self, kind, table, name, exists, recreated):
+    def _expect_absent(self, kind, table, name, exists, recreated, op=None):
         self.result.checked += 1
         if exists and not recreated:
-            self._miss(KIND_REMOVE_PREFIX + kind, table, name)
+            self._miss(KIND_REMOVE_PREFIX + kind, table, name, op=op)
         else:
             self.result.present += 1
 
@@ -435,19 +450,19 @@ class _Checker:
             db_table = self.schema.tables.get(op.table.lower())
             if db_table is not None:
                 key = _key(op.table, op.name)
-                self._expect_absent(KIND_COLUMN, op.table, op.name, op.name.lower() in db_table.columns, key in self.info.created_columns)
+                self._expect_absent(KIND_COLUMN, op.table, op.name, op.name.lower() in db_table.columns, key in self.info.created_columns, op)
         elif kind == sql_parse.KIND_DROP_INDEX:
             db_table = self.schema.tables.get(op.table.lower())
             if db_table is not None:
                 key = _key(op.table, op.name)
-                self._expect_absent(KIND_INDEX, op.table, op.name, op.name.lower() in db_table.indexes, key in self.info.created_indexes)
+                self._expect_absent(KIND_INDEX, op.table, op.name, op.name.lower() in db_table.indexes, key in self.info.created_indexes, op)
         elif kind == sql_parse.KIND_DROP_FOREIGN_KEY:
             db_table = self.schema.tables.get(op.table.lower())
             if db_table is not None:
                 key = _key(op.table, op.name)
-                self._expect_absent(KIND_FOREIGN, op.table, op.name, op.name.lower() in db_table.foreign_keys, key in self.info.created_foreign)
+                self._expect_absent(KIND_FOREIGN, op.table, op.name, op.name.lower() in db_table.foreign_keys, key in self.info.created_foreign, op)
         elif kind == sql_parse.KIND_DROP_TABLE:
-            self._expect_absent(KIND_TABLE, op.table, "", op.table.lower() in self.schema.tables, _key(op.table) in self.info.created_tables)
+            self._expect_absent(KIND_TABLE, op.table, "", op.table.lower() in self.schema.tables, _key(op.table) in self.info.created_tables, op)
         else:  # alter_options, convert_charset, rename_table...: nao ha o que conferir com seguranca
             self.result.unverifiable += 1
 
@@ -470,7 +485,10 @@ def check_operations(parsed, schema, database):
         checker = _Checker(script, schema, info, database)
         for op in operations:
             checker.apply(op)
-        results.append(checker.finish())
+        result = checker.finish()
+        if result.missing:
+            result.operations = list(operations)
+        results.append(result)
     return results
 
 
@@ -485,22 +503,23 @@ def sql_script_names(directory):
 
 
 def parse_scripts(directory, names, cancel_event=None, progress=None):
-    """Interpreta os scripts. Devolve (parsed, falhas): falhas = {nome: mensagem}."""
+    """Interpreta os scripts. Devolve (parsed, falhas, hashes): falhas = {nome: msg}; hashes = {nome: sha256 do texto}."""
     if not sql_parse.is_available():
         raise ModelCheckError("A biblioteca sqlglot nao foi encontrada: nao da para interpretar os scripts.")
-    parsed, failures = [], {}
+    parsed, failures, hashes = [], {}, {}
     total = len(names)
     for index, name in enumerate(names, 1):
         if cancel_event is not None and cancel_event.is_set():
             break
         try:
             text, _encoding = read_sql_text(Path(directory) / name)
+            hashes[name] = hashlib.sha256(text.encode("utf-8")).hexdigest()
             parsed.append((name, sql_parse.parse_text(text)))
         except SqlFileError as error:
             failures[name] = str(error)
         if progress is not None:
             progress(index, total)
-    return parsed, failures
+    return parsed, failures, hashes
 
 
 def _scrub(text, password):
@@ -538,8 +557,15 @@ def run_model_check(
     names = list(names) if names is not None else sql_script_names(directory)
     if not names:
         raise ModelCheckError("A pasta nao tem nenhum script .sql para conferir.")
-    parsed, failures = parse_scripts(directory, names, cancel_event, progress)
+    parsed, failures, hashes = parse_scripts(directory, names, cancel_event, progress)
     run = ModelCheckRun(database=database)
+    # copias identicas (ex.: a pasta de scripts entregues): vale a primeira, em ordem numerica do nome
+    primary_of, first = {}, {}
+    for name in sorted((n for n in names if n in hashes), key=natural_key):
+        owner = first.setdefault(hashes[name], name)
+        if owner != name:
+            primary_of[name] = owner
+    parsed = [(name, operations) for name, operations in parsed if name not in primary_of]
     if cancel_event is not None and cancel_event.is_set():
         run.cancelled = True
         return run
@@ -567,6 +593,10 @@ def run_model_check(
     for name in names:
         if name in failures:
             run.results.append(ScriptCheck(name, STATUS_ERROR, error=failures[name]))
+        elif name in primary_of:
+            run.results.append(
+                ScriptCheck(name, STATUS_DUPLICATE, duplicate_of=primary_of[name], notes=[f"copia identica de {primary_of[name]}"])
+            )
         elif name in by_name:
             run.results.append(by_name[name])
     return run
@@ -659,7 +689,7 @@ def write_results_csv(run, path):
 def summary_text(run):
     counts = run.counts()
     parts = [f"{len(run.results)} script(s)"]
-    for status in (STATUS_OK, STATUS_MISSING, STATUS_NO_STRUCTURE, STATUS_ERROR):
+    for status in (STATUS_OK, STATUS_MISSING, STATUS_NO_STRUCTURE, STATUS_DUPLICATE, STATUS_ERROR):
         if counts.get(status):
             parts.append(f"{counts[status]} {STATUS_LABELS[status].lower()}")
     return ": ".join([parts[0], ", ".join(parts[1:])]) if len(parts) > 1 else parts[0]

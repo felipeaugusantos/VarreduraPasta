@@ -1,6 +1,7 @@
 """Janela `Comparar com o banco modelo`: lista OK / Falta rodar por script. So leitura."""
 
 import csv
+import re
 import time
 import unittest
 from unittest.mock import patch
@@ -88,7 +89,7 @@ class ModelCheckWindowTests(WindowTestCase):
         self.assertEqual({k: t.number.cget("text") for k, t in window.tiles.items()}["Todos"], "–")  # antes de comparar
         self.compare(window)
         counts = {key: tile.number.cget("text") for key, tile in window.tiles.items()}
-        self.assertEqual(counts, {"Todos": "3", "Falta rodar": "1", "OK": "1", "Sem campos para conferir": "1", "Nao foi possivel ler": "0"})
+        self.assertEqual(counts, {"Todos": "3", "Falta rodar": "1", "OK": "1", "Sem campos para conferir": "1", "Copia identica": "0", "Nao foi possivel ler": "0"})
         for tile in window.tiles.values():  # o cartao inteiro (caixa, numero e rotulo) responde ao clique
             for widget in [tile.box, tile.number, *tile.box.winfo_children()]:
                 self.assertTrue(widget.bind("<Button-1>"), widget)
@@ -198,6 +199,101 @@ class ModelCheckWindowTests(WindowTestCase):
         self.assertIn("SCRIPT_WS_676.sql", ws677["rodar_antes"])
         self.assertEqual((by_name["2_WEBSERVICE/SCRIPT_WS_676.sql"]["ordem_sugerida"], ws677["ordem_sugerida"]), ("1", "2"))
         self.assertEqual(by_name["0_GERAL/SCRIPT_GER_1.sql"]["ordem_sugerida"], "")  # OK: fora da ordem
+
+    def test_generate_the_missing_script_for_the_selected_pending_script(self):
+        window = self.open_window()
+        self.compare(window)
+        sep = __import__("os").sep
+        name = "0_GERAL" + sep + "SCRIPT_GER_2.sql"
+        window.table.selection_set(name)
+        path = self.tmp / "faltando.sql"
+        with patch("app.model_check_window.filedialog.asksaveasfilename", return_value=str(path)) as dialog:
+            window.generate_missing_script()
+            self.pump_window(window)
+        self.assertEqual(dialog.call_args.kwargs["initialfile"], "faltando-SCRIPT_GER_2.sql")
+        text = path.read_text(encoding="utf-8")
+        self.assertIn("ALTER TABLE `CLIENTES` ADD COLUMN `CLI_FALTA` int", text)
+        self.assertNotIn("ALTER TABLE `CLIENTES` ADD COLUMN `CLI_EMAIL`", text)  # esse ja existe: nao entra
+        self.assertIn("-- Script de origem: " + name, text)
+        self.assertIn("-- USE `BANCO_MODELO`;", text)
+        self.assertNotIn(PASSWORD, text)
+        self.assertIn("comando(s) do que falta rodar", window.status_var.get())
+        line = [item for item in self.logged if item.startswith("Banco modelo comparacao script_faltante")][-1]
+        self.assertIn("SCRIPT_GER_2.sql", line)
+        self.assertNotIn(PASSWORD, line)
+
+    def test_generate_asks_for_a_pending_script_and_never_writes_for_an_ok_one(self):
+        window = self.open_window()
+        self.compare(window)
+        sep = __import__("os").sep
+        with patch("app.model_check_window.messagebox.showinfo") as info, \
+             patch("app.model_check_window.filedialog.asksaveasfilename") as save:
+            window.table.selection_set(())
+            window.generate_missing_script()  # nada selecionado
+            window.table.selection_set("0_GERAL" + sep + "SCRIPT_GER_1.sql")
+            window.generate_missing_script()  # OK: nada a gerar
+        self.assertEqual(info.call_count, 2)
+        save.assert_not_called()
+
+    def test_cancelling_the_save_dialog_writes_nothing(self):
+        window = self.open_window()
+        self.compare(window)
+        sep = __import__("os").sep
+        window.table.selection_set("0_GERAL" + sep + "SCRIPT_GER_2.sql")
+        with patch("app.model_check_window.filedialog.asksaveasfilename", return_value=""):
+            window.generate_missing_script()
+        self.assertFalse(list(self.tmp.glob("*.sql")))
+
+    def test_generate_the_whole_plan_in_one_file_in_the_suggested_order(self):
+        self.add_dependency_scripts()
+        window = self.open_window()
+        self.compare(window)
+        self.assertEqual(str(window.plan_button.cget("state")), "normal")
+        path = self.tmp / "plano.sql"
+        with patch("app.model_check_window.filedialog.asksaveasfilename", return_value=str(path)) as dialog:
+            window.generate_plan()
+            self.pump_window(window)
+        self.assertTrue(dialog.call_args.kwargs["initialfile"].startswith("plano-banco-modelo-"))
+        text = path.read_text(encoding="utf-8")
+        sep = __import__("os").sep
+        names = re.findall(r"^-- \d+/\d+  (\S+)$", text, re.MULTILINE)
+        self.assertLess(names.index("2_WEBSERVICE" + sep + "SCRIPT_WS_676.sql"), names.index("2_WEBSERVICE" + sep + "SCRIPT_WS_677.sql"))
+        self.assertIn("ALTER TABLE `CLIENTES` ADD COLUMN `CLI_NOVA`", text)
+        self.assertNotIn(PASSWORD, text)
+        self.assertIn("Plano gravado", window.status_var.get())
+        line = [item for item in self.logged if item.startswith("Banco modelo comparacao plano_faltante")][-1]
+        self.assertNotIn(PASSWORD, line)
+
+    def test_plan_button_follows_the_state_and_cancelling_writes_nothing(self):
+        window = self.open_window()
+        self.assertEqual(str(window.plan_button.cget("state")), "disabled")  # antes de comparar
+        with patch("app.model_check_window.messagebox.showinfo") as info:
+            window.generate_plan()
+        info.assert_called_once()
+        self.compare(window)
+        with patch("app.model_check_window.filedialog.asksaveasfilename", return_value=""):
+            window.generate_plan()
+        self.assertFalse(list(self.tmp.glob("*.sql")))
+
+    def test_an_identical_copy_is_listed_as_a_copy_and_is_left_out_of_the_order(self):
+        self.add_dependency_scripts()
+        (self.scripts / "3_TAENTREGUE").mkdir()
+        (self.scripts / "3_TAENTREGUE" / "SCRIPT_ENTREGA_676.sql").write_bytes(
+            (self.scripts / "2_WEBSERVICE" / "SCRIPT_WS_676.sql").read_bytes()
+        )
+        window = self.open_window()
+        self.compare(window)
+        sep = __import__("os").sep
+        copy = "3_TAENTREGUE" + sep + "SCRIPT_ENTREGA_676.sql"
+        rows = {row[0]: row for row in self.table_rows(window)}
+        self.assertEqual(rows[copy][1], "Copia identica")
+        self.assertIn("Conteudo identico a", rows[copy][2])
+        self.assertEqual(window.tiles["Copia identica"].number.cget("text"), "1")
+        window.table.selection_set(copy)
+        window.show_detail()
+        self.assertIn("não entra na ordem de execução", window.detail.get("1.0", "end"))
+        order = [name for name, _ in __import__("app.sqlaudit.model_check", fromlist=["run_order"]).run_order(window.run.results)]
+        self.assertNotIn(copy, order)
 
     def test_numbers_in_names_are_sorted_as_numbers(self):
         (self.scripts / "0_GERAL" / "SCRIPT_GER_11.sql").write_bytes(b"ALTER TABLE CLIENTES ADD COLUMN F11 INT;")

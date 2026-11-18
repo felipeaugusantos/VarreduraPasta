@@ -19,8 +19,9 @@ from app import theme
 from app.logging_utils import write_log
 from app.model_db_dialogs import ask_credentials
 from app.settings import load_model_check_directory, load_model_db, save_model_check_directory, save_model_db
-from app.sqlaudit import model_check
+from app.sqlaudit import model_check, model_fix
 from app.sqlaudit.model_check import (
+    STATUS_DUPLICATE,
     STATUS_ERROR,
     STATUS_LABELS,
     STATUS_MISSING,
@@ -151,8 +152,10 @@ class ModelCheckWindow:
         self.progress.grid(row=0, column=2, sticky="ew", padx=(0, 12))
         self.order_button = ttk.Button(run, text="Ordem sugerida...", command=self.show_order, state="disabled")
         self.order_button.grid(row=0, column=3, padx=(0, 6))
+        self.plan_button = ttk.Button(run, text="Gerar plano completo...", command=self.generate_plan, state="disabled")
+        self.plan_button.grid(row=0, column=4, padx=(0, 6))
         self.export_button = ttk.Button(run, text="Exportar CSV...", command=self.export, state="disabled")
-        self.export_button.grid(row=0, column=4)
+        self.export_button.grid(row=0, column=5)
         ttk.Label(frame, textvariable=self.status_var, wraplength=1040, justify="left").grid(
             row=3, column=0, sticky="w", pady=(8, 0)
         )
@@ -167,13 +170,14 @@ class ModelCheckWindow:
                 (STATUS_LABELS[STATUS_MISSING], "Falta rodar", colors["warn"]),
                 (STATUS_LABELS[STATUS_OK], "OK", colors["ok"]),
                 (STATUS_LABELS[STATUS_NO_STRUCTURE], "Sem campos", colors["muted"]),
+                (STATUS_LABELS[STATUS_DUPLICATE], "Cópias", colors["muted"]),
                 (STATUS_LABELS[STATUS_ERROR], "Erro", colors["error"]),
             )
         ):
             self.tiles[key] = self._tile(summary, column, key, label, color)
         search = ttk.Frame(summary)
-        search.grid(row=0, column=5, sticky="e", padx=(16, 0))
-        summary.columnconfigure(5, weight=1)
+        search.grid(row=0, column=6, sticky="e", padx=(16, 0))
+        summary.columnconfigure(6, weight=1)
         ttk.Label(search, text="Buscar:").grid(row=0, column=0)
         ttk.Entry(search, textvariable=self.search_var, width=26).grid(row=0, column=1, padx=(6, 0))
         ttk.Label(search, textvariable=self.count_var, style="Muted.TLabel").grid(row=0, column=2, padx=(10, 0))
@@ -207,8 +211,10 @@ class ModelCheckWindow:
 
         footer = ttk.Frame(frame)
         footer.grid(row=8, column=0, sticky="e", pady=(10, 0))
-        ttk.Button(footer, text="Abrir script", command=self.open_script).grid(row=0, column=0, padx=(0, 6))
-        ttk.Button(footer, text="Fechar", command=self.close).grid(row=0, column=1)
+        self.fix_button = ttk.Button(footer, text="Gerar script do que falta...", command=self.generate_missing_script)
+        self.fix_button.grid(row=0, column=0, padx=(0, 6))
+        ttk.Button(footer, text="Abrir script", command=self.open_script).grid(row=0, column=1, padx=(0, 6))
+        ttk.Button(footer, text="Fechar", command=self.close).grid(row=0, column=2)
 
     def _tile(self, parent, column, key, label, color):
         """Cartao de resumo: numero grande + rotulo; clicar filtra a lista."""
@@ -262,6 +268,8 @@ class ModelCheckWindow:
         self.cancel_button.config(state="normal" if busy == "comparando" else "disabled")
         self.export_button.config(state="normal" if idle and self.run is not None and self.run.results else "disabled")
         self.order_button.config(state="normal" if idle and self.run is not None and self.run.results else "disabled")
+        has_pending = self.run is not None and any(item.status == STATUS_MISSING for item in self.run.results)
+        self.plan_button.config(state="normal" if idle and has_pending else "disabled")
         if idle:
             self.progress.config(value=0)
 
@@ -456,10 +464,10 @@ class ModelCheckWindow:
                 continue
             matching.append(item)
         # o que falta rodar primeiro; dentro do grupo, ordem numerica do nome
-        order = {STATUS_MISSING: 0, STATUS_ERROR: 1, STATUS_OK: 2, STATUS_NO_STRUCTURE: 3}
+        order = {STATUS_MISSING: 0, STATUS_ERROR: 1, STATUS_OK: 2, STATUS_NO_STRUCTURE: 3, STATUS_DUPLICATE: 4}
         matching.sort(key=lambda item: (order.get(item.status, 9), _natural(item.script)))
         for item in matching[:MAX_ROWS]:
-            tag = {STATUS_MISSING: "missing", STATUS_ERROR: "error", STATUS_NO_STRUCTURE: "none"}.get(item.status, "")
+            tag = {STATUS_MISSING: "missing", STATUS_ERROR: "error", STATUS_NO_STRUCTURE: "none", STATUS_DUPLICATE: "none"}.get(item.status, "")
             self.table.insert("", "end", iid=item.script, values=(item.script, item.label, item.detail), tags=(tag,) if tag else ())
             self.shown[item.script] = item
         total = len(self.run.results)
@@ -482,12 +490,14 @@ class ModelCheckWindow:
             lines.append("Rode ANTES (eles criam o que este script usa):")
             for dependency in item.depends_on:
                 other = self.shown.get(dependency) or next((r for r in self.run.results if r.script == dependency), None)
-                state = "também falta rodar" if other is not None and other.status == STATUS_MISSING else "já está no banco"
+                state = "também falta rodar" if other is not None and other.status == STATUS_MISSING else "confira o resultado dele"
                 lines.append(f"  → {dependency} ({state})")
         if item.status == STATUS_OK:
             lines.append(f"Tudo o que o script cria já existe no banco ({item.present} item(ns) conferido(s)).")
         if item.status == STATUS_NO_STRUCTURE:
             lines.append("O script não cria tabelas, campos ou índices que dê para conferir (ex.: só dados).")
+        if item.status == STATUS_DUPLICATE:
+            lines.append(f"Este arquivo tem o mesmo conteúdo de {item.duplicate_of}. Vale o resultado daquele; este não entra na ordem de execução.")
         if item.notes:
             lines.append("Observações:")
             lines.extend("  • " + note for note in item.notes)
@@ -542,6 +552,75 @@ class ModelCheckWindow:
         ttk.Button(buttons, text="Copiar", command=copy).grid(row=0, column=0, padx=(0, 6))
         ttk.Button(buttons, text="Fechar", command=dialog.destroy).grid(row=0, column=1)
         self.order_dialog = dialog
+
+    def generate_plan(self):
+        """Grava UM .sql (so para revisao) com o que falta de todos os scripts pendentes, na ordem sugerida."""
+        if self.run is None or not any(item.status == STATUS_MISSING for item in self.run.results):
+            messagebox.showinfo(TITLE, "Nenhum script falta rodar: não há plano a gerar.", parent=self.window)
+            return
+        from datetime import datetime
+
+        name = f"plano-banco-modelo-{datetime.now():%Y%m%d-%H%M}.sql"
+        path = filedialog.asksaveasfilename(
+            title="Salvar o plano do que falta rodar (somente para revisão)", defaultextension=".sql", initialfile=name,
+            filetypes=[("Script SQL", "*.sql")], parent=self.window,
+        )
+        if not path:
+            return
+        run, user, directory = self.run, self.user, self.directory
+
+        def work():
+            try:
+                text = model_fix.write_plan_script(run.results, path, database=run.database, user=user)
+            except (OSError, ValueError) as error:
+                return ("info", f"✖ Não foi possível gravar o plano: {error}")
+            scripts = len(model_check.run_order(run.results))
+            commands = sum(1 for line in text.splitlines() if line.rstrip().endswith(";") and not line.startswith("--"))
+            write_log(model_check.audit_line(user, directory, run, "plano_faltante", f"{scripts} script(s), {commands} comando(s) para revisao"))
+            return (
+                "info",
+                f"✔ Plano gravado em {path}: {scripts} script(s), {commands} comando(s), na ordem sugerida. REVISE antes de usar; "
+                "o sistema não executa nada. Depois de rodar, compare de novo.",
+            )
+
+        self.status_var.set("Gravando...")
+        self._start("exportando", work)
+
+    def generate_missing_script(self):
+        """Grava um .sql (so para revisao) com os comandos do script selecionado que ainda faltam no banco."""
+        selection = self.table.selection()
+        item = self.shown.get(selection[0]) if selection else None
+        if item is None or item.status != STATUS_MISSING:
+            messagebox.showinfo(
+                TITLE,
+                "Selecione na lista um script com resultado \"Falta rodar\" para gerar o que falta.",
+                parent=self.window,
+            )
+            return
+        name = f"faltando-{Path(item.script).stem}.sql"
+        path = filedialog.asksaveasfilename(
+            title="Salvar o que falta rodar (somente para revisão)", defaultextension=".sql", initialfile=name,
+            filetypes=[("Script SQL", "*.sql")], parent=self.window,
+        )
+        if not path:
+            return
+        run, user, directory = self.run, self.user, self.directory
+
+        def work():
+            try:
+                text = model_fix.write_missing_script(item, path, database=run.database, user=user)
+            except (OSError, ValueError) as error:
+                return ("info", f"✖ Não foi possível gravar o script: {error}")
+            commands = sum(1 for line in text.splitlines() if line.rstrip().endswith(";") and not line.startswith("--"))
+            write_log(model_check.audit_line(user, directory, run, "script_faltante", f"{item.script}: {commands} comando(s) para revisao"))
+            return (
+                "info",
+                f"✔ Gravado em {path}: {commands} comando(s) do que falta rodar. REVISE antes de usar; "
+                "o sistema não executa nada. Rode um por vez, na ordem.",
+            )
+
+        self.status_var.set("Gravando...")
+        self._start("exportando", work)
 
     def open_script(self):
         selection = self.table.selection()
