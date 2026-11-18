@@ -2430,9 +2430,9 @@ class VersionScannerApp(tk.Tk):
 
         frame = ttk.Frame(self.svn_search_window, padding=12)
         frame.pack(fill="both", expand=True)
-        frame.rowconfigure(4, weight=3)
-        frame.rowconfigure(5, weight=2)
-        frame.columnconfigure(1, weight=1)
+        frame.rowconfigure(5, weight=4)
+        frame.rowconfigure(6, weight=2)
+        frame.columnconfigure(2, weight=1)
 
         base_var = tk.StringVar(value=load_svn_base_path())
         revision_var = tk.StringVar()
@@ -2440,67 +2440,46 @@ class VersionScannerApp(tk.Tk):
         find_all_var = tk.BooleanVar(value=False)
         status_var = tk.StringVar(value="Informe uma revisao, um requisito ou os dois.")
 
-        ttk.Label(frame, text="Caminho base SVN:").grid(row=0, column=0, sticky="w")
-        ttk.Entry(frame, textvariable=base_var).grid(
-            row=0,
-            column=1,
-            sticky="ew",
-            padx=(8, 8),
-        )
+        ttk.Label(frame, text="Caminho base SVN", style="Muted.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Entry(frame, textvariable=base_var).grid(row=0, column=1, columnspan=2, sticky="ew", padx=(10, 8))
         ttk.Button(
             frame,
             text="Salvar base",
             command=lambda: self._save_svn_base_from_window(base_var.get(), status_var),
-        ).grid(row=0, column=2, sticky="e")
+        ).grid(row=0, column=3, sticky="e")
 
-        ttk.Label(frame, text="Revisao:").grid(row=1, column=0, sticky="w", pady=(10, 0))
-        revision_entry = ttk.Entry(frame, textvariable=revision_var, width=24)
-        revision_entry.grid(
-            row=1,
-            column=1,
-            sticky="w",
-            padx=(8, 8),
-            pady=(10, 0),
-        )
+        ttk.Separator(frame, orient="horizontal").grid(row=1, column=0, columnspan=4, sticky="ew", pady=(12, 12))
+
+        # Busca: revisao, requisito e o botao Consultar na mesma linha.
+        ttk.Label(frame, text="Revisão", style="Muted.TLabel").grid(row=2, column=0, sticky="w")
+        revision_entry = ttk.Entry(frame, textvariable=revision_var, width=18)
+        revision_entry.grid(row=2, column=1, sticky="w", padx=(10, 8))
+        search_row = ttk.Frame(frame)
+        search_row.grid(row=2, column=2, columnspan=2, sticky="ew")
+        search_row.columnconfigure(1, weight=1)
+        ttk.Label(search_row, text="Requisito", style="Muted.TLabel").grid(row=0, column=0, sticky="w", padx=(8, 8))
+        requirement_entry = ttk.Entry(search_row, textvariable=requirement_var)
+        requirement_entry.grid(row=0, column=1, sticky="ew")
+        consult_button = ttk.Button(search_row, text="Consultar", style="Primary.TButton", command=lambda: consult())
+        consult_button.grid(row=0, column=2, padx=(10, 6))
+        cancel_button = ttk.Button(search_row, text="Cancelar", command=lambda: cancel_search(), state="disabled")
+        cancel_button.grid(row=0, column=3)
+
         ttk.Checkbutton(
             frame,
-            text="Buscar todas as ocorrencias",
+            text="Buscar todas as ocorrências",
             variable=find_all_var,
-        ).grid(row=1, column=2, sticky="e", pady=(10, 0))
+        ).grid(row=3, column=1, columnspan=2, sticky="w", padx=(10, 0), pady=(8, 0))
 
-        ttk.Label(frame, text="Requisito:").grid(row=2, column=0, sticky="w", pady=(10, 0))
-        requirement_entry = ttk.Entry(frame, textvariable=requirement_var)
-        requirement_entry.grid(
-            row=2,
-            column=1,
-            columnspan=2,
-            sticky="ew",
-            padx=(8, 0),
-            pady=(10, 0),
+        ttk.Label(frame, textvariable=status_var, style="Muted.TLabel").grid(
+            row=4, column=0, columnspan=3, sticky="w", pady=(10, 8)
         )
-
-        ttk.Label(frame, textvariable=status_var).grid(
-            row=3,
-            column=0,
-            columnspan=2,
-            sticky="w",
-            pady=(10, 8),
-        )
-        search_progress = ttk.Progressbar(
-            frame,
-            mode="indeterminate",
-            length=180,
-        )
-        search_progress.grid(
-            row=3,
-            column=2,
-            sticky="e",
-            pady=(10, 8),
-        )
+        search_progress = ttk.Progressbar(frame, mode="indeterminate", length=180)
+        search_progress.grid(row=4, column=3, sticky="e", pady=(10, 8))
         search_progress.grid_remove()
 
         result_frame = ttk.LabelFrame(frame, text="Resultados")
-        result_frame.grid(row=4, column=0, columnspan=3, sticky="nsew")
+        result_frame.grid(row=5, column=0, columnspan=4, sticky="nsew")
         result_frame.rowconfigure(0, weight=1)
         result_frame.columnconfigure(0, weight=1)
 
@@ -2564,7 +2543,7 @@ class VersionScannerApp(tk.Tk):
         tree_x_scroll.grid(row=1, column=0, sticky="ew")
 
         detail_frame = ttk.LabelFrame(frame, text="Detalhes da revisao selecionada")
-        detail_frame.grid(row=5, column=0, columnspan=3, sticky="nsew", pady=(10, 0))
+        detail_frame.grid(row=6, column=0, columnspan=4, sticky="nsew", pady=(10, 0))
         detail_frame.rowconfigure(0, weight=1)
         detail_frame.columnconfigure(0, weight=1)
 
@@ -2781,39 +2760,13 @@ class VersionScannerApp(tk.Tk):
             os.startfile(base_path)
 
         button_bar = ttk.Frame(frame)
-        button_bar.grid(row=6, column=0, columnspan=3, sticky="e", pady=(12, 0))
-        consult_button = ttk.Button(button_bar, text="Consultar", command=consult)
-        consult_button.grid(
-            row=0,
-            column=0,
-            padx=(0, 8),
-        )
-        cancel_button = ttk.Button(
-            button_bar,
-            text="Cancelar",
-            command=cancel_search,
-            state="disabled",
-        )
-        cancel_button.grid(row=0, column=1, padx=(0, 8))
-        ttk.Button(button_bar, text="Copiar Revisao", command=copy_selected_revision).grid(
-            row=0,
-            column=2,
-            padx=(0, 8),
-        )
-        ttk.Button(button_bar, text="Copiar Caminho", command=copy_selected_path).grid(
-            row=0,
-            column=3,
-            padx=(0, 8),
-        )
-        ttk.Button(button_bar, text="Abrir Base", command=open_base).grid(
-            row=0,
-            column=4,
-            padx=(0, 8),
-        )
-        ttk.Button(button_bar, text="Fechar", command=close_svn_window).grid(
-            row=0,
-            column=5,
-        )
+        button_bar.grid(row=7, column=0, columnspan=4, sticky="e", pady=(12, 0))
+        ttk.Button(button_bar, text="Copiar Revisao", command=copy_selected_revision).grid(row=0, column=0, padx=(0, 8))
+        ttk.Button(button_bar, text="Copiar Caminho", command=copy_selected_path).grid(row=0, column=1, padx=(0, 8))
+        ttk.Button(button_bar, text="Abrir Base", command=open_base).grid(row=0, column=2, padx=(0, 8))
+        ttk.Button(button_bar, text="Fechar", command=close_svn_window).grid(row=0, column=3)
+        result_tree.bind("<Double-1>", lambda _event: copy_selected_revision())
+        revision_entry.focus_set()
         self.svn_search_window.protocol("WM_DELETE_WINDOW", close_svn_window)
 
     def _save_svn_base_from_window(self, svn_base_path, status_var):
