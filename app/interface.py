@@ -80,8 +80,8 @@ class VersionScannerApp(tk.Tk):
         # Antes de tudo: erro em botao/thread vai para logs\erros.log e aparece na tela.
         self.error_reporter = ErrorReporter(self).install()
         self.title(f"Sistema de Acompanhamento de Copia v{__version__}")
-        self.geometry("1380x820")
-        self.minsize(1180, 680)
+        theme.fit_to_screen(self, 1380, 820)
+        self.minsize(min(1000, self.winfo_screenwidth() - 40), 620)
         self._set_window_icon()
 
         self.projects = []
@@ -304,6 +304,7 @@ class VersionScannerApp(tk.Tk):
             command=self.refresh,
         )
         self.refresh_button.grid(row=0, column=2, sticky="e")
+        tk.Frame(self, background=theme.COLORS["primary"], height=3).grid(row=0, column=0, sticky="sew")
 
     def _build_counter_cards(self):
         cards = ttk.Frame(self, padding=(16, 14, 16, 4))

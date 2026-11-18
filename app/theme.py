@@ -39,16 +39,16 @@ def apply_theme(root):
     """Configura fontes e estilos ttk. Deve ser chamado uma vez, no Tk principal."""
     for name in ("TkDefaultFont", "TkTextFont", "TkMenuFont"):
         tkfont.nametofont(name).configure(family=FONT_FAMILY, size=10)
-    tkfont.nametofont("TkHeadingFont").configure(family=FONT_FAMILY, size=10, weight="bold")
+    tkfont.nametofont("TkHeadingFont").configure(family=FONT_FAMILY, size=9, weight="bold")
 
     fonts = {
         "title": tkfont.Font(root, family=FONT_FAMILY, size=15, weight="bold"),
         "subtitle": tkfont.Font(root, family=FONT_FAMILY, size=9),
         "subtitle_bold": tkfont.Font(root, family=FONT_FAMILY, size=9, weight="bold"),
-        "card_value": tkfont.Font(root, family=FONT_FAMILY, size=18, weight="bold"),
+        "card_value": tkfont.Font(root, family=FONT_FAMILY, size=20, weight="bold"),
         "card_label": tkfont.Font(root, family=FONT_FAMILY, size=9),
         "card_detail": tkfont.Font(root, family=FONT_FAMILY, size=9),
-        "card_caption": tkfont.Font(root, family=FONT_FAMILY, size=9, weight="bold"),
+        "card_caption": tkfont.Font(root, family=FONT_FAMILY, size=9),
         "section": tkfont.Font(root, family=FONT_FAMILY, size=10, weight="bold"),
         "panel_title": tkfont.Font(root, family=FONT_FAMILY, size=11, weight="bold"),
     }
@@ -79,7 +79,7 @@ def apply_theme(root):
     style.configure("PanelTitle.TLabel", background=c["surface"], foreground=c["text"], font=fonts["panel_title"])
     style.configure("PanelSection.TLabel", background=c["surface"], foreground=c["muted"], font=fonts["section"])
     style.configure("CardBody.TFrame", background=c["surface"])
-    style.configure("CardCaption.TLabel", background=c["surface"], foreground=c["text"], font=fonts["card_caption"])
+    style.configure("CardCaption.TLabel", background=c["surface"], foreground=c["muted"], font=fonts["card_caption"])
     # Numero em cinza quando o cartao de alerta esta zerado.
     style.configure("CardValueMuted.TLabel", background=c["surface"], foreground=c["border_strong"], font=fonts["card_value"])
     style.configure("CardDetail.TLabel", background=c["surface"], foreground=c["muted"], font=fonts["card_detail"])
@@ -105,7 +105,7 @@ def apply_theme(root):
         lightcolor=c["surface"],
         darkcolor=c["surface"],
         focuscolor=c["surface"],
-        padding=(12, 6),
+        padding=(14, 7),
     )
     style.map(
         "TButton",
@@ -174,7 +174,8 @@ def apply_theme(root):
         fieldbackground=c["surface"],
         foreground=c["text"],
         bordercolor=c["border"],
-        rowheight=28,
+        rowheight=32,
+        borderwidth=0,
     )
     style.map(
         "Treeview",
@@ -184,10 +185,10 @@ def apply_theme(root):
     style.configure(
         "Treeview.Heading",
         background=c["heading_bg"],
-        foreground=c["text"],
+        foreground=c["muted"],
         bordercolor=c["border"],
         relief="flat",
-        padding=(6, 6),
+        padding=(8, 8),
     )
     style.map("Treeview.Heading", background=[("active", c["border"])])
 
@@ -208,6 +209,16 @@ def fitted_dimension(base, requested, screen_limit, max_growth=MAX_GROWTH):
     if base < requested <= base * max_growth:
         return min(requested, screen_limit)
     return min(base, screen_limit)
+
+
+def fit_to_screen(window, width, height, margin=60):
+    """Tamanho inicial que cabe na tela (com a barra de tarefas) e janela centralizada."""
+    width = min(width, window.winfo_screenwidth() - margin)
+    height = min(height, window.winfo_screenheight() - margin * 2)
+    x = max((window.winfo_screenwidth() - width) // 2, 0)
+    y = max((window.winfo_screenheight() - height) // 2 - 20, 0)
+    window.geometry(f"{width}x{height}+{x}+{y}")
+    return width, height
 
 
 def size_window(window, width, height, margin=40):
