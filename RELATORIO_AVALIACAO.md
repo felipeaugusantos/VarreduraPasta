@@ -28,12 +28,12 @@ nesta revalidação adicionam detecção e bloqueio para esse cenário.
    `test_wrong_product_version_is_reported`, `test_checks_without_version_validation_are_skipped`,
    `test_non_ok_checks_are_skipped`) ficaram dentro da classe `RequiredCoreGroupsTests` em vez de
    `VersionErrorsTests`. Continuam rodando — é só organização.
-2. **Zip numerado com conteúdo "certo" passa na validação, mas é invisível para o scanner:**
+2. ✅ **RESOLVIDO** — `validate_zip_names` passou a acusar todo zip numerado (teste `test_numbered_zip_with_same_inner_file_is_reported`). Observação original: **Zip numerado com conteúdo "certo" passa na validação, mas é invisível para o scanner:**
    `autcom (1).zip` contendo `autcom.exe` é considerado OK pela `validate_zip_names` (há teste
    afirmando isso), porém o índice de zips (`_build_zip_index`/`_find_zip_file`) procura pelo stem
    exato `autcom` — esse zip não seria encontrado na checagem de versão. Vale decidir: ou acusar
    todo zip numerado, ou normalizar o stem também no índice do scanner.
-3. **Custo por varredura:** `validate_zip_names` abre todos os zips de todos os projetos a cada
+3. ✅ **RESOLVIDO** — cache por (nome, mtime, tamanho) em `_ZIP_NAME_CACHE`. Observação original: **Custo por varredura:** `validate_zip_names` abre todos os zips de todos os projetos a cada
    varredura (atualização automática de 5 min), sem cache. A leitura é só do diretório central do
    zip (rápida), mas em pastas grandes/rede adiciona I/O. Um cache por (mtime, tamanho), como o de
    versões, eliminaria o custo.
