@@ -9,7 +9,6 @@ so e tocado pela thread principal.
 
 import os
 import queue
-import re
 import threading
 import tkinter as tk
 from pathlib import Path
@@ -36,9 +35,7 @@ MAX_ROWS = 5000
 LOGIN_MESSAGE = "Somente leitura: o sistema só consulta a estrutura do banco. Usuário e senha não são gravados."
 
 
-def _natural(text):
-    """Chave de ordenacao que trata numeros como numeros (GER_2 antes de GER_11)."""
-    return [int(part) if part.isdigit() else part.lower() for part in re.split(r"(\d+)", text)]
+_natural = model_check.natural_key
 
 
 def open_model_check_window(app, parent, directory=None, user=""):
@@ -152,8 +149,10 @@ class ModelCheckWindow:
         )
         self.progress = ttk.Progressbar(run, mode="determinate", maximum=100, style="Audit.Horizontal.TProgressbar")
         self.progress.grid(row=0, column=2, sticky="ew", padx=(0, 12))
+        self.order_button = ttk.Button(run, text="Ordem sugerida...", command=self.show_order, state="disabled")
+        self.order_button.grid(row=0, column=3, padx=(0, 6))
         self.export_button = ttk.Button(run, text="Exportar CSV...", command=self.export, state="disabled")
-        self.export_button.grid(row=0, column=3)
+        self.export_button.grid(row=0, column=4)
         ttk.Label(frame, textvariable=self.status_var, wraplength=1040, justify="left").grid(
             row=3, column=0, sticky="w", pady=(8, 0)
         )
@@ -262,6 +261,7 @@ class ModelCheckWindow:
             button.config(state=state)
         self.cancel_button.config(state="normal" if busy == "comparando" else "disabled")
         self.export_button.config(state="normal" if idle and self.run is not None and self.run.results else "disabled")
+        self.order_button.config(state="normal" if idle and self.run is not None and self.run.results else "disabled")
         if idle:
             self.progress.config(value=0)
 
@@ -477,7 +477,13 @@ class ModelCheckWindow:
             lines.append(item.error)
         if item.missing:
             lines.append(f"Falta rodar ({len(item.missing)}):")
-            lines.extend("  • " + missing.text for missing in item.missing)
+            lines.extend("  • " + missing.full_text for missing in item.missing)
+        if item.depends_on:
+            lines.append("Rode ANTES (eles criam o que este script usa):")
+            for dependency in item.depends_on:
+                other = self.shown.get(dependency) or next((r for r in self.run.results if r.script == dependency), None)
+                state = "também falta rodar" if other is not None and other.status == STATUS_MISSING else "já está no banco"
+                lines.append(f"  → {dependency} ({state})")
         if item.status == STATUS_OK:
             lines.append(f"Tudo o que o script cria já existe no banco ({item.present} item(ns) conferido(s)).")
         if item.status == STATUS_NO_STRUCTURE:
@@ -494,6 +500,48 @@ class ModelCheckWindow:
         self.detail.delete("1.0", "end")
         self.detail.insert("1.0", text)
         self.detail.config(state="disabled")
+
+    def show_order(self):
+        """Janela com a ordem sugerida para rodar o que falta (quem cria vem antes de quem precisa)."""
+        if self.run is None:
+            return
+        order = model_check.run_order(self.run.results)
+        if not order:
+            messagebox.showinfo(TITLE, "Nenhum script falta rodar.", parent=self.window)
+            return
+        lines = []
+        for number, (name, dependencies) in enumerate(order, 1):
+            lines.append(f"{number}. {name}" + (f"    (depois de: {', '.join(dependencies)})" if dependencies else ""))
+        text = "\n".join(lines)
+        dialog = tk.Toplevel(self.window)
+        dialog.title("Ordem sugerida para rodar")
+        dialog.transient(self.window)
+        theme.size_window(dialog, 760, 460)
+        body = ttk.Frame(dialog, padding=12)
+        body.pack(fill="both", expand=True)
+        body.columnconfigure(0, weight=1)
+        body.rowconfigure(1, weight=1)
+        ttk.Label(
+            body,
+            text=f"{len(order)} script(s) faltam rodar. Quem cria o que outro usa vem antes; "
+            "fora isso vale a ordem numérica do nome. Rode no banco modelo, na ordem.",
+            wraplength=720, justify="left",
+        ).grid(row=0, column=0, sticky="w", pady=(0, 8))
+        box = tk.Text(body, wrap="none", relief="solid", borderwidth=1)
+        box.insert("1.0", text)
+        box.config(state="disabled")
+        box.grid(row=1, column=0, sticky="nsew")
+        buttons = ttk.Frame(body)
+        buttons.grid(row=2, column=0, sticky="e", pady=(10, 0))
+
+        def copy():
+            self.window.clipboard_clear()
+            self.window.clipboard_append(text)
+            self.status_var.set("✔ Ordem sugerida copiada para a área de transferência.")
+
+        ttk.Button(buttons, text="Copiar", command=copy).grid(row=0, column=0, padx=(0, 6))
+        ttk.Button(buttons, text="Fechar", command=dialog.destroy).grid(row=0, column=1)
+        self.order_dialog = dialog
 
     def open_script(self):
         selection = self.table.selection()

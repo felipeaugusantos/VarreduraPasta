@@ -7,6 +7,8 @@ from pathlib import Path
 
 from app.sqlaudit import db_reader, sql_parse
 from app.sqlaudit.model_check import (
+    natural_key,
+    run_order,
     STATUS_ERROR,
     STATUS_MISSING,
     STATUS_NO_STRUCTURE,
@@ -166,6 +168,92 @@ class CheckOperationsTests(unittest.TestCase):
         self.assertEqual(ok.status, STATUS_OK)
         missing = self.check(db_schema(db_table("T", col("VELHO", "int"))), **{"s.sql": "ALTER TABLE T RENAME COLUMN VELHO TO NOVO;"})["s.sql"]
         self.assertEqual(missing.summary, "Falta rodar: campo T.NOVO")
+
+
+WS_677 = (
+    'ALTER TABLE CONECTA_MAP_PRODUTOS DROP INDEX UK_CONECTA_MAP_PRODUTOS_04;\n'
+    'UPDATE CONECTA_MAP_PRODUTOS SET MAP_PAIPLA = "" WHERE MAP_PAIPLA IS NULL;\n'
+    'ALTER TABLE CONECTA_MAP_PRODUTOS MODIFY MAP_PAIPLA VARCHAR(50) NOT NULL DEFAULT "";\n'
+    'ALTER TABLE CONECTA_MAP_PRODUTOS ADD UNIQUE KEY UK_CONECTA_MAP_PRODUTOS_04 (MAP_CODAUT, MAP_CODPLA, MAP_PAIPLA);\n'
+)
+WS_676 = "ALTER TABLE CONECTA_MAP_PRODUTOS ADD COLUMN MAP_PAIPLA VARCHAR(50) DEFAULT NULL;"
+
+
+@unittest.skipUnless(AVAILABLE, "sqlglot nao instalado")
+class DependencyTests(unittest.TestCase):
+    TABLE = "CONECTA_MAP_PRODUTOS"
+
+    def schema(self, with_column=False, index_columns=None):
+        columns = [col("MAP_CODAUT", "int"), col("MAP_CODPLA", "int")]
+        if with_column:
+            columns.append(col("MAP_PAIPLA", "varchar(50)"))
+        indexes = [idx("UK_CONECTA_MAP_PRODUTOS_04", *index_columns, unique=True)] if index_columns else []
+        return db_schema(db_table(self.TABLE, *columns, indexes=indexes))
+
+    def check(self, schema, **scripts):
+        return {item.script: item for item in check_operations(parsed(**scripts), schema, "BANCO_X")}
+
+    def test_the_missing_column_names_the_script_that_creates_it_and_the_order_follows(self):
+        results = self.check(self.schema(), **{"WS_676.sql": WS_676, "WS_677.sql": WS_677})
+        ws677 = results["WS_677.sql"]
+        self.assertEqual(ws677.status, STATUS_MISSING)
+        self.assertEqual(
+            [m.full_text for m in ws677.missing],
+            [f"campo {self.TABLE}.MAP_PAIPLA [criado por WS_676.sql]",
+             f"indice {self.TABLE}.UK_CONECTA_MAP_PRODUTOS_04"],
+        )
+        self.assertEqual(ws677.depends_on, ["WS_676.sql"])
+        self.assertIn("criado por WS_676.sql", ws677.detail)
+        self.assertEqual(run_order(list(results.values())), [("WS_676.sql", []), ("WS_677.sql", ["WS_676.sql"])])
+
+    def test_the_script_that_drops_and_recreates_an_index_must_leave_it_in_the_database(self):
+        # o proprio 677 remove e recria o indice: o estado final exige o indice, nao e "removido por outro script"
+        results = self.check(self.schema(with_column=True), **{"WS_677.sql": WS_677})
+        self.assertEqual([m.text for m in results["WS_677.sql"].missing], [f"indice {self.TABLE}.UK_CONECTA_MAP_PRODUTOS_04"])
+        self.assertFalse([n for n in results["WS_677.sql"].notes if "removido por outro script" in n])
+
+    def test_everything_in_place_is_ok(self):
+        schema = self.schema(with_column=True, index_columns=("MAP_CODAUT", "MAP_CODPLA", "MAP_PAIPLA"))
+        results = self.check(schema, **{"WS_676.sql": WS_676, "WS_677.sql": WS_677})
+        self.assertEqual({k: v.status for k, v in results.items()}, {"WS_676.sql": STATUS_OK, "WS_677.sql": STATUS_OK})
+        self.assertEqual(run_order(list(results.values())), [])
+
+    def test_an_index_with_the_same_name_but_other_columns_is_pending_when_only_one_script_defines_it(self):
+        old = self.schema(with_column=True, index_columns=("MAP_CODAUT", "MAP_CODPLA"))
+        only = self.check(old, **{"WS_677.sql": WS_677})["WS_677.sql"]
+        self.assertEqual(only.status, STATUS_MISSING)
+        (missing,) = only.missing
+        self.assertIn("no banco: MAP_CODAUT, MAP_CODPLA; no script: MAP_CODAUT, MAP_CODPLA, MAP_PAIPLA", missing.text)
+        # se outro script tambem define o indice com outras colunas, a diferenca e historia: nao e cobrada
+        older = "ALTER TABLE CONECTA_MAP_PRODUTOS ADD UNIQUE KEY UK_CONECTA_MAP_PRODUTOS_04 (MAP_CODAUT, MAP_CODPLA);"
+        both = self.check(old, **{"WS_600.sql": older, "WS_677.sql": WS_677})
+        self.assertEqual(both["WS_600.sql"].status, STATUS_OK)
+
+    def test_modify_does_not_count_as_the_creator_of_a_column(self):
+        schema = self.schema()
+        results = self.check(
+            schema, **{"a.sql": "ALTER TABLE CONECTA_MAP_PRODUTOS MODIFY MAP_PAIPLA VARCHAR(10);",
+                       "b.sql": "ALTER TABLE CONECTA_MAP_PRODUTOS MODIFY MAP_PAIPLA VARCHAR(20);"},
+        )
+        self.assertEqual(results["a.sql"].depends_on, [])
+
+    def test_order_puts_providers_first_keeps_numeric_name_order_and_survives_cycles(self):
+        schema = db_schema(db_table("T", col("A", "int")))
+        results = self.check(
+            schema,
+            **{"s_11.sql": "ALTER TABLE T ADD COLUMN X INT;",
+               "s_2.sql": "ALTER TABLE T ADD COLUMN Y INT;",
+               "s_3.sql": "ALTER TABLE T ADD COLUMN Z INT; ALTER TABLE T MODIFY X INT NOT NULL;"},
+        )
+        order = [name for name, _ in run_order(list(results.values()))]
+        self.assertEqual(order, ["s_2.sql", "s_11.sql", "s_3.sql"])  # s_3 precisa do X criado em s_11
+        a = ScriptCheck("a.sql", STATUS_MISSING, missing=[__import__("app.sqlaudit.model_check", fromlist=["Missing"]).Missing("campo", "T", "X", providers=("b.sql",))])
+        b = ScriptCheck("b.sql", STATUS_MISSING, missing=[__import__("app.sqlaudit.model_check", fromlist=["Missing"]).Missing("campo", "T", "Y", providers=("a.sql",))])
+        cyclic = [name for name, _ in run_order([a, b])]
+        self.assertEqual(sorted(cyclic), ["a.sql", "b.sql"])  # nao trava
+
+    def test_natural_key(self):
+        self.assertEqual(sorted(["GER_11", "GER_2", "ger_1"], key=natural_key), ["ger_1", "GER_2", "GER_11"])
 
 
 @unittest.skipUnless(AVAILABLE, "sqlglot nao instalado")

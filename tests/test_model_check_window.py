@@ -144,6 +144,61 @@ class ModelCheckWindowTests(WindowTestCase):
         self.assertEqual(values, sorted(values))  # a barra nunca anda para tras
         self.assertLess(values[-1], 100)
 
+    def add_dependency_scripts(self):
+        folder = self.scripts / "2_WEBSERVICE"
+        folder.mkdir(exist_ok=True)
+        (folder / "SCRIPT_WS_676.sql").write_bytes(b"ALTER TABLE CLIENTES ADD COLUMN CLI_NOVA VARCHAR(50);")
+        (folder / "SCRIPT_WS_677.sql").write_bytes(
+            b"UPDATE CLIENTES SET CLI_NOVA = '' WHERE CLI_NOVA IS NULL; ALTER TABLE CLIENTES MODIFY CLI_NOVA VARCHAR(50) NOT NULL DEFAULT '';"
+        )
+
+    def test_detail_says_which_script_to_run_first_and_the_order_dialog_lists_them(self):
+        self.add_dependency_scripts()
+        window = self.open_window()
+        self.compare(window)
+        sep = __import__("os").sep
+        name_676, name_677 = "2_WEBSERVICE" + sep + "SCRIPT_WS_676.sql", "2_WEBSERVICE" + sep + "SCRIPT_WS_677.sql"
+        rows = {row[0]: row for row in self.table_rows(window)}
+        self.assertIn("criado por", rows[name_677][2])
+        window.table.selection_set(name_677)
+        window.show_detail()
+        text = window.detail.get("1.0", "end")
+        self.assertIn("Rode ANTES", text)
+        self.assertIn(f"→ {name_676} (também falta rodar)", text)
+        self.assertEqual(str(window.order_button.cget("state")), "normal")
+        window.show_order()
+        dialog = window.order_dialog
+        self.addCleanup(lambda: dialog.winfo_exists() and dialog.destroy())
+        box = [w for w in WindowTestCase.find(dialog, "Text")][0]
+        lines = box.get("1.0", "end").strip().splitlines()
+        positions = {name: next(i for i, line in enumerate(lines) if name in line) for name in (name_676, name_677)}
+        self.assertLess(positions[name_676], positions[name_677])  # quem cria vem antes
+        self.assertIn("(depois de:", lines[positions[name_677]])
+        self.assertTrue(lines[0].startswith("1. "))
+
+    def test_order_dialog_says_when_nothing_is_missing_and_csv_carries_the_dependency_columns(self):
+        window = self.open_window()
+        self.assertEqual(str(window.order_button.cget("state")), "disabled")  # antes de comparar
+        for path in list(self.scripts.rglob("SCRIPT_GER_2.sql")):
+            path.unlink()  # remove o unico que faltava
+        self.compare(window)
+        with patch("app.model_check_window.messagebox.showinfo") as info:
+            window.show_order()
+        info.assert_called_once()
+        self.add_dependency_scripts()
+        self.compare(window)
+        path = self.tmp / "dep.csv"
+        with patch("app.model_check_window.filedialog.asksaveasfilename", return_value=str(path)):
+            window.export()
+            self.pump_window(window)
+        with path.open(encoding="utf-8-sig", newline="") as handle:
+            rows = list(csv.DictReader(handle, delimiter=";"))
+        by_name = {row["script"].replace("\\", "/"): row for row in rows}
+        ws677 = by_name["2_WEBSERVICE/SCRIPT_WS_677.sql"]
+        self.assertIn("SCRIPT_WS_676.sql", ws677["rodar_antes"])
+        self.assertEqual((by_name["2_WEBSERVICE/SCRIPT_WS_676.sql"]["ordem_sugerida"], ws677["ordem_sugerida"]), ("1", "2"))
+        self.assertEqual(by_name["0_GERAL/SCRIPT_GER_1.sql"]["ordem_sugerida"], "")  # OK: fora da ordem
+
     def test_numbers_in_names_are_sorted_as_numbers(self):
         (self.scripts / "0_GERAL" / "SCRIPT_GER_11.sql").write_bytes(b"ALTER TABLE CLIENTES ADD COLUMN F11 INT;")
         window = self.open_window()
@@ -337,7 +392,7 @@ class ModelCheckWindowTests(WindowTestCase):
             self.pump_window(window)
         with path.open(encoding="utf-8-sig", newline="") as handle:
             rows = list(csv.reader(handle, delimiter=";"))
-        self.assertEqual(rows[0][:4], ["script", "resultado", "faltando", "observacoes"])
+        self.assertEqual(rows[0][:5], ["script", "resultado", "faltando", "rodar_antes", "ordem_sugerida"])
         self.assertEqual(len(rows) - 1, 3)
         faltando = {row[0].replace("\\", "/"): row[2] for row in rows[1:]}
         self.assertIn("campo CLIENTES.CLI_FALTA", faltando["0_GERAL/SCRIPT_GER_2.sql"])

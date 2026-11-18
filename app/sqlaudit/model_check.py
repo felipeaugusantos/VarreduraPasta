@@ -48,11 +48,20 @@ class Missing:
     table: str
     name: str = ""
     detail: str = ""
+    providers: tuple = ()  # OUTROS scripts da pasta que criam este objeto (rode antes)
 
     @property
     def text(self):
         target = f"{self.table}.{self.name}" if self.name else self.table
         return f"{self.kind} {target}" + (f" ({self.detail})" if self.detail else "")
+
+    @property
+    def full_text(self):
+        """Com o script que cria o objeto, quando ha: `campo T.C [criado por SCRIPT_X.sql]`."""
+        if not self.providers:
+            return self.text
+        shown = ", ".join(self.providers[:2]) + (f" +{len(self.providers) - 2}" if len(self.providers) > 2 else "")
+        return f"{self.text} [criado por {shown}]"
 
 
 @dataclass
@@ -71,6 +80,16 @@ class ScriptCheck:
         return STATUS_LABELS[self.status]
 
     @property
+    def depends_on(self):
+        """Scripts que criam o que falta aqui (devem rodar ANTES deste), sem repeticao e em ordem."""
+        found = []
+        for item in self.missing:
+            for provider in item.providers:
+                if provider != self.script and provider not in found:
+                    found.append(provider)
+        return found
+
+    @property
     def detail(self):
         """Coluna de detalhe da tela: so o que importa, sem repetir o resultado."""
         if self.status == STATUS_ERROR:
@@ -79,7 +98,7 @@ class ScriptCheck:
             return "So dados ou comandos que o sistema nao consegue conferir"
         if self.status == STATUS_OK:
             return f"Tudo ja esta no banco ({self.present} conferido(s))"
-        shown = [item.text for item in self.missing[:SUMMARY_ITEMS]]
+        shown = [item.full_text for item in self.missing[:SUMMARY_ITEMS]]
         more = len(self.missing) - len(shown)
         return ", ".join(shown) + (f" (+{more})" if more > 0 else "")
 
@@ -92,7 +111,7 @@ class ScriptCheck:
             return self.label
         if self.status == STATUS_OK:
             return "OK"
-        shown = [item.text for item in self.missing[:SUMMARY_ITEMS]]
+        shown = [item.full_text for item in self.missing[:SUMMARY_ITEMS]]
         more = len(self.missing) - len(shown)
         return "Falta rodar: " + ", ".join(shown) + (f" (+{more})" if more > 0 else "")
 
@@ -124,16 +143,19 @@ def _key(table, name=""):
 
 @dataclass
 class _Global:
-    dropped_tables: set = field(default_factory=set)
-    dropped_columns: set = field(default_factory=set)
-    dropped_indexes: set = field(default_factory=set)
-    dropped_foreign: set = field(default_factory=set)
-    dropped_primary: set = field(default_factory=set)
+    # remocoes: chave -> scripts que removem (para distinguir "outro script" do proprio)
+    dropped_tables: dict = field(default_factory=dict)
+    dropped_columns: dict = field(default_factory=dict)
+    dropped_indexes: dict = field(default_factory=dict)
+    dropped_foreign: dict = field(default_factory=dict)
+    dropped_primary: dict = field(default_factory=dict)
     created_tables: set = field(default_factory=set)
     created_columns: set = field(default_factory=set)
     created_indexes: set = field(default_factory=set)
     created_foreign: set = field(default_factory=set)
     column_types: dict = field(default_factory=dict)  # (tabela, coluna) -> {tipos normalizados}
+    index_columns: dict = field(default_factory=dict)  # (tabela, indice) -> {tuplas de colunas}
+    providers: dict = field(default_factory=dict)  # (tipo, tabela, nome) -> [scripts que CRIAM o objeto]
 
 
 def _remember_type(info, table, spec):
@@ -142,52 +164,80 @@ def _remember_type(info, table, spec):
         info.column_types.setdefault(_key(table, spec.name), set()).add(normalized.text)
 
 
+def _drop(mapping, key, script):
+    mapping.setdefault(key, set()).add(script)
+
+
+def _provide(info, kind, table, name, script):
+    scripts = info.providers.setdefault((kind, str(table).lower(), str(name or "").lower()), [])
+    if script not in scripts:
+        scripts.append(script)
+
+
+def _remember_index(info, table, spec):
+    if spec.name:
+        info.created_indexes.add(_key(table, spec.name))
+        info.index_columns.setdefault(_key(table, spec.name), set()).add(_lower_tuple(spec.columns))
+
+
 def _collect(parsed):
     """`parsed`: lista de (script, [Operation]). Junta o que qualquer script remove, cria ou define."""
     info = _Global()
-    for _script, operations in parsed:
+    for script, operations in parsed:
         for op in operations:
             if not op.interpreted:
                 continue
             kind, table = op.kind, op.table
             if kind == sql_parse.KIND_CREATE_TABLE:
                 info.created_tables.add(_key(table))
+                _provide(info, KIND_TABLE, table, "", script)
                 for spec in op.columns:
                     info.created_columns.add(_key(table, spec.name))
+                    _provide(info, KIND_COLUMN, table, spec.name, script)
                     _remember_type(info, table, spec)
                 for index in op.indexes:
+                    _remember_index(info, table, index)
                     if index.name:
-                        info.created_indexes.add(_key(table, index.name))
+                        _provide(info, KIND_INDEX, table, index.name, script)
                 for foreign in op.foreign_keys:
                     if foreign.name:
                         info.created_foreign.add(_key(table, foreign.name))
+                        _provide(info, KIND_FOREIGN, table, foreign.name, script)
             elif kind in (sql_parse.KIND_ADD_COLUMN, sql_parse.KIND_MODIFY_COLUMN) and op.column is not None:
                 info.created_columns.add(_key(table, op.column.name))
                 _remember_type(info, table, op.column)
+                if kind == sql_parse.KIND_ADD_COLUMN:  # MODIFY pressupoe que a coluna ja existe: nao a fornece
+                    _provide(info, KIND_COLUMN, table, op.column.name, script)
             elif kind == sql_parse.KIND_CHANGE_COLUMN and op.column is not None:
-                info.dropped_columns.add(_key(table, op.name))
+                _drop(info.dropped_columns, _key(table, op.name), script)
                 info.created_columns.add(_key(table, op.column.name))
+                _provide(info, KIND_COLUMN, table, op.column.name, script)
                 _remember_type(info, table, op.column)
             elif kind == sql_parse.KIND_DROP_COLUMN:
-                info.dropped_columns.add(_key(table, op.name))
+                _drop(info.dropped_columns, _key(table, op.name), script)
             elif kind == sql_parse.KIND_RENAME_COLUMN:
-                info.dropped_columns.add(_key(table, op.name))
+                _drop(info.dropped_columns, _key(table, op.name), script)
                 info.created_columns.add(_key(table, op.new_name))
+                _provide(info, KIND_COLUMN, table, op.new_name, script)
             elif kind == sql_parse.KIND_DROP_TABLE:
-                info.dropped_tables.add(_key(table))
+                _drop(info.dropped_tables, _key(table), script)
             elif kind == sql_parse.KIND_RENAME_TABLE:
-                info.dropped_tables.add(_key(table))
+                _drop(info.dropped_tables, _key(table), script)
                 info.created_tables.add(_key(op.new_name))
-            elif kind == sql_parse.KIND_ADD_INDEX and op.index is not None and op.index.name:
-                info.created_indexes.add(_key(table, op.index.name))
+                _provide(info, KIND_TABLE, op.new_name, "", script)
+            elif kind == sql_parse.KIND_ADD_INDEX and op.index is not None:
+                _remember_index(info, table, op.index)
+                if op.index.name:
+                    _provide(info, KIND_INDEX, table, op.index.name, script)
             elif kind == sql_parse.KIND_DROP_INDEX:
-                info.dropped_indexes.add(_key(table, op.name))
+                _drop(info.dropped_indexes, _key(table, op.name), script)
             elif kind == sql_parse.KIND_ADD_FOREIGN_KEY and op.foreign_key is not None and op.foreign_key.name:
                 info.created_foreign.add(_key(table, op.foreign_key.name))
+                _provide(info, KIND_FOREIGN, table, op.foreign_key.name, script)
             elif kind == sql_parse.KIND_DROP_FOREIGN_KEY:
-                info.dropped_foreign.add(_key(table, op.name))
+                _drop(info.dropped_foreign, _key(table, op.name), script)
             elif kind == sql_parse.KIND_DROP_PRIMARY_KEY:
-                info.dropped_primary.add(_key(table))
+                _drop(info.dropped_primary, _key(table), script)
     return info
 
 
@@ -227,8 +277,16 @@ class _Checker:
         self._seen = set()
 
     # registro
+    def _providers(self, kind, table, name):
+        found = self.info.providers.get((kind, table.lower(), (name or "").lower()), [])
+        return tuple(script for script in found if script != self.result.script)
+
+    def _others(self, mapping, key):
+        """Scripts DIFERENTES deste que removem o objeto (o proprio script remover e recriar nao conta)."""
+        return bool(mapping.get(key, set()) - {self.result.script})
+
     def _miss(self, kind, table, name="", detail=""):
-        item = Missing(kind, table, name, detail)
+        item = Missing(kind, table, name, detail, providers=self._providers(kind, table, name))
         marker = (kind, table.lower(), name.lower())
         if marker not in self._seen:
             self._seen.add(marker)
@@ -261,7 +319,7 @@ class _Checker:
         db_table = self.schema.tables.get(key)
         if db_table is not None:
             return db_table
-        if key in self.info.dropped_tables:
+        if self._others(self.info.dropped_tables, key):
             self._superseded(KIND_TABLE, op.table)
             return None  # removida por algum script: a ausencia e esperada
         if key not in self._missing_tables:
@@ -274,7 +332,7 @@ class _Checker:
         key = _key(op.table, spec.name)
         db_column = db_table.columns.get(spec.name.lower())
         if db_column is None:
-            if key in self.info.dropped_columns:
+            if self._others(self.info.dropped_columns, key):
                 self._superseded(KIND_COLUMN, op.table, spec.name)
                 return
             self._checked_missing(KIND_COLUMN, op.table, spec.name)
@@ -301,17 +359,25 @@ class _Checker:
 
     def _index(self, op, spec, db_table):
         found = _find_index(db_table, spec)
-        if found is None and spec.name and _key(op.table, spec.name) in self.info.dropped_indexes:
+        if found is None and spec.name and self._others(self.info.dropped_indexes, _key(op.table, spec.name)):
             self._superseded(KIND_INDEX, op.table, spec.name)
             return
         if found is None:
             self._checked_missing(KIND_INDEX, op.table, spec.name or ",".join(spec.columns))
-        else:
-            self._ok()
+            return
+        if spec.name and _lower_tuple(found.columns) != _lower_tuple(spec.columns):
+            # existe com o mesmo nome, mas com outras colunas: so cobra se nenhum outro script o define diferente
+            if len(self.info.index_columns.get(_key(op.table, spec.name), ())) <= 1:
+                self._checked_missing(
+                    KIND_INDEX, op.table, spec.name,
+                    f"no banco: {', '.join(found.columns)}; no script: {', '.join(spec.columns)}",
+                )
+                return
+        self._ok()
 
     def _foreign(self, op, spec, db_table):
         found = _find_foreign(db_table, spec)
-        if found is None and spec.name and _key(op.table, spec.name) in self.info.dropped_foreign:
+        if found is None and spec.name and self._others(self.info.dropped_foreign, _key(op.table, spec.name)):
             self._superseded(KIND_FOREIGN, op.table, spec.name)
             return
         if found is None:
@@ -320,7 +386,7 @@ class _Checker:
             self._ok()
 
     def _primary(self, op, db_table):
-        if "primary" not in db_table.indexes and _key(op.table) in self.info.dropped_primary:
+        if "primary" not in db_table.indexes and self._others(self.info.dropped_primary, _key(op.table)):
             self._superseded(KIND_PRIMARY, op.table)
             return
         if "primary" not in db_table.indexes:
@@ -506,9 +572,40 @@ def run_model_check(
     return run
 
 
+def natural_key(text):
+    """Chave de ordenacao que trata numeros como numeros (GER_2 antes de GER_11)."""
+    import re
+
+    return [int(part) if part.isdigit() else part.lower() for part in re.split(r"(\d+)", str(text))]
+
+
+def run_order(results):
+    """Ordem sugerida para rodar o que falta: quem CRIA um objeto vem antes de quem precisa dele.
+
+    Devolve [(script, [scripts pendentes dos quais depende])]. Entre scripts sem dependencia vale a ordem
+    numerica do nome. Dependencia circular nao trava: a aresta que fecha o ciclo e ignorada.
+    """
+    pending = {item.script: item for item in results if item.status == STATUS_MISSING}
+    order, state = [], {}
+
+    def visit(name):
+        if state.get(name):
+            return  # 1 = em visita (ciclo), 2 = ja ordenado
+        state[name] = 1
+        for dependency in sorted(pending[name].depends_on, key=natural_key):
+            if dependency in pending:
+                visit(dependency)
+        state[name] = 2
+        order.append(name)
+
+    for name in sorted(pending, key=natural_key):
+        visit(name)
+    return [(name, [d for d in pending[name].depends_on if d in pending]) for name in order]
+
+
 # -- saida: CSV e linha de Auditoria --
 
-CSV_COLUMNS = ("script", "resultado", "faltando", "observacoes", "conferidos", "ja_no_banco", "nao_conferidos")
+CSV_COLUMNS = ("script", "resultado", "faltando", "rodar_antes", "ordem_sugerida", "observacoes", "conferidos", "ja_no_banco", "nao_conferidos")
 
 
 def _safe_cell(value):
@@ -518,6 +615,7 @@ def _safe_cell(value):
 
 def build_csv_rows(run):
     rows = []
+    position = {name: number for number, (name, _deps) in enumerate(run_order(run.results), 1)}
     for item in run.results:
         rows.append(
             [
@@ -526,6 +624,8 @@ def build_csv_rows(run):
                     item.script,
                     item.label,
                     "; ".join(missing.text for missing in item.missing) or (item.error if item.status == STATUS_ERROR else ""),
+                    "; ".join(item.depends_on),
+                    position.get(item.script, ""),
                     "; ".join(item.notes),
                     item.checked,
                     item.present,
