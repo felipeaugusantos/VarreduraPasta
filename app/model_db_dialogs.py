@@ -9,14 +9,16 @@ from app import model_db, theme
 from app.settings import load_model_db, save_model_db
 
 
-def ask_credentials(parent, username="", message="", title="Banco modelo - login"):
+def ask_credentials(parent, username="", message="", title="Banco modelo - login", can_remember=False):
     """Pede usuario e senha do banco. Retorna (usuario, senha) ou None se cancelar.
 
-    A senha so existe em memoria durante a execucao; nada e gravado.
+    A senha so existe em memoria durante a execucao; nada e gravado. Com `can_remember`, mostra a
+    caixa "Lembrar a senha neste usuario do Windows" e devolve (usuario, senha, lembrar): quem
+    chama decide guardar (criptografada, `app/secret_store.py`).
     """
     window = tk.Toplevel(parent)
     window.title(title)
-    theme.size_window(window, 400, 230 if message else 200)
+    theme.size_window(window, 400, (250 if message else 220) if can_remember else (230 if message else 200))
     window.resizable(False, False)
     window.transient(parent)
 
@@ -37,11 +39,17 @@ def ask_credentials(parent, username="", message="", title="Banco modelo - login
     ttk.Label(frame, text="Senha:").grid(row=row + 1, column=0, sticky="w", pady=(8, 0))
     password_entry = ttk.Entry(frame, textvariable=password_var, show="*")
     password_entry.grid(row=row + 1, column=1, sticky="ew", padx=(8, 0), pady=(8, 0))
-    ttk.Label(
-        frame,
-        text="Digitados só para esta execução; a senha não é gravada.",
-        style="Muted.TLabel",
-    ).grid(row=row + 2, column=0, columnspan=2, sticky="w", pady=(8, 0))
+    remember_var = tk.BooleanVar(value=False)
+    if can_remember:
+        ttk.Checkbutton(
+            frame, text="Lembrar a senha neste usuário do Windows", variable=remember_var
+        ).grid(row=row + 2, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        note = "Fica criptografada só para este usuário do Windows nesta máquina. Dá para apagar depois."
+    else:
+        note = "Digitados só para esta execução; a senha não é gravada."
+    ttk.Label(frame, text=note, style="Muted.TLabel", wraplength=360, justify="left").grid(
+        row=row + (3 if can_remember else 2), column=0, columnspan=2, sticky="w", pady=(4 if can_remember else 8, 0)
+    )
 
     answer = {"value": None}
 
@@ -49,11 +57,11 @@ def ask_credentials(parent, username="", message="", title="Banco modelo - login
         if not user_var.get().strip():
             messagebox.showwarning("Banco modelo", "Informe o usuário.", parent=window)
             return
-        answer["value"] = (user_var.get().strip(), password_var.get())
+        answer["value"] = (user_var.get().strip(), password_var.get()) + ((remember_var.get(),) if can_remember else ())
         window.destroy()
 
     buttons = ttk.Frame(frame)
-    buttons.grid(row=row + 3, column=0, columnspan=2, sticky="e", pady=(12, 0))
+    buttons.grid(row=row + (4 if can_remember else 3), column=0, columnspan=2, sticky="e", pady=(12, 0))
     ttk.Button(buttons, text="Continuar", style="Primary.TButton", command=confirm).grid(
         row=0, column=0, padx=(0, 8)
     )

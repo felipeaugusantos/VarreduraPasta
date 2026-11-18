@@ -11,6 +11,7 @@ from unittest.mock import patch
 from app import settings
 from app.sqlaudit import audit_runner, db_reader, report, shared_log, sql_parse
 from app.sqlaudit.audit_runner import AuditRun, VersionAudit
+from tests.test_secret_store import FakeBackend
 from tests.test_sqlaudit_reader import FakeConnection, full_responses
 
 try:
@@ -1224,6 +1225,94 @@ class DatabaseSelectionTests(WindowTestCase):
         for text in haystacks:
             self.assertNotIn(PASSWORD, text)
         self.assertEqual(settings.load_sqlaudit_server()["username"], "leitura")
+
+
+class SavedPasswordTests(WindowTestCase):
+    """Senha lembrada na Auditoria de Estrutura SQL (armazenamento falso, como a DPAPI)."""
+
+    def setUp(self):
+        super().setUp()
+        patcher = patch("app.secret_store.make_backend", lambda: FakeBackend())
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.open(root=False)
+
+    def store(self):
+        from app import secret_store
+
+        return secret_store.default_store()
+
+    def connect(self, answer, ok=True, message="Conectado: 1 banco(s) visivel(is) para o usuario."):
+        with patch("app.sqlaudit_window.ask_credentials", return_value=answer) as ask, \
+             patch("app.sqlaudit.audit_runner.list_databases", return_value=(ok, ["BANCO_AUTCOM_379_48_02_30_72"], message)), \
+             patch("app.sqlaudit_window.messagebox.showinfo"):
+            self.sa.connect_server()
+            self.pump()
+        return ask
+
+    def test_remember_saves_encrypted_and_the_next_connection_does_not_ask(self):
+        ask = self.connect(("leitura", PASSWORD, True))
+        self.assertEqual(ask.call_args.kwargs["can_remember"], True)
+        self.assertEqual(self.store().load("10.0.0.35", 43309, "leitura"), PASSWORD)
+        from app.runtime import data_directory
+
+        self.assertNotIn(PASSWORD.encode(), (data_directory() / "credenciais.dat").read_bytes())
+        self.assertNotIn(PASSWORD, settings.SETTINGS_FILE.read_text(encoding="utf-8"))
+        again = self.connect(("x", "y", False))
+        again.assert_not_called()  # usou a senha lembrada
+        self.assertEqual(str(self.sa.forget_button.cget("state")), "normal")
+        self.assertNotIn(PASSWORD, self.sa.status_var.get() + " ".join(self.logged))
+
+    def test_analysis_uses_the_saved_password_without_asking_and_never_logs_it(self):
+        self.connect(("leitura", PASSWORD, True))
+        self.discover()
+        database = "BANCO_AUTCOM_379_48_02_30_72"
+        banks = {database: responses_for(database, [("CLI_ID", "int"), ("CLI_EMAIL", "varchar(200)")])}
+        with patch("app.sqlaudit_window.ask_credentials") as ask, self.connection(**banks):
+            self.sa.analyze()
+            self.pump()
+        ask.assert_not_called()
+        self.assertIsNotNone(self.sa.run)
+        self.assertNotIn(PASSWORD, repr(self.sa.run) + self.sa.status_var.get() + " ".join(self.logged))
+
+    def test_without_ticking_remember_it_asks_every_time(self):
+        self.connect(("leitura", PASSWORD, False))
+        self.assertIsNone(self.store().load("10.0.0.35", 43309, "leitura"))
+        self.assertEqual(str(self.sa.forget_button.cget("state")), "disabled")
+        ask = self.connect(("leitura", PASSWORD, False))
+        ask.assert_called_once()
+
+    def test_forget_button_in_advanced_erases_it_and_says_when_there_is_none(self):
+        self.connect(("leitura", PASSWORD, True))
+        self.sa.toggle_advanced(True)
+        self.sa.forget_button.invoke()
+        self.assertIsNone(self.store().load("10.0.0.35", 43309, "leitura"))
+        self.assertIn("Senha salva apagada", self.sa.status_var.get())
+        with patch("app.sqlaudit_window.messagebox.showinfo") as info:
+            self.sa.forget_saved()
+        info.assert_called_once()
+
+    def test_a_saved_password_the_database_refuses_is_erased_and_the_operator_is_told(self):
+        self.connect(("leitura", PASSWORD, True))
+        self.connect(("x", "y", False), ok=False, message="Usuario ou senha do banco incorretos.")
+        self.assertIn("senha salva não funcionou e foi apagada", self.sa.status_var.get())
+        self.assertIsNone(self.store().load("10.0.0.35", 43309, "leitura"))
+        ask = self.connect(("leitura", "nova", False))
+        ask.assert_called_once()  # voltou a perguntar
+
+    def test_a_typed_wrong_password_does_not_claim_a_saved_one_was_erased(self):
+        self.connect(("leitura", "errada", False), ok=False, message="Usuario ou senha do banco incorretos.")
+        self.assertNotIn("foi apagada", self.sa.status_var.get())
+
+    def test_the_button_and_label_do_not_exist_without_secure_storage(self):
+        from app import secret_store
+
+        with patch("app.secret_store.make_backend", lambda: secret_store.UnavailableBackend()):
+            self.sa.window.destroy()
+            self.open(root=False)
+            self.assertEqual(self.sa.forget_button.winfo_manager(), "")
+            ask = self.connect(("leitura", PASSWORD, True))
+        self.assertEqual(ask.call_args.kwargs["can_remember"], False)
 
 
 if __name__ == "__main__":

@@ -15,6 +15,7 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from app import theme
 from app.logging_utils import write_log
+from app import saved_login, secret_store
 from app.model_db_dialogs import ask_credentials
 from app.settings import (
     load_sqlaudit_config,
@@ -75,6 +76,7 @@ class SqlAuditWindow:
         self.viewing = None  # RunInfo do historico exibido na aba Objetos
         self.history_runs = {}
         self.server_databases = []  # bancos que o usuario enxerga no servidor (carregados ao conectar)
+        self._login = None  # ultimo login usado (so em memoria)
         self.database_notes = []  # (versao, aviso): banco sugerido que nao existe no servidor
         self.queue = queue.Queue()
         self.cancel_event = None
@@ -172,6 +174,13 @@ class SqlAuditWindow:
         ttk.Label(
             self.advanced, text="Separe por vírgula (ex.: CONECTA_). Ficam fora da comparação; a contagem aparece em Avisos.", style="Muted.TLabel"
         ).grid(row=3, column=0, columnspan=3, sticky="w", pady=(2, 0))
+        self.forget_label = ttk.Label(self.advanced, text="Senha lembrada neste Windows:")
+        self.forget_label.grid(row=4, column=0, sticky="w", pady=(8, 0))
+        self.forget_button = ttk.Button(self.advanced, text="Esquecer senha salva", command=self.forget_saved, state="disabled")
+        self.forget_button.grid(row=4, column=1, sticky="w", padx=(6, 0), pady=(8, 0))
+        if not secret_store.default_store().available:
+            self.forget_label.grid_remove()  # sem armazenamento seguro neste computador: nada para esquecer
+            self.forget_button.grid_remove()
         self.advanced.grid_remove()
 
         # 3. versoes
@@ -390,6 +399,9 @@ class SqlAuditWindow:
         self._saved_tree = saved["tree"]
         self._saved_databases = saved["databases"]
         self._saved_username = server["username"]
+        for variable in (self.host_var, self.port_var):
+            variable.trace_add("write", lambda *_args: self._refresh_forget())
+        self._refresh_forget()
         self.refresh_history()
         if saved["root"]:
             self.window.after(50, self.discover)
@@ -459,7 +471,7 @@ class SqlAuditWindow:
             self._apply_discovery(message[1], message[2], message[3])
         elif kind == "tested":
             self._set_busy("")
-            self.status_var.set(("✔ " if message[1] else "✖ ") + message[2])
+            self.status_var.set(("✔ " if message[1] else "✖ ") + message[2] + ("" if message[1] else self._auth_failed(message[2])))
         elif kind == "done":
             self._set_busy("")
             self._finish_run(message[1], message[2])
@@ -736,7 +748,7 @@ class SqlAuditWindow:
 
     def _on_databases(self, ok, names, text):
         if not ok:
-            self.status_var.set("✖ " + text)
+            self.status_var.set("✖ " + text + self._auth_failed(text))
             return
         self.server_databases = names
         self.status_var.set("✔ " + text)
@@ -875,16 +887,55 @@ class SqlAuditWindow:
         if self._tls_mode() == TLS_VERIFY and not self.ca_var.get().strip():
             messagebox.showwarning(TITLE, "Para verificar o certificado, informe o arquivo da CA.", parent=self.window)
             return None
-        credentials = ask_credentials(
+        login = saved_login.get_login(
             self.window,
+            host,
+            int(port),
             self._saved_username,
             "Usuário do MySQL para a auditoria (somente leitura).",
-            title="Auditoria SQL - login",
+            "Auditoria SQL - login",
+            ask_credentials,
+            store=secret_store.default_store(),
         )
-        if credentials is None:
+        self._login = login
+        if login is None:
             return None
-        self._saved_username = credentials[0]
-        return audit_runner.ServerConnection(host, int(port), credentials[0], credentials[1], self._tls_mode(), self.ca_var.get().strip())
+        self._saved_username = login.username
+        if login.from_saved:
+            self.status_var.set(f"Usando a senha salva de {login.username}.")
+        elif login.remembered_now:
+            self.status_var.set(f"Senha de {login.username} lembrada neste Windows.")
+        self._refresh_forget()
+        return audit_runner.ServerConnection(host, int(port), login.username, login.password, self._tls_mode(), self.ca_var.get().strip())
+
+    # ---- senha lembrada ----
+    def _refresh_forget(self):
+        store = secret_store.default_store()
+        host, port = self.host_var.get().strip(), self.port_var.get().strip()
+        enabled = store.available and port.isdigit() and saved_login.has_saved(host, int(port), self._saved_username, store)
+        self.forget_button.config(state="normal" if enabled else "disabled")
+
+    def forget_saved(self):
+        host, port = self.host_var.get().strip(), self.port_var.get().strip()
+        if not host or not port.isdigit():
+            messagebox.showwarning(TITLE, "Informe o servidor e uma porta válida.", parent=self.window)
+            return
+        if saved_login.forget(host, int(port), self._saved_username, secret_store.default_store()):
+            self.status_var.set("✔ Senha salva apagada. A próxima conexão pede a senha de novo.")
+        else:
+            messagebox.showinfo(TITLE, "Não há senha salva para este servidor e usuário.", parent=self.window)
+        self._refresh_forget()
+
+    def _auth_failed(self, text):
+        """Senha lembrada que o banco recusou: apaga, para nao ficar tentando uma senha velha."""
+        login = self._login
+        if login is None or not login.from_saved or not saved_login.is_auth_failure(text):
+            return ""
+        host, port = self.host_var.get().strip(), self.port_var.get().strip()
+        if host and port.isdigit():
+            saved_login.forget(host, int(port), login.username, secret_store.default_store())
+        self._refresh_forget()
+        return " A senha salva não funcionou e foi apagada: informe a senha de novo."
 
     def _selected_versions(self):
         return [v for v in self.order if v in self.checked]
@@ -989,6 +1040,10 @@ class SqlAuditWindow:
         self._set_busy("")
         extra = f" Histórico #{info['run_id']}." if info.get("run_id") else ""
         extra += "".join(" ⚠ " + warning for warning in info.get("warnings", []))
+        for audit in run.versions:
+            if audit.error and saved_login.is_auth_failure(audit.error):
+                extra += self._auth_failed(audit.error)
+                break
         self.status_var.set(report.summary_text(run) + ". Compatível não comprova que o script foi executado." + extra)
         self.refresh_history()
         self.toggle_setup(False)  # a lista de resultados ganha a tela; "Configuração" reabre

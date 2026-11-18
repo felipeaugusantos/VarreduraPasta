@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from app import settings
 from app.sqlaudit import db_reader
+from tests.test_secret_store import FakeBackend
 from tests.test_sqlaudit_reader import FakeConnection, full_responses
 from tests.test_sqlaudit_window import PASSWORD, WindowTestCase
 
@@ -510,6 +511,116 @@ class ModelCheckWindowTests(WindowTestCase):
             buttons[0].invoke()
         opened.assert_called_once()
         self.assertIsNone(opened.call_args.args[2])  # a janela usa a ultima pasta escolhida (ou a do monitor)
+
+
+@unittest.skipIf(tkinter is None, "tkinter nao instalado")
+class ModelCheckSavedPasswordTests(ModelCheckWindowTests):
+    """Senha lembrada na janela de comparacao (armazenamento falso, como a DPAPI)."""
+
+    def setUp(self):
+        super().setUp()
+        patcher = patch("app.secret_store.make_backend", lambda: FakeBackend())
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def store(self):
+        from app import secret_store
+
+        return secret_store.default_store()
+
+    def connect(self, window, answer, responses=None):
+        names = {db_reader.SQL_DATABASES: [("BANCO_MODELO",)]}
+        with patch("app.model_check_window.ask_credentials", return_value=answer) as ask, \
+             patch.object(db_reader, "_default_connector", lambda **options: FakeConnection(responses or names)):
+            window.connect_server()
+            self.pump_window(window)
+        return ask
+
+    def test_remember_saves_encrypted_and_the_next_connection_and_comparison_do_not_ask(self):
+        window = self.open_window()
+        ask = self.connect(window, ("leitura", PASSWORD, True))
+        self.assertIn("lembrada neste Windows", window.status_var.get())
+        self.assertEqual(ask.call_args.kwargs["can_remember"], True)
+        self.assertEqual(self.store().load("10.0.0.35", 43309, "leitura"), PASSWORD)
+        self.assertEqual(str(window.forget_button.cget("state")), "normal")
+        # nunca em texto, nunca no settings.json
+        from app.runtime import data_directory
+
+        self.assertNotIn(PASSWORD.encode(), (data_directory() / "credenciais.dat").read_bytes())
+        self.assertNotIn(PASSWORD, settings.SETTINGS_FILE.read_text(encoding="utf-8"))
+        # a proxima conexao e a comparacao usam a senha lembrada sem perguntar
+        with patch("app.model_check_window.ask_credentials") as again, self.fake_database():
+            window.compare()
+            self.pump_window(window)
+        again.assert_not_called()
+        self.assertIsNotNone(window.run)
+        self.assertEqual(window.run.database, "BANCO_MODELO")
+        self.assertNotIn(PASSWORD, window.status_var.get() + repr(window.run) + " ".join(self.logged))
+
+    def test_without_ticking_remember_nothing_is_saved_and_it_asks_again(self):
+        window = self.open_window()
+        self.connect(window, ("leitura", PASSWORD, False))
+        self.assertIsNone(self.store().load("10.0.0.35", 43309, "leitura"))
+        self.assertEqual(str(window.forget_button.cget("state")), "disabled")
+        ask = self.connect(window, ("leitura", PASSWORD, False))
+        ask.assert_called_once()
+
+    def test_forget_button_erases_the_saved_password_and_says_when_there_is_none(self):
+        window = self.open_window()
+        self.connect(window, ("leitura", PASSWORD, True))
+        window.forget_button.invoke()
+        self.assertIsNone(self.store().load("10.0.0.35", 43309, "leitura"))
+        self.assertIn("Senha salva apagada", window.status_var.get())
+        self.assertEqual(str(window.forget_button.cget("state")), "disabled")
+        window.forget_saved()
+        self.assertEqual(self.shown[-1][0], "showinfo")  # nada mais a apagar
+        ask = self.connect(window, ("leitura", PASSWORD, False))
+        ask.assert_called_once()  # voltou a perguntar
+
+    def test_a_saved_password_the_database_refuses_is_erased_and_the_operator_is_told(self):
+        window = self.open_window()
+        self.connect(window, ("leitura", PASSWORD, True))
+
+        def refuse(**options):
+            raise Exception(1045, f"Access denied (using password: YES) {options['password']}")
+
+        with patch("app.model_check_window.ask_credentials") as ask, patch.object(db_reader, "_default_connector", refuse):
+            window.connect_server()
+            self.pump_window(window)
+        ask.assert_not_called()  # usou a salva
+        self.assertIn("senha salva não funcionou e foi apagada", window.status_var.get())
+        self.assertNotIn(PASSWORD, window.status_var.get())
+        self.assertIsNone(self.store().load("10.0.0.35", 43309, "leitura"))
+
+    def test_a_wrong_password_that_was_typed_is_not_treated_as_saved(self):
+        window = self.open_window()
+
+        def refuse(**options):
+            raise Exception(1045, "Access denied")
+
+        with patch("app.model_check_window.ask_credentials", return_value=("leitura", PASSWORD, False)), \
+             patch.object(db_reader, "_default_connector", refuse):
+            window.connect_server()
+            self.pump_window(window)
+        self.assertNotIn("foi apagada", window.status_var.get())
+
+    def test_the_saved_password_belongs_to_the_server_and_port(self):
+        window = self.open_window()
+        self.connect(window, ("leitura", PASSWORD, True))
+        window.host_var.set("10.0.0.99")  # outro servidor: a senha salva nao vale
+        self.assertEqual(str(window.forget_button.cget("state")), "disabled")
+        ask = self.connect(window, ("leitura", "outra", False))
+        ask.assert_called_once()
+
+    def test_without_secure_storage_the_option_and_the_button_do_not_exist(self):
+        from app import secret_store
+
+        with patch("app.secret_store.make_backend", lambda: secret_store.UnavailableBackend()):
+            window = self.open_window()
+            self.assertEqual(window.forget_button.winfo_manager(), "")
+            ask = self.connect(window, ("leitura", PASSWORD, True))  # mesmo "marcando", nao guarda
+        self.assertEqual(ask.call_args.kwargs["can_remember"], False)
+        self.assertFalse((__import__("app.runtime", fromlist=["data_directory"]).data_directory() / "credenciais.dat").exists())
 
 
 if __name__ == "__main__":

@@ -17,6 +17,7 @@ from types import SimpleNamespace
 
 from app import theme
 from app.logging_utils import write_log
+from app import saved_login, secret_store
 from app.model_db_dialogs import ask_credentials
 from app.settings import load_model_check_directory, load_model_db, save_model_check_directory, save_model_db
 from app.sqlaudit import model_check, model_fix
@@ -67,6 +68,7 @@ class ModelCheckWindow:
         self.run = None
         self.shown = {}
         self.server_databases = []  # bancos que o usuario enxerga (so em memoria)
+        self._login = None  # ultimo login usado (so em memoria)
 
         saved = load_model_db()
         self.dir_var = tk.StringVar(value=str(directory or load_model_check_directory()))
@@ -127,6 +129,10 @@ class ModelCheckWindow:
             entry.bind("<Return>", lambda _event: self.connect_server())
         self.connect_button = ttk.Button(server, text="Conectar e listar bancos...", command=self.connect_server)
         self.connect_button.grid(row=0, column=3, padx=(12, 0))
+        self.forget_button = ttk.Button(server, text="Esquecer senha salva", command=self.forget_saved, state="disabled")
+        self.forget_button.grid(row=0, column=4, padx=(8, 0))
+        if not secret_store.default_store().available:
+            self.forget_button.grid_remove()  # sem armazenamento seguro neste computador: nada para esquecer
 
         ttk.Label(self.setup, text="Banco modelo", font=section).grid(row=2, column=0, sticky="w")
         self.db_box = ttk.Combobox(self.setup, textvariable=self.db_var, values=[], width=52)
@@ -183,6 +189,9 @@ class ModelCheckWindow:
         ttk.Label(search, textvariable=self.count_var, style="Muted.TLabel").grid(row=0, column=2, padx=(10, 0))
         for variable in (self.filter_var, self.search_var):
             variable.trace_add("write", lambda *_args: self.apply_filters())
+        for variable in (self.host_var, self.port_var):
+            variable.trace_add("write", lambda *_args: self._refresh_forget())
+        self._refresh_forget()
 
         table_frame = ttk.Frame(frame)
         table_frame.grid(row=5, column=0, sticky="nsew")
@@ -310,8 +319,9 @@ class ModelCheckWindow:
             self.status_var.set(message[1])
         elif kind == "error":
             self._set_busy("")
-            self.status_var.set("✖ " + message[1])
-            messagebox.showerror(TITLE, message[1], parent=self.window)
+            note = self._auth_failed(message[1])
+            self.status_var.set("✖ " + message[1] + note)
+            messagebox.showerror(TITLE, message[1] + note, parent=self.window)
 
     # ---- passo 1: pasta ----
     def choose_directory(self):
@@ -321,6 +331,55 @@ class ModelCheckWindow:
         )
         if chosen:
             self.dir_var.set(chosen)
+
+    # ---- senha lembrada ----
+    def _ask_login(self, host, port):
+        """Login (usa a senha lembrada, se houver; senao pergunta, com a opcao de lembrar)."""
+        login = saved_login.get_login(
+            self.window, host, port, load_model_db()["username"], LOGIN_MESSAGE, "Banco modelo - login", ask_credentials,
+            store=secret_store.default_store(),
+        )
+        self._login = login
+        return login
+
+    @staticmethod
+    def _login_note(login):
+        if login.from_saved:
+            return f" Usando a senha salva de {login.username}."
+        if login.remembered_now:
+            return f" Senha de {login.username} lembrada neste Windows."
+        return ""
+
+    def _refresh_forget(self):
+        store = secret_store.default_store()
+        host, port = self.host_var.get().strip(), self.port_var.get().strip()
+        enabled = store.available and port.isdigit() and saved_login.has_saved(host, int(port), load_model_db()["username"], store)
+        self.forget_button.config(state="normal" if enabled else "disabled")
+
+    def forget_saved(self):
+        server = self._server()
+        if server is None:
+            return
+        if saved_login.forget(server[0], server[1], load_model_db()["username"], secret_store.default_store()):
+            self.status_var.set("✔ Senha salva apagada. A próxima conexão pede a senha de novo.")
+        else:
+            messagebox.showinfo(TITLE, "Não há senha salva para este servidor e usuário.", parent=self.window)
+        self._refresh_forget()
+
+    def _auth_failed(self, text):
+        """Senha lembrada que o banco recusou: apaga, para nao ficar tentando uma senha velha."""
+        login = self._login
+        if login is None or not login.from_saved or not saved_login.is_auth_failure(text):
+            return ""
+        server = self._server_silent()
+        if server is not None:
+            saved_login.forget(server[0], server[1], login.username, secret_store.default_store())
+        self._refresh_forget()
+        return " A senha salva não funcionou e foi apagada: informe a senha de novo."
+
+    def _server_silent(self):
+        host, port = self.host_var.get().strip(), self.port_var.get().strip()
+        return (host, int(port)) if host and port.isdigit() else None
 
     # ---- passo 2: servidor e banco ----
     def _server(self):
@@ -339,32 +398,35 @@ class ModelCheckWindow:
         server = self._server()
         if server is None:
             return
-        credentials = ask_credentials(self.window, load_model_db()["username"], message=LOGIN_MESSAGE, title="Banco modelo - login")
-        if credentials is None:
-            return
         host, port = server
-        self.status_var.set(f"Conectando em {host}:{port}...")
+        login = self._ask_login(host, port)
+        if login is None:
+            return
+        save_model_db(host, port, self.db_var.get().strip(), login.username)  # o usuario guia a senha lembrada
+        self.status_var.set(f"Conectando em {host}:{port}..." + self._login_note(login))
+        self._refresh_forget()
         self._start(
             "conectando",
-            lambda: ("databases", *model_check.list_model_databases(host, port, credentials[0], credentials[1])),
+            lambda: ("databases", *model_check.list_model_databases(host, port, login.username, login.password)),
         )
 
     def _on_databases(self, ok, names, text):
         if not ok:
-            self.status_var.set("✖ " + text)
+            self.status_var.set("✖ " + text + self._auth_failed(text))
             return
+        note = self._login_note(self._login) if self._login is not None else ""
         self.server_databases = names
         self.db_box.config(values=names)
         wanted = self.db_var.get().strip().lower()
         match = next((name for name in names if name.lower() == wanted), None)
         if match is not None:
             self.db_var.set(match)
-            self.status_var.set(f"✔ {text} Banco '{match}' encontrado. Clique em Comparar.")
+            self.status_var.set(f"✔ {text} Banco '{match}' encontrado. Clique em Comparar.{note}")
         else:
             if wanted:
-                self.status_var.set(f"✔ {text} O banco '{self.db_var.get().strip()}' não está na lista: escolha o banco modelo.")
+                self.status_var.set(f"✔ {text} O banco '{self.db_var.get().strip()}' não está na lista: escolha o banco modelo.{note}")
             else:
-                self.status_var.set(f"✔ {text} Escolha o banco modelo na lista.")
+                self.status_var.set(f"✔ {text} Escolha o banco modelo na lista.{note}")
             self.db_box.selection_clear()
 
     # ---- passo 3: comparar ----
@@ -390,11 +452,12 @@ class ModelCheckWindow:
             parent=self.window,
         ):
             return
-        credentials = ask_credentials(self.window, load_model_db()["username"], message=LOGIN_MESSAGE, title="Banco modelo - login")
-        if credentials is None:
-            return
         host, port = server
-        save_model_db(host, port, database, credentials[0])  # o mesmo "banco modelo" do Executar no banco
+        login = self._ask_login(host, port)
+        if login is None:
+            return
+        save_model_db(host, port, database, login.username)  # o mesmo "banco modelo" do Executar no banco
+        self._refresh_forget()
         save_model_check_directory(directory)
         self.cancel_event = threading.Event()
         cancel = self.cancel_event
@@ -415,7 +478,7 @@ class ModelCheckWindow:
             try:
                 names = model_check.sql_script_names(directory)
                 run = model_check.run_model_check(
-                    directory, names, host, port, database, credentials[0], credentials[1],
+                    directory, names, host, port, database, login.username, login.password,
                     cancel_event=cancel, progress=progress, on_phase=phase,
                 )
             except ModelCheckError as error:
