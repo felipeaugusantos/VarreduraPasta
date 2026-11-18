@@ -11,7 +11,9 @@ from tkinter import filedialog, messagebox, ttk
 from app import __version__, actions, log_cleanup, logging_utils, model_db, project_view, theme, zip_memory
 from app.audit import filter_log_entries, list_log_files, parse_log_entries, read_log_file
 from app.autcom_test import login_value_error
+from app.model_check_window import open_model_check_window
 from app.model_db_dialogs import ask_credentials, open_db_settings
+from app.sqlaudit.audit_runner import os_user
 from app.sqlaudit_window import open_sqlaudit_window
 from app.config import (
     CLOSING_MAX_CONCURRENT,
@@ -105,6 +107,7 @@ class VersionScannerApp(tk.Tk):
         self.first_scan_done = False
         self.projects_shown_once = False
         self.script_monitor_window = None
+        self.model_check_window = None
         self.sqlaudit_window = None
         self._build_menu()
         self._build_layout()
@@ -2341,15 +2344,20 @@ class VersionScannerApp(tk.Tk):
             style="Primary.TButton",
             command=mark_selected_done,
         ).grid(row=0, column=0, padx=(0, 8))
+        ttk.Button(
+            button_bar,
+            text="Comparar com o banco",
+            command=lambda: open_model_check_window(self, monitor_window, Path(path_var.get()), os_user()),
+        ).grid(row=0, column=1, padx=(0, 8))
         run_button = ttk.Button(button_bar, text="Executar no banco", command=run_selected_in_database)
-        run_button.grid(row=0, column=1, padx=(0, 8))
+        run_button.grid(row=0, column=2, padx=(0, 8))
         ttk.Button(
             button_bar, text="Banco...", command=lambda: open_db_settings(monitor_window)
-        ).grid(row=0, column=2, padx=(0, 8))
-        ttk.Button(button_bar, text="Abrir script", command=open_selected_script).grid(row=0, column=3, padx=(0, 8))
-        ttk.Button(button_bar, text="Abrir pasta", command=open_folder).grid(row=0, column=4, padx=(0, 8))
-        ttk.Button(button_bar, text="Verificar agora", command=verify_now).grid(row=0, column=5, padx=(0, 8))
-        ttk.Button(button_bar, text="Fechar", command=monitor_window.destroy).grid(row=0, column=6)
+        ).grid(row=0, column=3, padx=(0, 8))
+        ttk.Button(button_bar, text="Abrir script", command=open_selected_script).grid(row=0, column=4, padx=(0, 8))
+        ttk.Button(button_bar, text="Abrir pasta", command=open_folder).grid(row=0, column=5, padx=(0, 8))
+        ttk.Button(button_bar, text="Verificar agora", command=verify_now).grid(row=0, column=6, padx=(0, 8))
+        ttk.Button(button_bar, text="Fechar", command=monitor_window.destroy).grid(row=0, column=7)
 
         # Abrir a tela so consulta; nao grava "verificado" na Auditoria.
         self._run_script_monitor_check(show_without_news=False, on_result=update_result)
