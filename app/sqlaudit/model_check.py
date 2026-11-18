@@ -78,7 +78,7 @@ class ScriptCheck:
         if self.status == STATUS_NO_STRUCTURE:
             return "So dados ou comandos que o sistema nao consegue conferir"
         if self.status == STATUS_OK:
-            return f"Tudo ja esta no banco ({self.present} objeto(s) conferido(s))"
+            return f"Tudo ja esta no banco ({self.present} conferido(s))"
         shown = [item.text for item in self.missing[:SUMMARY_ITEMS]]
         more = len(self.missing) - len(shown)
         return ", ".join(shown) + (f" (+{more})" if more > 0 else "")
@@ -460,9 +460,12 @@ def list_model_databases(host, port, username, password, connector=None, tls=db_
 
 def run_model_check(
     directory, names, host, port, database, username, password,
-    connector=None, cancel_event=None, progress=None, tls=db_reader.TLS_ENCRYPT, ca_file="",
+    connector=None, cancel_event=None, progress=None, tls=db_reader.TLS_ENCRYPT, ca_file="", on_phase=None,
 ):
-    """Le o esquema do banco modelo (so leitura) e confere os scripts. Levanta ModelCheckError."""
+    """Le o esquema do banco modelo (so leitura) e confere os scripts. Levanta ModelCheckError.
+
+    `progress(feitos, total)` conta os scripts interpretados; `on_phase(texto)` avisa as fases longas.
+    """
     directory = Path(directory)
     if not directory.is_dir():
         raise ModelCheckError(f"Pasta de scripts nao encontrada: {directory}")
@@ -474,6 +477,8 @@ def run_model_check(
     if cancel_event is not None and cancel_event.is_set():
         run.cancelled = True
         return run
+    if on_phase is not None:
+        on_phase("reading_database")
     try:
         with db_reader.connect_readonly(
             host, port, database, username, password, tls=tls, ca_file=ca_file, connector=connector
@@ -490,6 +495,8 @@ def run_model_check(
         )
     run.server_version = schema.server_version
     run.tables = len(schema.tables)
+    if on_phase is not None:
+        on_phase("comparing")
     by_name = {item.script: item for item in check_operations(parsed, schema, database)}
     for name in names:
         if name in failures:

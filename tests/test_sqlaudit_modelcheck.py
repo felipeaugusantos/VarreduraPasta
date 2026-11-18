@@ -272,6 +272,12 @@ class RunModelCheckTests(unittest.TestCase):
         run, _ = self.run_check()
         self.assertNotIn(PASSWORD, repr(run))
 
+    def test_phases_are_announced_in_order_before_the_long_steps(self):
+        self.write("a.sql", "SELECT 1;")
+        phases = []
+        self.run_check(on_phase=phases.append)
+        self.assertEqual(phases, ["reading_database", "comparing"])
+
     def test_progress_is_reported_per_script(self):
         self.write("a.sql", "SELECT 1;")
         self.write("b.sql", "SELECT 2;")

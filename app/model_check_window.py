@@ -14,6 +14,7 @@ import threading
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
+from types import SimpleNamespace
 
 from app import theme
 from app.logging_utils import write_log
@@ -31,7 +32,6 @@ from app.sqlaudit.model_check import (
 
 TITLE = "Comparar com o banco modelo"
 ALL = "Todos"
-FILTERS = [ALL] + [STATUS_LABELS[s] for s in (STATUS_MISSING, STATUS_OK, STATUS_NO_STRUCTURE, STATUS_ERROR)]
 MAX_ROWS = 5000
 LOGIN_MESSAGE = "Somente leitura: o sistema só consulta a estrutura do banco. Usuário e senha não são gravados."
 
@@ -93,70 +93,91 @@ class ModelCheckWindow:
         frame = ttk.Frame(self.window, padding=14)
         frame.pack(fill="both", expand=True)
         frame.columnconfigure(0, weight=1)
-        frame.rowconfigure(5, weight=3)
+        frame.rowconfigure(5, weight=4)
         frame.rowconfigure(7, weight=1)
         section = getattr(self.app, "fonts", {}).get("section")
+        colors = theme.COLORS
 
-        # 1. pasta de scripts
-        folder = ttk.Frame(frame)
-        folder.grid(row=0, column=0, sticky="ew")
-        folder.columnconfigure(0, weight=1)
-        ttk.Label(folder, text="1  Pasta dos scripts a comparar", font=section).grid(row=0, column=0, columnspan=2, sticky="w")
-        self.dir_entry = ttk.Entry(folder, textvariable=self.dir_var)
-        self.dir_entry.grid(row=1, column=0, sticky="ew", pady=(4, 0))
-        self.choose_button = ttk.Button(folder, text="Escolher...", command=self.choose_directory)
-        self.choose_button.grid(row=1, column=1, padx=(8, 0), pady=(4, 0))
+        # cabecalho: a configuracao recolhe depois da comparacao
+        header = ttk.Frame(frame)
+        header.grid(row=0, column=0, sticky="ew")
+        header.columnconfigure(1, weight=1)
+        self.setup_button = ttk.Button(header, text="▾ Configuração", command=self.toggle_setup)
+        self.setup_button.grid(row=0, column=0)
+        self.setup_summary = ttk.Label(header, text="", style="Muted.TLabel")
+        self.setup_summary.grid(row=0, column=1, sticky="w", padx=(10, 0))
 
-        # 2. servidor e banco modelo
-        server = ttk.Frame(frame)
-        server.grid(row=1, column=0, sticky="ew", pady=(12, 0))
-        server.columnconfigure(7, weight=1)
-        ttk.Label(server, text="2  Servidor e banco modelo (somente leitura)", font=section).grid(row=0, column=0, columnspan=9, sticky="w")
-        ttk.Label(server, text="Servidor:").grid(row=1, column=0, sticky="w", pady=(4, 0))
-        self.host_entry = ttk.Entry(server, textvariable=self.host_var, width=18)
-        self.host_entry.grid(row=1, column=1, padx=(6, 12), pady=(4, 0))
-        ttk.Label(server, text="Porta:").grid(row=1, column=2, sticky="w", pady=(4, 0))
+        # configuracao: pasta, servidor e banco modelo, alinhados em uma grade so
+        self.setup = ttk.Frame(frame)
+        self.setup.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        self.setup.columnconfigure(1, weight=1)
+        ttk.Label(self.setup, text="Pasta dos scripts", font=section).grid(row=0, column=0, sticky="w", pady=(0, 6))
+        self.dir_entry = ttk.Entry(self.setup, textvariable=self.dir_var)
+        self.dir_entry.grid(row=0, column=1, columnspan=4, sticky="ew", padx=(12, 8), pady=(0, 6))
+        self.choose_button = ttk.Button(self.setup, text="Escolher...", command=self.choose_directory)
+        self.choose_button.grid(row=0, column=5, pady=(0, 6))
+
+        ttk.Label(self.setup, text="Servidor MySQL", font=section).grid(row=1, column=0, sticky="w", pady=(0, 6))
+        server = ttk.Frame(self.setup)
+        server.grid(row=1, column=1, columnspan=5, sticky="w", padx=(12, 0), pady=(0, 6))
+        self.host_entry = ttk.Entry(server, textvariable=self.host_var, width=20)
+        self.host_entry.grid(row=0, column=0)
+        ttk.Label(server, text=":").grid(row=0, column=1, padx=4)
         self.port_entry = ttk.Entry(server, textvariable=self.port_var, width=7)
-        self.port_entry.grid(row=1, column=3, padx=(6, 12), pady=(4, 0))
+        self.port_entry.grid(row=0, column=2)
         for entry in (self.host_entry, self.port_entry):
             entry.bind("<Return>", lambda _event: self.connect_server())
         self.connect_button = ttk.Button(server, text="Conectar e listar bancos...", command=self.connect_server)
-        self.connect_button.grid(row=1, column=4, pady=(4, 0))
-        ttk.Label(server, text="Banco modelo:").grid(row=2, column=0, sticky="w", pady=(8, 0))
-        self.db_box = ttk.Combobox(server, textvariable=self.db_var, values=[], width=44)
-        self.db_box.grid(row=2, column=1, columnspan=4, sticky="w", padx=(6, 0), pady=(8, 0))
+        self.connect_button.grid(row=0, column=3, padx=(12, 0))
+
+        ttk.Label(self.setup, text="Banco modelo", font=section).grid(row=2, column=0, sticky="w")
+        self.db_box = ttk.Combobox(self.setup, textvariable=self.db_var, values=[], width=52)
+        self.db_box.grid(row=2, column=1, columnspan=3, sticky="w", padx=(12, 0))
         ttk.Label(
-            server,
-            text="Conectar pede usuário e senha (não são gravados) e lista os bancos que o usuário enxerga. Também dá para digitar o nome.",
-            style="Muted.TLabel",
-        ).grid(row=3, column=0, columnspan=9, sticky="w", pady=(2, 0))
+            self.setup, text="Conectar lista os bancos que o usuário enxerga; também dá para digitar o nome.", style="Muted.TLabel"
+        ).grid(row=3, column=1, columnspan=5, sticky="w", padx=(12, 0), pady=(3, 0))
 
-        # 3. comparar
-        bar = ttk.Frame(frame)
-        bar.grid(row=2, column=0, sticky="ew", pady=(12, 0))
-        bar.columnconfigure(2, weight=1)
-        ttk.Label(bar, text="3  Comparar", font=section).grid(row=0, column=0, columnspan=5, sticky="w")
-        self.compare_button = ttk.Button(bar, text="Comparar", style="Primary.TButton", command=self.compare)
-        self.compare_button.grid(row=1, column=0, padx=(0, 6), pady=(4, 0))
-        self.cancel_button = ttk.Button(bar, text="Cancelar", command=self.cancel, state="disabled")
-        self.cancel_button.grid(row=1, column=1, padx=(0, 12), pady=(4, 0))
-        self.progress = ttk.Progressbar(bar, mode="determinate", maximum=100)
-        self.progress.grid(row=1, column=2, sticky="ew", padx=(0, 12), pady=(4, 0))
-        self.export_button = ttk.Button(bar, text="Exportar CSV...", command=self.export, state="disabled")
-        self.export_button.grid(row=1, column=3, pady=(4, 0))
-
+        # executar: botao, progresso e status juntos
+        run = ttk.Frame(frame)
+        run.grid(row=2, column=0, sticky="ew", pady=(12, 0))
+        run.columnconfigure(2, weight=1)
+        self.compare_button = ttk.Button(run, text="Comparar", style="Primary.TButton", command=self.compare)
+        self.compare_button.grid(row=0, column=0, padx=(0, 6))
+        self.cancel_button = ttk.Button(run, text="Cancelar", command=self.cancel, state="disabled")
+        self.cancel_button.grid(row=0, column=1, padx=(0, 12))
+        ttk.Style(self.window).configure(
+            "Audit.Horizontal.TProgressbar",
+            troughcolor=colors["heading_bg"], background=colors["primary"], bordercolor=colors["border"],
+            lightcolor=colors["primary"], darkcolor=colors["primary"],
+        )
+        self.progress = ttk.Progressbar(run, mode="determinate", maximum=100, style="Audit.Horizontal.TProgressbar")
+        self.progress.grid(row=0, column=2, sticky="ew", padx=(0, 12))
+        self.export_button = ttk.Button(run, text="Exportar CSV...", command=self.export, state="disabled")
+        self.export_button.grid(row=0, column=3)
         ttk.Label(frame, textvariable=self.status_var, wraplength=1040, justify="left").grid(
-            row=3, column=0, sticky="w", pady=(8, 6)
+            row=3, column=0, sticky="w", pady=(8, 0)
         )
 
-        filters = ttk.Frame(frame)
-        filters.grid(row=4, column=0, sticky="ew", pady=(0, 6))
-        ttk.Label(filters, text="Mostrar:").grid(row=0, column=0)
-        self.filter_box = ttk.Combobox(filters, textvariable=self.filter_var, values=FILTERS, state="readonly", width=24)
-        self.filter_box.grid(row=0, column=1, padx=(6, 12))
-        ttk.Label(filters, text="Buscar:").grid(row=0, column=2)
-        ttk.Entry(filters, textvariable=self.search_var, width=26).grid(row=0, column=3, padx=(6, 12))
-        ttk.Label(filters, textvariable=self.count_var, style="Muted.TLabel").grid(row=0, column=4, sticky="w")
+        # cartoes de resumo (clicam para filtrar) e busca
+        summary = ttk.Frame(frame)
+        summary.grid(row=4, column=0, sticky="ew", pady=(10, 8))
+        self.tiles = {}
+        for column, (key, label, color) in enumerate(
+            (
+                (ALL, "Todos", colors["text"]),
+                (STATUS_LABELS[STATUS_MISSING], "Falta rodar", colors["warn"]),
+                (STATUS_LABELS[STATUS_OK], "OK", colors["ok"]),
+                (STATUS_LABELS[STATUS_NO_STRUCTURE], "Sem campos", colors["muted"]),
+                (STATUS_LABELS[STATUS_ERROR], "Erro", colors["error"]),
+            )
+        ):
+            self.tiles[key] = self._tile(summary, column, key, label, color)
+        search = ttk.Frame(summary)
+        search.grid(row=0, column=5, sticky="e", padx=(16, 0))
+        summary.columnconfigure(5, weight=1)
+        ttk.Label(search, text="Buscar:").grid(row=0, column=0)
+        ttk.Entry(search, textvariable=self.search_var, width=26).grid(row=0, column=1, padx=(6, 0))
+        ttk.Label(search, textvariable=self.count_var, style="Muted.TLabel").grid(row=0, column=2, padx=(10, 0))
         for variable in (self.filter_var, self.search_var):
             variable.trace_add("write", lambda *_args: self.apply_filters())
 
@@ -175,20 +196,62 @@ class ModelCheckWindow:
         self.table.configure(yscrollcommand=scroll.set)
         self.table.grid(row=0, column=0, sticky="nsew")
         scroll.grid(row=0, column=1, sticky="ns")
-        self.table.tag_configure("missing", background=theme.COLORS["row_warning"])
-        self.table.tag_configure("error", background=theme.COLORS["row_error"])
-        self.table.tag_configure("none", foreground=theme.COLORS["muted"])
+        self.table.tag_configure("missing", background=colors["row_warning"])
+        self.table.tag_configure("error", background=colors["row_error"])
+        self.table.tag_configure("none", foreground=colors["muted"])
         self.table.bind("<<TreeviewSelect>>", lambda _event: self.show_detail())
         self.table.bind("<Double-1>", lambda _event: self.open_script())
 
         ttk.Label(frame, text="Detalhe do script", font=section).grid(row=6, column=0, sticky="w", pady=(10, 2))
-        self.detail = tk.Text(frame, height=6, wrap="word", state="disabled", relief="solid", borderwidth=1)
+        self.detail = tk.Text(frame, height=5, wrap="word", state="disabled", relief="solid", borderwidth=1)
         self.detail.grid(row=7, column=0, sticky="nsew")
 
         footer = ttk.Frame(frame)
         footer.grid(row=8, column=0, sticky="e", pady=(10, 0))
         ttk.Button(footer, text="Abrir script", command=self.open_script).grid(row=0, column=0, padx=(0, 6))
         ttk.Button(footer, text="Fechar", command=self.close).grid(row=0, column=1)
+
+    def _tile(self, parent, column, key, label, color):
+        """Cartao de resumo: numero grande + rotulo; clicar filtra a lista."""
+        colors = theme.COLORS
+        box = tk.Frame(parent, bg=colors["surface"], highlightthickness=1, highlightbackground=colors["border"], cursor="hand2")
+        box.grid(row=0, column=column, padx=(0, 8))
+        number = tk.Label(box, text="–", bg=colors["surface"], fg=color, font=("Segoe UI", 15, "bold"), padx=14)
+        number.grid(row=0, column=0, pady=(4, 0))
+        caption = tk.Label(box, text=label, bg=colors["surface"], fg=colors["muted"], font=("Segoe UI", 9), padx=14)
+        caption.grid(row=1, column=0, pady=(0, 4))
+        for widget in (box, number, caption):
+            widget.bind("<Button-1>", lambda _event, k=key: self.filter_by(k))
+        return SimpleNamespace(box=box, number=number, key=key)
+
+    def filter_by(self, key):
+        """Filtra a lista pelo resultado do cartao clicado (`Todos` mostra tudo)."""
+        self.filter_var.set(key)
+
+    def _refresh_tiles(self):
+        counts = {ALL: len(self.run.results) if self.run else 0}
+        if self.run:
+            for status, count in self.run.counts().items():
+                counts[STATUS_LABELS[status]] = count
+        current = self.filter_var.get()
+        colors = theme.COLORS
+        for key, tile in self.tiles.items():
+            tile.number.config(text=str(counts.get(key, 0)) if self.run else "–")
+            tile.box.config(highlightbackground=colors["primary"] if key == current else colors["border"], highlightthickness=2 if key == current else 1)
+
+    def toggle_setup(self, show=None):
+        visible = bool(self.setup.winfo_manager())
+        show = (not visible) if show is None else show
+        if show:
+            self.setup.grid()
+            self.setup_summary.config(text="")
+        else:
+            self.setup.grid_remove()
+            folder = self.directory
+            self.setup_summary.config(
+                text=f"{folder.name or folder} · {self.host_var.get().strip()}:{self.port_var.get().strip()} · banco {self.db_var.get().strip()}"
+            )
+        self.setup_button.config(text="▾ Configuração" if show else "▸ Configuração")
 
     # ---- fila / ocupado ----
     def _set_busy(self, busy):
@@ -294,7 +357,7 @@ class ModelCheckWindow:
                 self.status_var.set(f"✔ {text} O banco '{self.db_var.get().strip()}' não está na lista: escolha o banco modelo.")
             else:
                 self.status_var.set(f"✔ {text} Escolha o banco modelo na lista.")
-            self.db_box.focus_set()
+            self.db_box.selection_clear()
 
     # ---- passo 3: comparar ----
     def compare(self):
@@ -331,14 +394,21 @@ class ModelCheckWindow:
         self.progress.config(value=0)
 
         def progress(done, total):
-            self.queue.put(("progress", round(done * 80 / max(total, 1)), f"Interpretando scripts ({done}/{total})..."))
+            self.queue.put(("progress", round(done * 70 / max(total, 1)), f"Interpretando scripts ({done}/{total})..."))
+
+        def phase(name):
+            text, value = {
+                "reading_database": ("Lendo a estrutura do banco modelo...", 78),
+                "comparing": ("Conferindo cada script com o banco...", 94),
+            }[name]
+            self.queue.put(("progress", value, text))
 
         def work():
             try:
                 names = model_check.sql_script_names(directory)
                 run = model_check.run_model_check(
                     directory, names, host, port, database, credentials[0], credentials[1],
-                    cancel_event=cancel, progress=progress,
+                    cancel_event=cancel, progress=progress, on_phase=phase,
                 )
             except ModelCheckError as error:
                 return ("error", str(error))
@@ -364,12 +434,15 @@ class ModelCheckWindow:
             )
         self.apply_filters()
         self._set_busy("")
+        if not run.cancelled:
+            self.toggle_setup(False)  # a lista ganha a tela; "Configuracao" reabre
         write_log(model_check.audit_line(self.user, self.directory, run, "cancelada" if run.cancelled else "concluida"))
 
     # ---- lista ----
     def apply_filters(self):
         self.table.delete(*self.table.get_children())
         self.shown = {}
+        self._refresh_tiles()
         if self.run is None:
             self.count_var.set("")
             return
@@ -406,7 +479,7 @@ class ModelCheckWindow:
             lines.append(f"Falta rodar ({len(item.missing)}):")
             lines.extend("  • " + missing.text for missing in item.missing)
         if item.status == STATUS_OK:
-            lines.append(f"Tudo o que o script cria já existe no banco ({item.present} objeto(s) conferido(s)).")
+            lines.append(f"Tudo o que o script cria já existe no banco ({item.present} item(ns) conferido(s)).")
         if item.status == STATUS_NO_STRUCTURE:
             lines.append("O script não cria tabelas, campos ou índices que dê para conferir (ex.: só dados).")
         if item.notes:

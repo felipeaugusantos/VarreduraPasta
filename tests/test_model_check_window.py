@@ -83,6 +83,67 @@ class ModelCheckWindowTests(WindowTestCase):
         self.assertIn("1 falta rodar", window.status_var.get())
         self.assertEqual(str(window.export_button.cget("state")), "normal")
 
+    def test_summary_tiles_show_the_counts_and_clicking_one_filters_the_list(self):
+        window = self.open_window()
+        self.assertEqual({k: t.number.cget("text") for k, t in window.tiles.items()}["Todos"], "–")  # antes de comparar
+        self.compare(window)
+        counts = {key: tile.number.cget("text") for key, tile in window.tiles.items()}
+        self.assertEqual(counts, {"Todos": "3", "Falta rodar": "1", "OK": "1", "Sem campos para conferir": "1", "Nao foi possivel ler": "0"})
+        for tile in window.tiles.values():  # o cartao inteiro (caixa, numero e rotulo) responde ao clique
+            for widget in [tile.box, tile.number, *tile.box.winfo_children()]:
+                self.assertTrue(widget.bind("<Button-1>"), widget)
+        window.filter_by("Falta rodar")
+        self.assertEqual(window.filter_var.get(), "Falta rodar")
+        self.assertEqual(len(self.table_rows(window)), 1)
+        self.assertEqual(str(window.tiles["Falta rodar"].box.cget("highlightthickness")), "2")  # o cartao ativo se destaca
+        window.filter_by("Todos")
+        self.assertEqual(len(self.table_rows(window)), 3)
+
+    def test_setup_collapses_after_a_comparison_and_can_be_reopened(self):
+        window = self.open_window()
+        self.assertTrue(window.setup.winfo_manager())
+        self.compare(window)
+        self.assertFalse(window.setup.winfo_manager())
+        self.assertIn("10.0.0.35:43309", window.setup_summary.cget("text"))
+        self.assertIn("BANCO_MODELO", window.setup_summary.cget("text"))
+        self.assertIn("scripts_modelo", window.setup_summary.cget("text"))
+        self.assertTrue(window.setup_button.cget("text").startswith("▸"))
+        window.setup_button.invoke()
+        self.assertTrue(window.setup.winfo_manager())
+        self.assertEqual(window.setup_summary.cget("text"), "")
+
+    def test_a_failed_comparison_keeps_the_setup_open_to_fix_the_problem(self):
+        window = self.open_window()
+
+        def refuse(**options):
+            raise Exception(1045, "Access denied")
+
+        with patch("app.model_check_window.ask_credentials", return_value=("leitura", PASSWORD)), \
+             patch.object(db_reader, "_default_connector", refuse):
+            window.compare()
+            self.pump_window(window)
+        self.assertTrue(window.setup.winfo_manager())
+
+    def test_the_status_names_each_long_phase_instead_of_freezing(self):
+        window = self.open_window()
+        seen = []
+        original = window._handle
+
+        def spy(message):
+            if message[0] == "progress":
+                seen.append((message[1], message[2]))
+            original(message)
+
+        window._handle = spy
+        self.compare(window)
+        texts = [text for _value, text in seen]
+        self.assertTrue(any(t.startswith("Interpretando scripts (") for t in texts))
+        self.assertIn("Lendo a estrutura do banco modelo...", texts)
+        self.assertIn("Conferindo cada script com o banco...", texts)
+        values = [value for value, _text in seen]
+        self.assertEqual(values, sorted(values))  # a barra nunca anda para tras
+        self.assertLess(values[-1], 100)
+
     def test_numbers_in_names_are_sorted_as_numbers(self):
         (self.scripts / "0_GERAL" / "SCRIPT_GER_11.sql").write_bytes(b"ALTER TABLE CLIENTES ADD COLUMN F11 INT;")
         window = self.open_window()
