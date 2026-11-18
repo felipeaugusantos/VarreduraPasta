@@ -93,7 +93,7 @@ Nao distribuir `settings.json` junto do pacote. Dados persistentes ficam em
 | `app/model_db_dialogs.py` | Janelas de login e configuracao do banco modelo. |
 | `app/secret_store.py` | Senha lembrada, criptografada com a DPAPI do Windows (`credenciais.dat`); unico modulo que a toca. |
 | `app/saved_login.py` | Login com senha lembrada (sem Tkinter): usa a salva ou pergunta; descarta a que o banco recusa. |
-| `app/model_check_window.py` | Janela `Scripts Banco Modelo > Comparar com o banco` (so desenho; logica em `app/sqlaudit/model_check.py`). |
+| `app/model_check_window.py` | Painel da tela inicial (alternador `Banco modelo` no cabecalho, `open_model_check_panel`) ou janela propria `Comparar com o banco` (so desenho; logica em `app/sqlaudit/model_check.py`). |
 | `app/jenkins.py` | Integracao Jenkins local via HTTP/Basic Auth. |
 | `app/svn_search.py` | Consulta SVN por revisao/requisito. |
 | `app/runtime.py` | Caminhos em dev/PyInstaller e data de geracao do exe. |

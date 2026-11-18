@@ -502,15 +502,28 @@ class ModelCheckWindowTests(WindowTestCase):
 
     def test_the_button_exists_in_the_script_monitor_window(self):
         with patch.object(self.interface.VersionScannerApp, "_run_script_monitor_check", lambda *a, **k: None), \
-             patch("app.interface.open_model_check_window") as opened:
+             patch.object(self.interface.VersionScannerApp, "open_model_check_view") as opened:
             self.app.open_script_monitor_window()
             monitor = self.app.script_monitor_window
             self.addCleanup(lambda: monitor.winfo_exists() and monitor.destroy())
             buttons = [b for b in WindowTestCase.find(monitor, "TButton") if b.cget("text") == "Comparar com o banco"]
             self.assertEqual(len(buttons), 1)
             buttons[0].invoke()
-        opened.assert_called_once()
-        self.assertIsNone(opened.call_args.args[2])  # a janela usa a ultima pasta escolhida (ou a do monitor)
+        opened.assert_called_once()  # abre o painel da tela inicial, sem janela empilhada
+
+    def test_home_screen_switches_to_the_embedded_panel_and_back(self):
+        self.assertEqual(self.app.current_view, "projetos")
+        panel = self.app.show_view("banco")
+        self.assertTrue(panel.embedded)
+        self.assertEqual(self.app.current_view, "banco")
+        self.assertTrue(self.app.model_view.winfo_manager())
+        self.assertIs(self.app.show_view("banco"), None)
+        self.assertIs(self.app.open_model_check_view(), panel)
+        self.app.show_view("projetos")
+        self.assertFalse(self.app.model_view.winfo_manager())
+        self.assertTrue(all(w.winfo_manager() for w in self.app.project_widgets))
+        panel.close()  # painel embutido nao fecha
+        self.assertTrue(panel.window.winfo_exists())
 
 
 @unittest.skipIf(tkinter is None, "tkinter nao instalado")

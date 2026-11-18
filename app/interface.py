@@ -11,7 +11,7 @@ from tkinter import filedialog, messagebox, ttk
 from app import __version__, actions, log_cleanup, logging_utils, model_db, project_view, theme, zip_memory
 from app.audit import filter_log_entries, list_log_files, parse_log_entries, read_log_file
 from app.autcom_test import login_value_error
-from app.model_check_window import open_model_check_window
+from app.model_check_window import open_model_check_panel
 from app.model_db_dialogs import ask_credentials, open_db_settings
 from app.sqlaudit.audit_runner import os_user
 from app.sqlaudit_window import open_sqlaudit_window
@@ -108,6 +108,8 @@ class VersionScannerApp(tk.Tk):
         self.projects_shown_once = False
         self.script_monitor_window = None
         self.model_check_window = None
+        self.model_check_panel = None
+        self.current_view = "projetos"
         self.sqlaudit_window = None
         self._build_menu()
         self._build_layout()
@@ -154,6 +156,10 @@ class VersionScannerApp(tk.Tk):
             command=self.open_script_monitor_window,
         )
         monitor_menu.add_command(
+            label="Comparar com o banco modelo",
+            command=self.open_model_check_view,
+        )
+        monitor_menu.add_command(
             label="Auditoria de Estrutura SQL",
             command=self.open_sqlaudit_window,
         )
@@ -198,6 +204,7 @@ class VersionScannerApp(tk.Tk):
         self._build_content()
         self._build_action_groups()
         self._build_status_bar()
+        self._build_model_view()
 
         self.buttons = (
             self.local_close_button,
@@ -211,6 +218,43 @@ class VersionScannerApp(tk.Tk):
             self.open_folder_button,
         )
         self._sync_buttons()
+
+    def _build_model_view(self):
+        """Area da comparacao com o banco modelo, no lugar das linhas 1-4 (criada na 1a abertura)."""
+        self.project_widgets = [
+            widget for widget in self.grid_slaves() if int(widget.grid_info()["row"]) in (1, 2, 3, 4)
+        ]
+        self.model_view = ttk.Frame(self, padding=(16, 10, 16, 0))
+        self.model_view.columnconfigure(0, weight=1)
+        self.model_view.rowconfigure(0, weight=1)
+        self._sync_view_buttons()
+
+    def _sync_view_buttons(self):
+        for key, button in self.view_buttons.items():
+            button.state(["disabled"] if key == self.current_view else ["!disabled"])
+
+    def show_view(self, view):
+        """Troca a tela inicial entre a lista de projetos e a comparacao com o banco modelo."""
+        if view == self.current_view:
+            return None
+        self.current_view = view
+        if view == "banco":
+            for widget in self.project_widgets:
+                widget.grid_remove()
+            self.model_view.grid(row=1, column=0, rowspan=4, sticky="nsew")
+            panel = open_model_check_panel(self, self.model_view, None, os_user())
+        else:
+            self.model_view.grid_remove()
+            for widget in self.project_widgets:
+                widget.grid()
+            panel = None
+        self._sync_view_buttons()
+        return panel
+
+    def open_model_check_view(self):
+        self.show_view("banco")
+        self.lift()
+        return self.model_check_panel
 
     def _build_header(self):
         header = ttk.Frame(self, style="Header.TFrame", padding=(20, 14))
@@ -243,13 +287,23 @@ class VersionScannerApp(tk.Tk):
         self.jenkins_label = ttk.Label(subtitle, style="HeaderAlert.TLabel", cursor="hand2")
         self.jenkins_label.bind("<Button-1>", lambda _event: self.open_jenkins_jobs_window())
 
+        # Alternador de visao da tela inicial: Projetos | Banco modelo
+        view_box = ttk.Frame(header, style="Header.TFrame")
+        view_box.grid(row=0, column=1, sticky="e", padx=(0, 14))
+        self.view_buttons = {
+            "projetos": ttk.Button(view_box, text="Projetos", command=lambda: self.show_view("projetos")),
+            "banco": ttk.Button(view_box, text="Banco modelo", command=lambda: self.show_view("banco")),
+        }
+        self.view_buttons["projetos"].grid(row=0, column=0, padx=(0, 6))
+        self.view_buttons["banco"].grid(row=0, column=1)
+
         self.refresh_button = ttk.Button(
             header,
             text="⟳  Atualizar",
             style="Primary.TButton",
             command=self.refresh,
         )
-        self.refresh_button.grid(row=0, column=1, sticky="e")
+        self.refresh_button.grid(row=0, column=2, sticky="e")
 
     def _build_counter_cards(self):
         cards = ttk.Frame(self, padding=(16, 14, 16, 4))
@@ -2347,7 +2401,7 @@ class VersionScannerApp(tk.Tk):
         ttk.Button(
             button_bar,
             text="Comparar com o banco",
-            command=lambda: open_model_check_window(self, monitor_window, None, os_user()),
+            command=lambda: (self.open_model_check_view(), monitor_window.destroy()),
         ).grid(row=0, column=1, padx=(0, 8))
         run_button = ttk.Button(button_bar, text="Executar no banco", command=run_selected_in_database)
         run_button.grid(row=0, column=2, padx=(0, 8))

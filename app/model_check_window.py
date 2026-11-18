@@ -51,16 +51,33 @@ def open_model_check_window(app, parent, directory=None, user=""):
     return window
 
 
+def open_model_check_panel(app, container, directory=None, user=""):
+    """Painel embutido na tela inicial (`container` e um Frame da janela principal)."""
+    existing = getattr(app, "model_check_panel", None)
+    if existing is not None and existing.window.winfo_exists():
+        return existing
+    panel = ModelCheckWindow(app, container, directory, user, embedded=True)
+    app.model_check_panel = panel
+    return panel
+
+
 class ModelCheckWindow:
-    def __init__(self, app, parent, directory=None, user=""):
+    """Comparacao com o banco modelo: janela propria (Toplevel) ou painel embutido (`embedded`)."""
+
+    def __init__(self, app, parent, directory=None, user="", embedded=False):
         self.app = app
         self.user = user
-        self.window = tk.Toplevel(parent)
-        self.window.title(TITLE)
-        theme.size_window(self.window, 1100, 760)
-        self.window.minsize(860, 560)
-        self.window.transient(parent)
-        self.window.protocol("WM_DELETE_WINDOW", self.close)
+        self.embedded = embedded
+        if embedded:
+            self.window = ttk.Frame(parent)
+            self.window.pack(fill="both", expand=True)
+        else:
+            self.window = tk.Toplevel(parent)
+            self.window.title(TITLE)
+            theme.size_window(self.window, 1100, 760)
+            self.window.minsize(860, 560)
+            self.window.transient(parent)
+            self.window.protocol("WM_DELETE_WINDOW", self.close)
 
         self.queue = queue.Queue()
         self.cancel_event = None
@@ -90,12 +107,11 @@ class ModelCheckWindow:
 
     # ---- construcao ----
     def _build(self):
-        frame = ttk.Frame(self.window, padding=14)
+        frame = ttk.Frame(self.window, padding=(0, 6, 0, 0) if self.embedded else 14)
         frame.pack(fill="both", expand=True)
         frame.columnconfigure(0, weight=1)
         frame.rowconfigure(5, weight=4)
         frame.rowconfigure(7, weight=1)
-        section = getattr(self.app, "fonts", {}).get("section")
         colors = theme.COLORS
 
         # cabecalho: a configuracao recolhe depois da comparacao
@@ -111,13 +127,13 @@ class ModelCheckWindow:
         self.setup = ttk.Frame(frame)
         self.setup.grid(row=1, column=0, sticky="ew", pady=(8, 0))
         self.setup.columnconfigure(1, weight=1)
-        ttk.Label(self.setup, text="Pasta dos scripts", font=section).grid(row=0, column=0, sticky="w", pady=(0, 6))
+        ttk.Label(self.setup, text="Pasta dos scripts", style="Muted.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 6))
         self.dir_entry = ttk.Entry(self.setup, textvariable=self.dir_var)
         self.dir_entry.grid(row=0, column=1, columnspan=4, sticky="ew", padx=(12, 8), pady=(0, 6))
         self.choose_button = ttk.Button(self.setup, text="Escolher...", command=self.choose_directory)
         self.choose_button.grid(row=0, column=5, pady=(0, 6))
 
-        ttk.Label(self.setup, text="Servidor MySQL", font=section).grid(row=1, column=0, sticky="w", pady=(0, 6))
+        ttk.Label(self.setup, text="Servidor MySQL", style="Muted.TLabel").grid(row=1, column=0, sticky="w", pady=(0, 6))
         server = ttk.Frame(self.setup)
         server.grid(row=1, column=1, columnspan=5, sticky="w", padx=(12, 0), pady=(0, 6))
         self.host_entry = ttk.Entry(server, textvariable=self.host_var, width=20)
@@ -134,7 +150,7 @@ class ModelCheckWindow:
         if not secret_store.default_store().available:
             self.forget_button.grid_remove()  # sem armazenamento seguro neste computador: nada para esquecer
 
-        ttk.Label(self.setup, text="Banco modelo", font=section).grid(row=2, column=0, sticky="w")
+        ttk.Label(self.setup, text="Banco modelo", style="Muted.TLabel").grid(row=2, column=0, sticky="w")
         self.db_box = ttk.Combobox(self.setup, textvariable=self.db_var, values=[], width=52)
         self.db_box.grid(row=2, column=1, columnspan=3, sticky="w", padx=(12, 0))
         ttk.Label(
@@ -214,7 +230,7 @@ class ModelCheckWindow:
         self.table.bind("<<TreeviewSelect>>", lambda _event: self.show_detail())
         self.table.bind("<Double-1>", lambda _event: self.open_script())
 
-        ttk.Label(frame, text="Detalhe do script", font=section).grid(row=6, column=0, sticky="w", pady=(10, 2))
+        ttk.Label(frame, text="Detalhe do script", style="Muted.TLabel").grid(row=6, column=0, sticky="w", pady=(10, 2))
         self.detail = tk.Text(frame, height=5, wrap="word", state="disabled", relief="solid", borderwidth=1)
         self.detail.grid(row=7, column=0, sticky="nsew")
 
@@ -223,7 +239,8 @@ class ModelCheckWindow:
         self.fix_button = ttk.Button(footer, text="Gerar script do que falta...", command=self.generate_missing_script)
         self.fix_button.grid(row=0, column=0, padx=(0, 6))
         ttk.Button(footer, text="Abrir script", command=self.open_script).grid(row=0, column=1, padx=(0, 6))
-        ttk.Button(footer, text="Fechar", command=self.close).grid(row=0, column=2)
+        if not self.embedded:
+            ttk.Button(footer, text="Fechar", command=self.close).grid(row=0, column=2)
 
     def _tile(self, parent, column, key, label, color):
         """Cartao de resumo: numero grande + rotulo; clicar filtra a lista."""
@@ -720,6 +737,8 @@ class ModelCheckWindow:
         self._start("exportando", work)
 
     def close(self):
+        if self.embedded:
+            return  # o painel faz parte da tela inicial: nao fecha
         if self.busy == "comparando":
             if not messagebox.askyesno(TITLE, "A comparação está em andamento. Cancelar e fechar?", parent=self.window):
                 return
