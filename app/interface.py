@@ -231,7 +231,7 @@ class VersionScannerApp(tk.Tk):
 
     def _sync_view_buttons(self):
         for key, button in self.view_buttons.items():
-            button.state(["disabled"] if key == self.current_view else ["!disabled"])
+            button.configure(style="HeaderButtonActive.TButton" if key == self.current_view else "HeaderButton.TButton")
 
     def show_view(self, view):
         """Troca a tela inicial entre a lista de projetos e a comparacao com o banco modelo."""
@@ -291,8 +291,8 @@ class VersionScannerApp(tk.Tk):
         view_box = ttk.Frame(header, style="Header.TFrame")
         view_box.grid(row=0, column=1, sticky="e", padx=(0, 14))
         self.view_buttons = {
-            "projetos": ttk.Button(view_box, text="Projetos", command=lambda: self.show_view("projetos")),
-            "banco": ttk.Button(view_box, text="Banco modelo", command=lambda: self.show_view("banco")),
+            "projetos": ttk.Button(view_box, text="Projetos", style="HeaderButton.TButton", command=lambda: self.show_view("projetos")),
+            "banco": ttk.Button(view_box, text="Banco modelo", style="HeaderButton.TButton", command=lambda: self.show_view("banco")),
         }
         self.view_buttons["projetos"].grid(row=0, column=0, padx=(0, 6))
         self.view_buttons["banco"].grid(row=0, column=1)
@@ -328,16 +328,15 @@ class VersionScannerApp(tk.Tk):
                 highlightcolor=theme.COLORS["border"],
             )
             card.grid(row=0, column=column, sticky="ew", padx=(0 if column == 0 else 10, 0))
-            strip = tk.Frame(card, background=theme.COLORS[color], width=4)
-            strip.pack(side="left", fill="y")
+            strip = tk.Frame(card, background=theme.COLORS[color], width=4)  # so guarda a cor; nao e desenhada
             body = ttk.Frame(card, style="CardBody.TFrame", padding=(12, 8, 12, 10))
             body.pack(side="left", fill="both", expand=True)
             caption_label = ttk.Label(body, text=caption, style="CardCaption.TLabel")
-            caption_label.pack(anchor="center")
+            caption_label.pack(anchor="w")
             value = ttk.Label(body, text="…", style=f"CardValue{color.title()}.TLabel")
-            value.pack(anchor="center")
+            value.pack(anchor="w")
             detail = ttk.Label(body, text="analisando…", style="CardDetail.TLabel")
-            detail.pack(anchor="center")
+            detail.pack(anchor="w")
             self.counter_cards[key] = {
                 "card": card,
                 "strip": strip,
@@ -433,10 +432,10 @@ class VersionScannerApp(tk.Tk):
             self.tree.heading(
                 column,
                 text=headings[column],
-                anchor="center",
+                anchor="w" if column == "folder" else "center",
                 command=lambda current_column=column: self._sort_by_column(current_column),
             )
-            self.tree.column(column, width=widths[column], minwidth=60, anchor="center")
+            self.tree.column(column, width=widths[column], minwidth=60, anchor="w" if column == "folder" else "center")
 
         self.tree.tag_configure("ok", background=theme.COLORS["surface"])
         self.tree.tag_configure("warning", background=theme.COLORS["row_warning"])
@@ -519,7 +518,7 @@ class VersionScannerApp(tk.Tk):
         bar.grid(row=4, column=0, sticky="ew")
 
         def group(column, title):
-            frame = ttk.LabelFrame(bar, text=f" {title} ", style="Group.TLabelframe", padding=(10, 6, 10, 10))
+            frame = ttk.LabelFrame(bar, text=f" {title.upper()} ", style="Group.TLabelframe", padding=(10, 6, 10, 10))
             frame.grid(row=0, column=column, sticky="w", padx=(0 if column == 0 else 14, 0))
             return frame
 

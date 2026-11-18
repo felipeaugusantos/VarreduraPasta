@@ -50,6 +50,7 @@ def apply_theme(root):
         "card_detail": tkfont.Font(root, family=FONT_FAMILY, size=9),
         "card_caption": tkfont.Font(root, family=FONT_FAMILY, size=9),
         "section": tkfont.Font(root, family=FONT_FAMILY, size=10, weight="bold"),
+        "group": tkfont.Font(root, family=FONT_FAMILY, size=8, weight="bold"),
         "panel_title": tkfont.Font(root, family=FONT_FAMILY, size=11, weight="bold"),
     }
     root.configure(background=COLORS["bg"])
@@ -94,7 +95,7 @@ def apply_theme(root):
 
     # Grupos de botoes.
     style.configure("Group.TLabelframe", background=c["bg"], relief="flat", borderwidth=0)
-    style.configure("Group.TLabelframe.Label", background=c["bg"], foreground=c["muted"], font=fonts["section"])
+    style.configure("Group.TLabelframe.Label", background=c["bg"], foreground=c["muted"], font=fonts["group"])
 
     # Botoes.
     style.configure(
@@ -128,6 +129,24 @@ def apply_theme(root):
         foreground=[("disabled", "#eef3fe")],
         bordercolor=[("disabled", c["primary_disabled"]), ("active", c["primary_active"])],
     )
+
+    # Botoes do cabecalho escuro: contorno claro; o ativo fica preenchido (visao atual).
+    style.configure(
+        "HeaderButton.TButton",
+        background=c["header"], foreground=c["header_text"], bordercolor="#475569",
+        lightcolor=c["header"], darkcolor=c["header"], focuscolor=c["header"], padding=(14, 6),
+    )
+    style.map(
+        "HeaderButton.TButton",
+        background=[("pressed", "#334155"), ("active", "#2b3a52")],
+        bordercolor=[("active", "#94a3b8")],
+    )
+    style.configure(
+        "HeaderButtonActive.TButton",
+        background=c["surface"], foreground=c["text"], bordercolor=c["surface"],
+        lightcolor=c["surface"], darkcolor=c["surface"], focuscolor=c["surface"], padding=(14, 6),
+    )
+    style.map("HeaderButtonActive.TButton", background=[("active", c["surface"])])
 
     # Campos.
     style.configure("TEntry", fieldbackground=c["surface"], bordercolor=c["border"], padding=(6, 4))
@@ -188,7 +207,7 @@ def apply_theme(root):
         foreground=c["muted"],
         bordercolor=c["border"],
         relief="flat",
-        padding=(8, 8),
+        padding=(8, 9),
     )
     style.map("Treeview.Heading", background=[("active", c["border"])])
 

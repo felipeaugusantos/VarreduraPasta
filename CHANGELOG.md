@@ -8,6 +8,7 @@ Semantico (`MAIOR.MENOR.CORRECAO`).
 ## [2.8.1] - 2026-11-16
 
 ### Adicionado
+- Tela inicial alinhada ao prototipo web: alternador `Projetos | Banco modelo` com a visao ativa preenchida, cartoes de contagem alinhados a esquerda e sem faixa colorida (o cartao filtrado ganha borda azul), titulo do projeto alinhado a esquerda na tabela e titulos dos grupos de botoes em maiusculas pequenas.
 - `Comparar com o banco modelo` mostra a coluna `Controle` (Feito / Pendente / Alterado) lida do registro compartilhado de `Scripts Banco Modelo` (so quando a pasta comparada e a monitorada; leitura sem efeitos colaterais, `ledger_states`). Script marcado como feito que ainda falta no banco fica destacado com aviso. Botao `Marcar OK como feito...` (com confirmacao) grava `feito` no controle so para os scripts OK e pendentes, evitando cruzar as duas listas a mao.
 - Integracao continua: job `testes-linux` (py_compile + suite com Tk virtual) alem do job Windows; testes `test_actions` e `test_runtime` independentes de plataforma (suite verde tambem no Linux).
 - `scripts/publish_release.ps1`: publica `dist\VarreduraSistema` na pasta oficial conferindo `versao.txt` x `app/__init__.py`, SHA-256 do ZIP e recusando sobrescrever versao mais nova (`-Force`); `versao.txt` vai por ultimo; `-DryRun` so simula; `settings.json` nunca vai.
