@@ -144,11 +144,12 @@ class ModelCheckWindowTests(WindowTestCase):
         monitor.mark_scripts_done(["0_GERAL/SCRIPT_GER_2.sql"], control_directory=self.control_dir, directory=self.scripts)
         window = self.open_window()
         self.compare(window)
-        window.table.selection_set("0_GERAL/SCRIPT_GER_2.sql")
+        iid = next(i for i in window.table.get_children() if i.replace("\\", "/") == "0_GERAL/SCRIPT_GER_2.sql")
+        window.table.selection_set(iid)
         window.show_detail()
         text = window.detail.get("1.0", "end")
         self.assertIn("Marcado como feito no controle, mas ainda falta no banco", text)
-        self.assertIn("conflict", window.table.item("0_GERAL/SCRIPT_GER_2.sql", "tags"))
+        self.assertIn("conflict", window.table.item(iid, "tags"))
 
     def test_summary_tiles_show_the_counts_and_clicking_one_filters_the_list(self):
         window = self.open_window()
