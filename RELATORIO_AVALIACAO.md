@@ -39,7 +39,7 @@ nesta revalidação adicionam detecção e bloqueio para esse cenário.
    versões, eliminaria o custo.
 4. **Bloqueio roda na thread da UI:** `_block_on_zip_name_errors` valida sincronamente no clique
    do botão. Em pasta com centenas de zips em rede pode haver um congelamento breve.
-5. **Severidade visual:** erro de nome de ZIP aparece como "Pendência ZIP" (amarelo/warning),
+5. ✅ **RESOLVIDO** — `project_view.status_tag` classifica "Pendência ZIP" como `error` (linha em vermelho claro, símbolo ▲). Observação original: **Severidade visual:** erro de nome de ZIP aparece como "Pendência ZIP" (amarelo/warning),
    mas a ação correspondente é bloqueada — talvez mereça vermelho/error para chamar atenção.
 6. **Versionamento:** os ajustes ainda não estão commitados nem registrados no CHANGELOG
    (sugestão: versão 1.2.0 — "Detecção e bloqueio de ZIPs com nome incorreto").
