@@ -199,17 +199,24 @@ def load_model_db():
         "port": port,
         "database": str(value.get("database") or "").strip(),
         "username": str(value.get("username") or "").strip(),
+        # Certificado da CA (opcional): se informado, a conexao valida o servidor.
+        "ssl_ca": str(value.get("ssl_ca") or "").strip(),
     }
 
 
 @_synchronized
-def save_model_db(host, port, database, username=""):
+def save_model_db(host, port, database, username="", ssl_ca=None):
+    """`ssl_ca=None` mantem o certificado ja gravado; "" remove a validacao."""
     data = _load_settings()
+    if ssl_ca is None:
+        previous = data.get("model_db")
+        ssl_ca = previous.get("ssl_ca", "") if isinstance(previous, dict) else ""
     data["model_db"] = {
         "host": str(host or "").strip(),
         "port": int(port) if str(port or "").strip().isdigit() else 3306,
         "database": str(database or "").strip(),
         "username": str(username or "").strip(),
+        "ssl_ca": str(ssl_ca or "").strip(),
     }
     _save_settings(data)
 

@@ -115,6 +115,9 @@ def connect(settings, username, password):
     """Abre a conexao com o banco modelo. Levanta ModelDbError com texto claro."""
     if not settings["host"] or not settings["database"]:
         raise ModelDbError("Configure o servidor e o nome do banco modelo antes de executar.")
+    ssl_ca = str(settings.get("ssl_ca") or "").strip()
+    if ssl_ca and not Path(ssl_ca).is_file():
+        raise ModelDbError(f"Certificado da CA nao encontrado: {ssl_ca}")
     try:
         import pymysql
     except ImportError as error:
@@ -130,9 +133,10 @@ def connect(settings, username, password):
             autocommit=False,
             connect_timeout=CONNECT_TIMEOUT_SECONDS,
             read_timeout=READ_TIMEOUT_SECONDS,
-            # Criptografa a conexao quando o servidor oferece TLS (sem validar o
-            # certificado, que costuma ser autoassinado numa rede interna).
-            ssl={"verify_mode": "none"},
+            # Com certificado da CA configurado, valida o servidor (e o nome do
+            # host). Sem ele, so criptografa quando o servidor oferece TLS, sem
+            # validar o certificado (costuma ser autoassinado numa rede interna).
+            ssl={"ca": ssl_ca} if ssl_ca else {"verify_mode": "none"},
         )
     except pymysql.err.OperationalError as error:
         code = error.args[0] if error.args else 0

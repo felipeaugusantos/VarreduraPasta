@@ -197,6 +197,25 @@ class ConnectTests(unittest.TestCase):
         self.assertEqual(connect.call_args.kwargs["autocommit"], False)
 
 
+class ConnectSslTests(unittest.TestCase):
+    def test_without_ca_does_not_verify_the_server(self):
+        with patch("pymysql.connect") as connect:
+            model_db.connect(SETTINGS, "u", "p")
+        self.assertEqual(connect.call_args.kwargs["ssl"], {"verify_mode": "none"})
+
+    def test_with_ca_passes_it_to_the_driver_for_verification(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as folder:
+            ca = Path(folder) / "ca.pem"
+            ca.write_text("x", encoding="utf-8")
+            with patch("pymysql.connect") as connect:
+                model_db.connect({**SETTINGS, "ssl_ca": str(ca)}, "u", "p")
+        self.assertEqual(connect.call_args.kwargs["ssl"], {"ca": str(ca)})
+
+    def test_missing_ca_file_has_clear_message(self):
+        with self.assertRaisesRegex(ModelDbError, "Certificado da CA nao encontrado"):
+            model_db.connect({**SETTINGS, "ssl_ca": r"C:\nao\existe\ca.pem"}, "u", "p")
+
+
 class ModelDbSettingsTests(unittest.TestCase):
     def setUp(self):
         temp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
@@ -207,14 +226,22 @@ class ModelDbSettingsTests(unittest.TestCase):
 
     def test_defaults_and_roundtrip_without_any_password(self):
         self.assertEqual(
-            settings.load_model_db(), {"host": "", "port": 3306, "database": "", "username": ""}
+            settings.load_model_db(), {"host": "", "port": 3306, "database": "", "username": "", "ssl_ca": ""}
         )
         settings.save_model_db(" srv ", "3307", "modelo", "ana")
 
         self.assertEqual(
-            settings.load_model_db(), {"host": "srv", "port": 3307, "database": "modelo", "username": "ana"}
+            settings.load_model_db(), {"host": "srv", "port": 3307, "database": "modelo", "username": "ana", "ssl_ca": ""}
         )
         self.assertNotIn("senha", settings.SETTINGS_FILE.read_text(encoding="utf-8").lower())
+
+    def test_ssl_ca_is_kept_when_not_passed_and_removed_when_empty(self):
+        settings.save_model_db("srv", 3306, "modelo", "ana", r"C:\certs\ca.pem")
+        self.assertEqual(settings.load_model_db()["ssl_ca"], r"C:\certs\ca.pem")
+        settings.save_model_db("srv", 3306, "modelo", "bia")  # sem ssl_ca: mantem
+        self.assertEqual(settings.load_model_db()["ssl_ca"], r"C:\certs\ca.pem")
+        settings.save_model_db("srv", 3306, "modelo", "bia", "")
+        self.assertEqual(settings.load_model_db()["ssl_ca"], "")
 
     def test_invalid_port_falls_back_to_default(self):
         settings.save_model_db("srv", "abc", "modelo")
@@ -331,7 +358,7 @@ class DialogTests(unittest.TestCase):
 
         self.assertEqual(
             settings.load_model_db(),
-            {"host": "srv-banco", "port": 3307, "database": "modelo", "username": ""},
+            {"host": "srv-banco", "port": 3307, "database": "modelo", "username": "", "ssl_ca": ""},
         )
 
     def test_script_window_has_the_database_buttons(self):

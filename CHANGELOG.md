@@ -7,6 +7,15 @@ Semantico (`MAIOR.MENOR.CORRECAO`).
 
 ## [Nao lancado]
 
+### Adicionado
+- Banco modelo: `Banco...` aceita o certificado da CA do MySQL (opcional). Com ele a
+  conexao valida o servidor; sem ele, segue criptografada sem validacao.
+
+### Alterado
+- Layout: filete no cabecalho, titulos dos grupos de botoes em destaque, foco azul
+  nos campos e mensagem na tabela vazia. Janela Consulta SVN movida para
+  `app/svn_window.py`.
+
 ## [2.7.0] - 2026-10-26
 
 ### Adicionado
