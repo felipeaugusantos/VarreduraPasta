@@ -337,6 +337,34 @@ class DialogTests(unittest.TestCase):
         self.app.wait_window = fake_wait
         self.assertEqual(model_db_dialogs.ask_credentials(self.app, "x"), ("operador", "Senha1"))
 
+    def test_login_dialog_offers_remember_only_when_asked_and_returns_the_choice(self):
+        from app import model_db_dialogs
+
+        def fake_wait_factory(tick):
+            def fake_wait(window):
+                entries = self.find(window, "TEntry")
+                entries[0].delete(0, "end")
+                entries[0].insert(0, "operador")
+                entries[1].insert(0, "Senha1")
+                boxes = self.find(window, "TCheckbutton")
+                if tick is not None:
+                    self.assertEqual(len(boxes), 1)
+                    self.assertIn("Lembrar a senha", boxes[0].cget("text"))
+                    if tick:
+                        boxes[0].invoke()
+                else:
+                    self.assertEqual(boxes, [])  # sem a opcao, a caixa nem existe
+                [b for b in self.find(window, "TButton") if b.cget("text") == "Continuar"][0].invoke()
+
+            return fake_wait
+
+        self.app.wait_window = fake_wait_factory(True)
+        self.assertEqual(model_db_dialogs.ask_credentials(self.app, "x", can_remember=True), ("operador", "Senha1", True))
+        self.app.wait_window = fake_wait_factory(False)
+        self.assertEqual(model_db_dialogs.ask_credentials(self.app, "x", can_remember=True), ("operador", "Senha1", False))
+        self.app.wait_window = fake_wait_factory(None)
+        self.assertEqual(model_db_dialogs.ask_credentials(self.app, "x"), ("operador", "Senha1"))  # sem opcao: 2 valores, como sempre
+
     def test_login_dialog_cancel_returns_none(self):
         from app import model_db_dialogs
 

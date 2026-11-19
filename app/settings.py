@@ -221,6 +221,130 @@ def save_model_db(host, port, database, username="", ssl_ca=None):
     _save_settings(data)
 
 
+def load_model_check_directory():
+    """Ultima pasta de scripts usada em `Comparar com o banco`; sem valor, a pasta do monitor de scripts."""
+    value = _load_settings().get("model_check")
+    saved = str(value.get("directory") or "").strip() if isinstance(value, dict) else ""
+    return Path(saved) if saved else load_script_directory()
+
+
+@_synchronized
+def save_model_check_directory(directory):
+    data = _load_settings()
+    current = data.get("model_check") if isinstance(data.get("model_check"), dict) else {}
+    value = str(directory or "").strip()
+    if value:
+        current["directory"] = str(Path(value))
+    else:
+        current.pop("directory", None)
+    data["model_check"] = current
+    _save_settings(data)
+
+
+def load_sqlaudit_config():
+    """Raiz das versoes, arvore (base/fork) e banco de cada versao da Auditoria de Estrutura SQL.
+
+    Nunca guarda usuario nem senha. Valores invalidos sao descartados.
+    """
+    value = _load_settings().get("sqlaudit")
+    if not isinstance(value, dict):
+        value = {}
+    tree = {}
+    raw_tree = value.get("tree")
+    for version, data in (raw_tree.items() if isinstance(raw_tree, dict) else ()):
+        if not isinstance(data, dict):
+            continue
+        fork = data.get("fork")
+        tree[str(version)] = {
+            "base": str(data.get("base") or "").strip(),
+            "fork": fork if isinstance(fork, int) and not isinstance(fork, bool) and fork >= 0 else None,
+        }
+    raw_databases = value.get("databases")
+    databases = {
+        str(version): str(name).strip()
+        for version, name in (raw_databases.items() if isinstance(raw_databases, dict) else ())
+        if str(name).strip()
+    }
+    return {"root": str(value.get("root") or "").strip(), "tree": tree, "databases": databases}
+
+
+@_synchronized
+def save_sqlaudit_config(root, tree, databases):
+    data = _load_settings()
+    current = data.get("sqlaudit") if isinstance(data.get("sqlaudit"), dict) else {}
+    current.update(
+        {
+            "root": str(root or "").strip(),
+            "tree": tree,
+            "databases": {version: name for version, name in databases.items() if str(name).strip()},
+        }
+    )
+    data["sqlaudit"] = current
+    _save_settings(data)
+
+
+def load_sqlaudit_ignored_prefixes():
+    """Prefixos de tabela que a Auditoria de Estrutura SQL deixa fora da comparacao."""
+    value = _load_settings().get("sqlaudit")
+    raw = value.get("ignored_prefixes") if isinstance(value, dict) else None
+    result = []
+    for item in raw if isinstance(raw, list) else ():
+        text = str(item).strip()
+        if text and text.lower() not in (p.lower() for p in result):
+            result.append(text)
+    return result
+
+
+@_synchronized
+def save_sqlaudit_ignored_prefixes(prefixes):
+    data = _load_settings()
+    current = data.get("sqlaudit") if isinstance(data.get("sqlaudit"), dict) else {}
+    cleaned = []
+    for item in prefixes or ():
+        text = str(item).strip()
+        if text and text.lower() not in (p.lower() for p in cleaned):
+            cleaned.append(text)
+    current["ignored_prefixes"] = cleaned
+    data["sqlaudit"] = current
+    _save_settings(data)
+
+
+def load_sqlaudit_server():
+    """Servidor da auditoria. Sem valor salvo, usa o servidor do banco modelo (e o mesmo MySQL).
+
+    Guarda so o usuario de LEITURA (nunca a senha) e como tratar o TLS.
+    """
+    value = _load_settings().get("sqlaudit")
+    server = value.get("server") if isinstance(value, dict) and isinstance(value.get("server"), dict) else {}
+    model = load_model_db()
+    try:
+        port = int(server.get("port") or model["port"])
+    except (TypeError, ValueError):
+        port = model["port"]
+    return {
+        "host": str(server.get("host") or model["host"]).strip(),
+        "port": port,
+        "username": str(server.get("username") or "").strip(),
+        "tls": "verify" if server.get("tls") == "verify" else "encrypt",
+        "ca_file": str(server.get("ca_file") or "").strip(),
+    }
+
+
+@_synchronized
+def save_sqlaudit_server(host, port, username="", tls="encrypt", ca_file=""):
+    data = _load_settings()
+    current = data.get("sqlaudit") if isinstance(data.get("sqlaudit"), dict) else {}
+    current["server"] = {
+        "host": str(host or "").strip(),
+        "port": int(port) if str(port or "").strip().isdigit() else 3306,
+        "username": str(username or "").strip(),
+        "tls": "verify" if tls == "verify" else "encrypt",
+        "ca_file": str(ca_file or "").strip(),
+    }
+    data["sqlaudit"] = current
+    _save_settings(data)
+
+
 def load_script_directory():
     """Pasta dos scripts do banco modelo; vazio/ausente usa o padrao de config.py."""
     data = _load_settings()

@@ -8,3 +8,6 @@ logs/
 project_pattern.json
 build/
 dist/
+
+# Lixo de execucao manual: caminhos de rede gravados como arquivo local
+\\*

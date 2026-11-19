@@ -5,7 +5,116 @@ Todas as alteracoes relevantes deste projeto sao documentadas neste arquivo.
 O formato e baseado em Keep a Changelog e o projeto segue Versionamento
 Semantico (`MAIOR.MENOR.CORRECAO`).
 
-## [Nao lancado]
+## [2.8.1] - 2026-11-16
+
+### Adicionado
+- `Scripts Banco Modelo` ganhou cartoes de resumo no topo (Pendentes, Alterados depois de marcados, Ja feitos e Scripts na pasta), atualizados a cada verificacao; em caso de erro de leitura mostram `–`.
+- Auditoria, Scripts Banco Modelo e Status dos Jobs do Jenkins no mesmo estilo da tela inicial: cartoes de resumo (`theme.stat_row`; Jenkins: jobs/falha/em andamento/sucesso; Auditoria: registros/erros/bloqueados), rotulos discretos, titulo de secao em maiusculas pequenas, colunas de texto alinhadas a esquerda e linhas da Auditoria coloridas (erro em vermelho, bloqueado/cancelado em amarelo).
+- Tela inicial alinhada ao prototipo web: alternador `Projetos | Banco modelo` com a visao ativa preenchida, cartoes de contagem alinhados a esquerda e sem faixa colorida (o cartao filtrado ganha borda azul), titulo do projeto alinhado a esquerda na tabela e titulos dos grupos de botoes em maiusculas pequenas.
+- `Comparar com o banco modelo` mostra a coluna `Controle` (Feito / Pendente / Alterado) lida do registro compartilhado de `Scripts Banco Modelo` (so quando a pasta comparada e a monitorada; leitura sem efeitos colaterais, `ledger_states`). Script marcado como feito que ainda falta no banco fica destacado com aviso. Botao `Marcar OK como feito...` (com confirmacao) grava `feito` no controle so para os scripts OK e pendentes, evitando cruzar as duas listas a mao.
+- Integracao continua: job `testes-linux` (py_compile + suite com Tk virtual) alem do job Windows; testes `test_actions` e `test_runtime` independentes de plataforma (suite verde tambem no Linux).
+- `scripts/publish_release.ps1`: publica `dist\VarreduraSistema` na pasta oficial conferindo `versao.txt` x `app/__init__.py`, SHA-256 do ZIP e recusando sobrescrever versao mais nova (`-Force`); `versao.txt` vai por ultimo; `-DryRun` so simula; `settings.json` nunca vai.
+- Consulta SVN reorganizada: revisao, requisito e `Consultar` (destaque) na mesma linha, caminho base discreto no topo, foco inicial na revisao, mais espaco para resultados e duplo clique copia a revisao.
+- Visual da tela inicial mais limpo: janela dimensionada e centralizada para caber na tela (antes cortava o botao Atualizar e o painel de detalhes em telas menores), faixa de destaque no cabecalho, cartoes com legenda discreta e numeros maiores, linhas da tabela mais altas e cabecalhos em cinza.
+- `Comparar com o banco modelo` agora fica na tela inicial: alternador `Projetos | Banco modelo` no cabecalho (e `Monitoramento > Comparar com o banco modelo`), sem janelas empilhadas. O botao `Comparar com o banco` do monitor de scripts abre esse painel. O visual ficou mais leve (rotulos sem negrito). A janela propria continua existindo internamente (`open_model_check_window`).
+- Senha do banco lembrada (opcional) na Auditoria de Estrutura SQL e em `Comparar com o banco`: o login ganha a caixa `Lembrar a senha neste usuario do Windows` (desligada por padrao). A senha fica criptografada com a DPAPI do Windows, so para o usuario do Windows atual nesta maquina, em `credenciais.dat` (`%LOCALAPPDATA%\VarreduraSistema`), presa a servidor+porta+usuario; nunca em `settings.json`, log, Auditoria, CSV ou relatorio. `Esquecer senha salva` apaga (na Auditoria, em `Avancado`); senha lembrada que o banco recusa e apagada sozinha. `Executar no banco` continua pedindo a senha sempre. Fora do Windows a opcao nao aparece. Use uma conta so com SELECT.
+- `Monitoramento > Scripts Banco Modelo > Comparar com o banco`: em 3 passos (1 escolher a pasta de scripts, que fica lembrada; 2 informar servidor e porta, `Conectar e listar bancos...` e escolher o banco modelo na lista; 3 comparar). Le a estrutura do banco modelo (somente leitura; usuario e senha pedidos a cada conexao/comparacao, nunca gravados) e confere CADA script `.sql` da pasta (inclusive subpastas). Mostra `OK` quando tudo o que o script cria ja esta no banco (tabela, campo, indice, chave) ou `Falta rodar` com os itens (ex.: `campo CLIENTES.CLI_FALTA, tabela NOVA`). Cada script e conferido sozinho, sem depender de ordem, base ou fork. O que outro script remove ou renomeia nao e cobrado; diferenca de tipo e so observacao; dados e procedures ficam como "Sem campos para conferir". Tem cartoes de resumo clicaveis (Todos, Falta rodar, OK, Sem campos, Erro), busca, detalhe por script e `Exportar CSV...`. Botao `Gerar plano completo...`: UM `.sql` so, para revisao, com o que falta de TODOS os scripts pendentes na ordem sugerida (secao por script, `depois de:` e a lista no topo). Scripts de conteudo identico (ex.: a copia da pasta de scripts entregues) aparecem como `Copia identica`, valem pelo primeiro e ficam fora da ordem. O script que ele mesmo (re)cria um objeto nao depende de outro que tambem o cria. Botao `Gerar script do que falta...`: para o script selecionado com `Falta rodar`, grava um `.sql` so para revisao com os comandos dos objetos que ainda faltam, na ordem do script (tabelas ja existentes nao sao recriadas; ex.: script aplicado em parte). Dados/procedures do original aparecem comentados na posicao certa; DROP de coluna/tabela sai comentado; o sistema nunca executa nem abre o arquivo. Quando falta algo que OUTRO script da pasta cria, mostra `[criado por SCRIPT_X.sql]`, lista no detalhe `Rode ANTES` e o botao `Ordem sugerida...` monta a ordem para rodar (quem cria vem antes de quem precisa; o CSV traz `rodar_antes` e `ordem_sugerida`). Indice com o mesmo nome e colunas diferentes tambem conta como pendente, e o script que remove e recria um indice precisa deixa-lo no banco. A configuracao (passos 1 e 2) recolhe sozinha ao fim da comparacao, e o andamento mostra cada fase (interpretando scripts, lendo o banco, conferindo).
+- Auditoria de Estrutura SQL: campo `Ignorar tabelas com prefixo` (ex.: `CONECTA_`, separado por virgula, salvo nas configuracoes). Essas tabelas saem da comparacao, dos scripts por arquivo, do relatorio e do script corretivo; a contagem de objetos ignorados aparece em Avisos. Serve para tabelas gerenciadas fora dos scripts das versoes (ex.: as do banco modelo).
+- Auditoria de Estrutura SQL: botao `Por tabela...` na aba Objetos, com a contagem de objetos por tabela (divergente, ausente, indeterminado, compativel), das mais problematicas para as menos.
+- Auditoria de Estrutura SQL: botao `Exportar lista...` na aba Objetos. Grava em CSV (`;`, UTF-8) exatamente os objetos que passam pelos filtros atuais (estado, versao, busca), sem o limite de linhas da tela, tambem ao ver uma auditoria do historico.
+- Auditoria de Estrutura SQL: botao `Marcar como conhecida...` (aba Objetos). Seleciona achados Divergente/Ausente ja investigados (Ctrl+A, Ctrl ou Shift), pede o motivo e grava na pasta de controle, valendo para todos os operadores. Ficam ocultos (`Ocultar conhecidas`, ligado por padrao), com a contagem na lista e o motivo nos detalhes; `Desmarcar` desfaz. A chave inclui o estado e as diferencas: se o banco mudar, o achado volta a aparecer.
+
+### Alterado
+- Auditoria de Estrutura SQL, `Script corretivo...`: cada versao agora traz tres secoes. SECAO 1 BACKUP (linha `mysqldump` com servidor/porta e as tabelas alteradas, mais copias `bkp_*` dentro do banco, tudo comentado); SECAO 2 APLICAR (os comandos de antes); SECAO 3 DESFAZER (tudo comentado, em ordem inversa, com a definicao que o banco tinha na hora da analise). Nao usa BEGIN/ROLLBACK porque no MySQL CREATE/ALTER/DROP TABLE fazem COMMIT implicito e nao podem ser desfeitos por transacao; o cabecalho explica e orienta rodar sem `--force`. O esquema lido do banco fica so em memoria (como o modelo esperado), nunca no historico nem nos relatorios.
+- Auditoria de Estrutura SQL: tela reorganizada em passos numerados (1 Pasta dos scripts, 2 Servidor MySQL, 3 Versoes a auditar, 4 Analisar). TLS, arquivo da CA e prefixos ignorados ficaram em `Avancado` (abre sozinho se estiverem fora do padrao). O status fica junto do botao Analisar. A secao `Configuracao` (passos 1 a 3) recolhe sozinha ao fim da analise, com um resumo de uma linha, e a lista de resultados ganha a tela. Na aba Objetos, filtros em uma so linha e os botoes (conhecidas, Por tabela, Exportar lista) numa barra abaixo da lista. `Bancos...` virou `Escolher banco...` e `Exportar...` virou `Exportar relatorio...`.
+
+### Corrigido
+- Auditoria de Estrutura SQL, falsos alertas que apareciam como divergencia: coluna `AUTO_INCREMENT` sem `NOT NULL` declarado (o MySQL a torna NOT NULL); `DEFAULT 'N '`/`DEFAULT ' '` em CHAR (o MySQL tira os espacos finais; em VARCHAR continua valendo); `DEFAULT` literal em TEXT/BLOB/JSON (o servidor ignora).
+- Auditoria de Estrutura SQL: uma procedure (ou SQL dinamico) que faz `ALTER/DROP/RENAME` e cita uma coluna/tabela (ex.: `ALTER_MOTDEL_255`, que muda `MOTDEL` para 255 em varias tabelas) deixava centenas de colunas como DIVERGENTE falso. Agora o que foi definido antes dela e e citado nela vira INDETERMINADO, com a nota do script e da linha e um aviso com a contagem. DML comum e procedures que nao citam o objeto nao escondem nada.
+- Auditoria de Estrutura SQL: tamanho com zero a esquerda (`CHAR(02)`, `VARCHAR(003)`) era apontado como divergente de `char(2)`/`varchar(3)`; o MySQL os trata como iguais.
+- Auditoria de Estrutura SQL: `ScriptNT.SQL` e `CADNCM_INSERT.SQL` na pasta `SCRIPTS` sao ignorados (nao entram na analise nem nos avisos de "fora do padrao").
+- Auditoria de Estrutura SQL: a leitura do banco estourava o tempo (`Lost connection ... read operation timed out`) em bancos grandes. O limite passou de 60 s para 10 min e a consulta das chaves estrangeiras passou a filtrar tambem o esquema em `REFERENTIAL_CONSTRAINTS`.
+- Auditoria de Estrutura SQL: `Descobrir versoes` nao fazia nada quando a pasta
+  escolhida era a propria `SCRIPTS` (ou a pasta da versao). Agora a pasta `SCRIPTS`,
+  a pasta da versao e uma pasta com `.SQL` valem como uma unica versao (ja marcada),
+  com o banco sugerido pela pasta ancestral (ex.: `379.48.2.30`) e escolhido depois em
+  `Conectar e listar bancos...`. Sem versoes, a mensagem explica o que escolher.
+
+## [2.8.0] - 2026-11-06
+
+### Adicionado
+- `Monitoramento > Auditoria de Estrutura SQL`: compara a estrutura de cada banco
+  `BANCO_AUTCOM_<versao>` com os scripts da versao e de suas bases (somente leitura,
+  senha pedida a cada analise e nunca gravada). Descobre as pastas `SCRIPTS` pela
+  raiz, sugere banco e base pelo nome, permite informar o fork, mostra progresso,
+  aceita cancelamento, filtra por estado/versao/texto, detalha esperado x encontrado
+  com a origem (script e linha), sugere o fork pelo banco e exporta HTML, CSV ou JSON.
+  Cada analise grava uma linha na Auditoria.
+- Auditoria de Estrutura SQL: aba `Historico`. Cada analise fica salva (SQLite local,
+  ultimas 60, com o SHA-256 dos scripts) e um resumo por versao vai para a pasta de
+  controle compartilhada (so acrescimo). Permite ver uma auditoria antiga e comparar
+  duas (objetos que pioraram, melhoraram, surgiram ou sumiram; scripts alterados,
+  adicionados ou removidos pelo SHA-256). `Salvar e registrar para todos` grava o
+  fork da versao para todos os operadores, e a descoberta aplica o fork registrado
+  por outra pessoa quando voce ainda nao informou o seu.
+
+- Auditoria de Estrutura SQL: o que e entendido e comparado cresceu. `DROP COLUMN`,
+  `CHANGE COLUMN`, `RENAME COLUMN`, `RENAME TO`/`RENAME TABLE`, `DROP TABLE`, indices
+  (`ADD/DROP INDEX|KEY|UNIQUE`, `CREATE/DROP INDEX`, prefixo, FULLTEXT/SPATIAL),
+  chave primaria, chaves estrangeiras (colunas, referencia, `ON DELETE/UPDATE`),
+  opcoes de tabela (`ENGINE`, `CHARSET`, `COLLATE`) e `CONVERT TO CHARACTER SET`.
+  Objetos removidos sao esperados ausentes; indice e FK sem nome sao achados pelas
+  colunas; a chave primaria passa a explicar o `NOT NULL` das colunas. Continuam
+  nao suportados, com o motivo: CHECK, particoes, indice funcional, `MATCH` em FK,
+  triggers, procedures e DML.
+
+- Auditoria de Estrutura SQL: `Script corretivo...` gera um `.sql` para REVISAO com o
+  que falta para o banco chegar ao estado esperado (colunas, indices, chave primaria,
+  chaves estrangeiras, tabelas, opcoes). Nunca e executado pelo sistema. So usa
+  achados firmes; comandos de risco alto e todo DROP de coluna/tabela saem
+  comentados, assim como o `USE`; cada comando traz motivo, risco e script/linha de
+  origem. O que e indeterminado ou nao suportado nao gera comando.
+- Auditoria de Estrutura SQL: `Conectar e listar bancos...` (tambem com Enter em
+  servidor/porta). Pede usuario e senha, lista os bancos que o usuario enxerga no
+  servidor (sem os internos do MySQL) e abre a tela de escolha do banco de cada
+  versao, com filtro e a indicacao "existe/nao existe no servidor". O banco sugerido
+  pelo nome da pasta e conferido contra o servidor (ignora maiusculas); o que nao
+  existe aparece como "Banco nao encontrado". Analisar um banco fora da lista pede
+  confirmacao. O campo Banco da edicao da versao passa a ser uma lista.
+
+### Corrigido
+- Registro compartilhado da Auditoria de Estrutura SQL (`auditoria_estrutura_sql.log`):
+  no Windows, `open("a")` nao e atomico e dois operadores gravando juntos podiam
+  sobrescrever a linha um do outro (o CI perdeu 2 a 5 de 100 linhas). Agora a gravacao
+  usa bloqueio de intervalo de bytes (`msvcrt.locking`/`flock`) em area bem alem dos
+  dados, entao nao bloqueia quem le e vale entre processos e maquinas.
+- `requirements.txt` e o workflow de CI fixavam `pymysql==2.2.8`, versao que nao
+  existe (o `2.2.8` e o `pymysql.__version__` de compatibilidade com MySQLdb): o
+  `pip install` falhava e o CI ficou vermelho desde a v2.7.0. Agora `pymysql==1.2.3`.
+
+### Interno
+- Auditoria de estrutura SQL, fase 1 (`app/sqlaudit/`, ainda sem tela): le os
+  `.SQL` de uma pasta (SHA-256, ordem por `SCRIPT_<n>`, avisos de lacuna e
+  repeticao), divide em comandos com linha e interpreta `CREATE TABLE` e
+  `ALTER TABLE ... ADD/MODIFY COLUMN`. Somente leitura: nada e executado. O que
+  nao e entendido com seguranca fica `nao_suportado` ou `erro`, nunca validado.
+  Nova dependencia: `sqlglot` (embutido no exe).
+- Auditoria de estrutura SQL, fase 2 (ainda sem tela): descobre as pastas
+  `<versao>\SCRIPTS` e sugere o banco (`BANCO_AUTCOM_379_48_02_30_...`), monta a
+  arvore de versoes (a base e sugerida pelo nome e o operador pode mudar) com o
+  ponto de fork, e monta o estado esperado por replay logico dos scripts da base
+  (ate o fork) e da versao. Sem fork informado, o herdado fica marcado como
+  incerto. Comandos que o modelo nao segue (DROP, CHANGE, DML...) deixam a tabela
+  marcada como incompleta, nunca ignorados. Config `sqlaudit` em `settings.json`
+  (sem credenciais).
+- Auditoria de estrutura SQL, fase 3 (ainda sem tela): `db_reader` le tabelas e
+  colunas do `information_schema` em sessao somente leitura (so consultas fixas;
+  nada do texto dos scripts chega ao banco), `comparator` classifica cada comando,
+  objeto, arquivo e versao (COMPATIVEL, AUSENTE, DIVERGENTE, SUBSTITUIDO,
+  NAO_SUPORTADO, INDETERMINADO, ERRO) normalizando tipos equivalentes entre
+  versoes do MySQL, e `fork_hint` sugere o ponto de fork da versao filha pelo
+  banco dela. Origem incerta, tabela com DROP/RENAME/CHANGE e tipo desconhecido
+  nunca viram AUSENTE/DIVERGENTE: ficam INDETERMINADO.
 
 ### Adicionado
 - Banco modelo: `Banco...` aceita o certificado da CA do MySQL (opcional). Com ele a

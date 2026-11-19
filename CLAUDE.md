@@ -44,6 +44,7 @@ dist\VarreduraSistema\VarreduraSistema.exe
 ```
 
 O script tambem gera o ZIP versionado e seu arquivo `.sha256`.
+Para publicar na rede use `scripts\publish_release.ps1` (`-DryRun` simula; confere versao, SHA-256 e nao sobrescreve versao mais nova).
 
 O build tambem grava `versao.txt` (so o numero) dentro de `dist\VarreduraSistema`.
 Para publicar, copie o conteudo dessa pasta para `\\citel-fileserve\Modem\SISTEMA_COPIA`
@@ -89,7 +90,12 @@ Nao distribuir `settings.json` junto do pacote. Dados persistentes ficam em
 | `app/script_monitor.py` | Monitoramento diario de scripts de banco modelo. |
 | `app/model_db.py` | Execucao de scripts SQL no MySQL do banco modelo (PyMySQL), divisor de comandos. |
 | `app/script_runner.py` | Roda scripts no banco e registra `executado` no controle compartilhado. |
+| `app/sqlaudit/` | Auditoria de estrutura SQL (so leitura, sem Tkinter; `model_fix` monta o `.sql` do que falta de um script do banco modelo): `file_scanner` (`.SQL` + SHA-256, ordem por `SCRIPT_<n>`; ignora `ScriptNT.SQL` e `CADNCM_INSERT.SQL`, em `IGNORED_FILE_NAMES`), `sql_split` (comandos com linha), `sql_parse` (sqlglot; `CREATE TABLE`, `ALTER TABLE` com `ADD/MODIFY/CHANGE/DROP/RENAME COLUMN`, `RENAME`, indices, PK, FK, opcoes e `CONVERT TO CHARACTER SET`; `CREATE/DROP INDEX`, `DROP/RENAME TABLE`), `version_discovery` (pastas `<versao>\SCRIPTS` e banco sugerido), `version_tree` (base/fork de cada versao e scripts efetivos), `expected_model` (replay logico com proveniencia; objetos removidos ficam como "esperado ausente"), `type_normalizer`, `db_reader` (UNICO modulo que fala com o MySQL: so SELECT/SET SESSION fixos, sessao READ ONLY), `comparator` (COMPATIVEL/AUSENTE/DIVERGENTE/SUBSTITUIDO/NAO_SUPORTADO/INDETERMINADO/ERRO), `fork_hint`, `audit_runner` (orquestra a auditoria por versao, com cancelamento), `report` (CSV/JSON/HTML e linha de Auditoria), `model_check` (confere cada `.sql` da pasta do banco modelo contra o esquema lido, sem ordem: OK ou Falta rodar), `fix_suggestions` (script corretivo SO PARA REVISAO: texto, nunca executado), `audit_store` (historico local em SQLite `sqlaudit.db` e comparacao entre auditorias) e `shared_log` (`auditoria_estrutura_sql.log` na pasta de controle: resumos e forks declarados). Config em `settings.json` (`sqlaudit`). Nunca executa SQL dos scripts (`tests/test_sqlaudit_isolation.py`). O usuario do banco precisa de SELECT nas tabelas: sem isso o `information_schema` as esconde. |
+| `app/sqlaudit_window.py` | Janela `Monitoramento > Auditoria de Estrutura SQL` (so desenho; logica em `app/sqlaudit/`). |
 | `app/model_db_dialogs.py` | Janelas de login e configuracao do banco modelo. |
+| `app/secret_store.py` | Senha lembrada, criptografada com a DPAPI do Windows (`credenciais.dat`); unico modulo que a toca. |
+| `app/saved_login.py` | Login com senha lembrada (sem Tkinter): usa a salva ou pergunta; descarta a que o banco recusa. |
+| `app/model_check_window.py` | Painel da tela inicial (alternador `Banco modelo` no cabecalho, `open_model_check_panel`) ou janela propria `Comparar com o banco` (so desenho; logica em `app/sqlaudit/model_check.py`). |
 | `app/jenkins.py` | Integracao Jenkins local via HTTP/Basic Auth. |
 | `app/svn_search.py` | Consulta SVN por revisao/requisito. |
 | `app/runtime.py` | Caminhos em dev/PyInstaller e data de geracao do exe. |
@@ -220,13 +226,74 @@ script volta a pendente como `Alterado depois de marcado`; registros sem a data
 nunca contam como alterados. A pasta de scripts e configuravel em Configuracoes
 (`script_directory`). Logica em `app/script_monitor.py` (sem Tkinter).
 
+`Comparar com o banco` (`app/model_check_window.py`, `app/sqlaudit/model_check.py`): 3 passos (pasta de scripts, lembrada em `model_check.directory` de `settings.json`; servidor/porta com `Conectar e listar bancos...` e escolha do banco na lista, gravado em `model_db`; comparar; a configuracao recolhe ao fim, `toggle_setup`, e a lista tem cartoes de resumo que filtram). Le o esquema do banco modelo (so leitura, via `db_reader`; usuario/senha a cada uso, ou a senha lembrada se o operador a marcou) e diz, por script, `OK` ou `Falta rodar: campo T.C...`. Cada script e conferido sozinho (create/add/modify/index/chave; DROP so e cobrado se nenhum script recria o objeto; objeto removido por outro script nao e cobrado; tipo diferente e so observacao; DML/procedures nao entram). Quando falta algo que outro script cria, indica `criado por` e `run_order` sugere a ordem (provedor antes do dependente; `ADD COLUMN`/`CREATE`/`CHANGE` fornecem, `MODIFY` nao). `Gerar plano completo...` junta o que falta de TODOS os scripts pendentes em um `.sql` na ordem de `run_order` (`build_plan_script`); scripts de conteudo identico (SHA-256 do texto) viram `Copia identica` e saem da ordem; script que ele mesmo cria o objeto nao depende de outro provedor. `Gerar script do que falta...` (`app/sqlaudit/model_fix.py`) grava um `.sql` so para revisao com os comandos dos objetos pendentes do script selecionado (renderizados a partir do que o analisador leu, com os geradores de `fix_suggestions`; DML do original vai comentado na posicao; DROP de coluna/tabela comentado; nunca executa nem abre o arquivo, ver `tests/test_sqlaudit_isolation.py`). OK nao prova que o script foi executado. Coluna `Controle` (`ledger_states` em `app/script_monitor.py`, so leitura): estado de cada script no registro compartilhado, so quando a pasta comparada e a de `script_directory`; `Marcar OK como feito...` grava `feito` (detalhe `conferido no banco modelo`) so para OK pendentes/alterados, em thread, com confirmacao e linha de Auditoria `marcado_feito_pelo_banco`. Feito no controle mas `Falta rodar` no banco fica destacado.
+
+`Senha lembrada` (`app/secret_store.py`, `app/saved_login.py`): opcional, so na Auditoria de Estrutura SQL e em `Comparar com o banco` (nao no `Executar no banco`, que sempre pede). O dialogo de login ganha a caixa `Lembrar a senha neste usuario do Windows` (desligada) quando o armazenamento existe; a senha vai criptografada (DPAPI, escopo do usuario do Windows) para `credenciais.dat` em `%LOCALAPPDATA%\VarreduraSistema`, presa a servidor+porta+usuario, NUNCA em `settings.json`, log, Auditoria, CSV ou relatorio. `Esquecer senha salva` apaga; senha lembrada que o banco recusa (erro de usuario/senha) e apagada sozinha. Fora do Windows o recurso nao aparece. Nao protege contra quem usa a mesma sessao do Windows: usar conta so com SELECT.
+
 `Executar no banco` (`app/model_db.py`, `app/script_runner.py`) roda no MySQL os
 scripts selecionados, em ordem e parando no primeiro erro, com usuario/senha
 digitados a cada execucao (nunca gravados nem logados). Servidor/porta/banco ficam
 em `settings.json` (`model_db`). Cada script e uma transacao: DML e desfeito em
 erro, DDL nao. Sucesso grava `executado` no controle compartilhado na hora. O
-PyMySQL e a unica dependencia fora da biblioteca padrao (`requirements.txt`,
-`hiddenimports` no spec).
+PyMySQL e o `sqlglot` (so leitura, em `app/sqlaudit/`) sao as unicas dependencias
+fora da biblioteca padrao (`requirements.txt`, `hiddenimports` no spec).
+
+### Auditoria de Estrutura SQL
+
+`Monitoramento > Auditoria de Estrutura SQL` compara a estrutura do banco de cada
+versao (`BANCO_AUTCOM_<...>`, sugerido pelo nome da pasta e editavel) com o que os
+scripts `<raiz>\<versao>\SCRIPTS\SCRIPT_<n>.SQL` deveriam ter produzido. Somente
+leitura: nada dos scripts e executado e a sessao do MySQL e `READ ONLY` (usuario so
+com SELECT). Cada versao deriva de uma base (sugerida pelo nome, editavel) e tem um
+ponto de fork (maior `SCRIPT_<n>` da base ja presente no dump); sem fork o herdado
+fica INDETERMINADO. Servidor/porta/usuario/TLS e a arvore ficam em `settings.json`
+(`sqlaudit`); a senha e pedida a cada analise e nunca e logada ou exportada; so e guardada se o operador marcar `Lembrar a senha neste usuario do Windows` (ver `Senha lembrada`).
+A tela segue 4 passos (pasta, servidor, versoes, analisar); `Avancado` guarda TLS, CA e prefixos ignorados e `Configuracao` recolhe ao fim da analise (`toggle_setup`/`toggle_advanced`). A pasta escolhida pode ser a raiz (`<versao>\SCRIPTS` abaixo), a pasta da versao ou a propria `SCRIPTS` (ou qualquer pasta com `.SQL`): vale como uma unica versao. `Conectar e listar bancos...` (ou Enter em servidor/porta) pede usuario e senha, conecta
+so ao servidor e lista os bancos que o usuario ENXERGA (`information_schema.SCHEMATA`;
+bancos internos do MySQL ficam de fora) e abre a tela de escolha do banco de cada versao:
+casa o banco sugerido com a lista (ignora maiusculas), mostra "existe/nao existe no
+servidor" e deixa escolher ou digitar. Banco que nao esta na lista aparece como `Banco
+nao encontrado` na tabela e em Avisos, e analisar um banco fora da lista pede
+confirmacao. A lista fica so em memoria; a senha continua sendo pedida a cada operacao.
+Tabelas gerenciadas fora dos scripts das versoes (ex.: `CONECTA_*`, criadas pelos scripts do banco modelo) podem ficar fora da comparacao pelo campo `Ignorar tabelas com prefixo` (`ignored_prefixes` em `settings.json`, `ignore_tables` em `comparator`); a contagem ignorada vai para Avisos; `Por tabela...` resume os objetos por tabela e `Exportar lista...` (aba Objetos) grava em CSV so o que os filtros mostram (`write_rows_csv` em `report`). `Marcar como conhecida...` (aba Objetos) aceita achados DIVERGENTE/AUSENTE ja investigados para todos os operadores: eventos `conhecida`/`desmarcada` em `auditoria_estrutura_sql.log` (chave = versao + objeto + assinatura de estado e diferencas, em `shared_log`); ficam ocultos por padrao (`Ocultar conhecidas`) e voltam se o achado mudar. Descoberta, teste de conexao, analise e exportacao rodam em thread + fila; cada
+analise gera uma linha `Auditoria SQL concluida|cancelada` na Auditoria. COMPATIVEL
+nao prova que o script foi executado.
+
+O que a auditoria compara: tabelas (engine, charset, colacao), colunas (tipo, NULL,
+DEFAULT, AUTO_INCREMENT, ON UPDATE, charset, colacao, comentario), indices (colunas,
+unicidade, prefixo, FULLTEXT/SPATIAL), chave primaria e chaves estrangeiras (colunas,
+referencia, ON DELETE/UPDATE). Objetos removidos por script (DROP, rename, CHANGE) sao
+esperados AUSENTES do banco; se ainda existem, DIVERGENTE. Indice/FK sem nome sao
+achados pelas colunas (o MySQL escolhe o nome). Continuam NAO SUPORTADOS, com o
+motivo, e nunca viram validado: CHECK, particoes, `ROW_FORMAT`/`COMMENT` de tabela,
+indice funcional, `MATCH` em FK, colunas geradas/invisiveis, triggers, procedures,
+views, DML e SQL dinamico. `ALGORITHM=`, `LOCK=` e `AUTO_INCREMENT=N` sao ignorados de
+proposito (nao sao estrutura). Equivalencias do MySQL tratadas: `AUTO_INCREMENT` implica NOT NULL, CHAR ignora espacos finais no DEFAULT, TEXT/BLOB/JSON ignoram DEFAULT literal, tamanho com zero a esquerda (`char(02)`). Uma acao que o modelo nao segue (ex.: `ALTER COLUMN ...
+SET DEFAULT`) deixa so aquela tabela INDETERMINADA. Procedure/funcao ou SQL dinamico (PREPARE/EXECUTE) com `ALTER/DROP/RENAME` por dentro nao e seguido: objetos definidos antes do efeito (o `CALL` no mesmo script) e citados no texto viram INDETERMINADO, com nota e aviso (`_hidden_effects` em `comparator`).
+
+Script corretivo: `Script corretivo...` (depois de uma analise) grava um `.sql` PARA
+REVISAO; o sistema nunca o executa nem o abre (`tests/test_sqlaudit_isolation.py`). So
+parte de achados firmes (AUSENTE/DIVERGENTE com origem certa em tabela conhecida);
+INDETERMINADO, NAO SUPORTADO e ERRO nao geram comando, so sao contados. Saem
+COMENTADOS os comandos de risco alto (mudar tipo/charset/NOT NULL, chave primaria,
+engine) e todo DROP de coluna/tabela; o `USE <banco>` tambem vem comentado. Cada
+comando traz motivo, diferenca, risco e script/linha de origem. Indice ou FK de nome
+automatico que diverge nao e corrigido (o nome real no banco nao e conhecido). O SQL
+gerado e relido pelo parser do proprio sistema nos testes. O modelo esperado fica
+so em memoria (`VersionAudit.model`), nunca no historico nem nos relatorios. O arquivo tem 3 secoes por versao: BACKUP (mysqldump e copias `bkp_*`, comentados), APLICAR e DESFAZER (comentado, volta ao que o banco tinha; usa `VersionAudit.schema`, so em memoria). Nao ha BEGIN/ROLLBACK: DDL do MySQL faz COMMIT implicito. Cada
+geracao grava `Auditoria SQL script_corretivo` na Auditoria.
+
+Historico: cada analise e gravada em `%LOCALAPPDATA%\VarreduraSistema\sqlaudit.db`
+(SQLite, so o seu; ultimas 60; guarda resultado por objeto e o SHA-256 dos scripts
+usados, nunca senha) e, se concluida, um resumo por versao vai para
+`auditoria_estrutura_sql.log` na pasta de controle (so acrescimo, nunca reescrito). A
+aba `Historico` lista Meus registros ou Todos os operadores, mostra uma auditoria
+antiga e compara duas (piorou/melhorou/novo/removido e scripts alterados pelo
+SHA-256, nunca pela data do arquivo). `Salvar e registrar para todos` na edicao da
+versao grava o evento `fork` (base e ultimo `SCRIPT_<n>` herdado) no mesmo arquivo; na
+descoberta, o fork registrado por outro operador vale quando o operador ainda nao
+informou o seu (o local vence e o conflito aparece em Avisos). Falha no historico ou
+na pasta de controle nunca perde o resultado da analise.
 
 ### Consulta SVN
 
@@ -267,7 +334,7 @@ http://localhost:8080
 - Nao chamar metodos Tkinter diretamente de thread secundaria.
 - Preservar logs e mensagens em portugues.
 - Usar apenas biblioteca padrao para novas funcionalidades do sistema (unica
-  excecao autorizada: PyMySQL, para o banco modelo).
+  excecoes autorizadas: PyMySQL, para o banco modelo, e sqlglot, para interpretar scripts na `app/sqlaudit/`).
 - Ao editar manualmente, preferir mudancas pequenas e cobertas por testes.
 
 ## Git

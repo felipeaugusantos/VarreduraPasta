@@ -2,6 +2,7 @@
 
 from tkinter import font as tkfont
 from tkinter import ttk
+import tkinter as tk
 
 
 COLORS = {
@@ -39,17 +40,18 @@ def apply_theme(root):
     """Configura fontes e estilos ttk. Deve ser chamado uma vez, no Tk principal."""
     for name in ("TkDefaultFont", "TkTextFont", "TkMenuFont"):
         tkfont.nametofont(name).configure(family=FONT_FAMILY, size=10)
-    tkfont.nametofont("TkHeadingFont").configure(family=FONT_FAMILY, size=10, weight="bold")
+    tkfont.nametofont("TkHeadingFont").configure(family=FONT_FAMILY, size=9, weight="bold")
 
     fonts = {
         "title": tkfont.Font(root, family=FONT_FAMILY, size=15, weight="bold"),
         "subtitle": tkfont.Font(root, family=FONT_FAMILY, size=9),
         "subtitle_bold": tkfont.Font(root, family=FONT_FAMILY, size=9, weight="bold"),
-        "card_value": tkfont.Font(root, family=FONT_FAMILY, size=18, weight="bold"),
+        "card_value": tkfont.Font(root, family=FONT_FAMILY, size=20, weight="bold"),
         "card_label": tkfont.Font(root, family=FONT_FAMILY, size=9),
         "card_detail": tkfont.Font(root, family=FONT_FAMILY, size=9),
-        "card_caption": tkfont.Font(root, family=FONT_FAMILY, size=9, weight="bold"),
+        "card_caption": tkfont.Font(root, family=FONT_FAMILY, size=9),
         "section": tkfont.Font(root, family=FONT_FAMILY, size=10, weight="bold"),
+        "group": tkfont.Font(root, family=FONT_FAMILY, size=8, weight="bold"),
         "panel_title": tkfont.Font(root, family=FONT_FAMILY, size=11, weight="bold"),
     }
     root.configure(background=COLORS["bg"])
@@ -71,6 +73,9 @@ def apply_theme(root):
     style.configure("HeaderUpdate.TLabel", background=c["header"], foreground="#fbbf24", font=fonts["subtitle_bold"])
     style.configure("HeaderAlert.TLabel", background=c["header"], foreground="#f87171", font=fonts["subtitle_bold"])
 
+    # Titulo de secao: pequeno, cinza e em maiusculas (usar com texto ja em maiusculas).
+    style.configure("Section.TLabel", foreground=c["muted"], font=fonts["group"])
+
     # Cartoes de contadores e painel de detalhes.
     style.configure("Card.TFrame", background=c["surface"], relief="solid", borderwidth=1)
     style.configure("Card.TLabel", background=c["surface"], foreground=c["text"])
@@ -79,7 +84,7 @@ def apply_theme(root):
     style.configure("PanelTitle.TLabel", background=c["surface"], foreground=c["text"], font=fonts["panel_title"])
     style.configure("PanelSection.TLabel", background=c["surface"], foreground=c["muted"], font=fonts["section"])
     style.configure("CardBody.TFrame", background=c["surface"])
-    style.configure("CardCaption.TLabel", background=c["surface"], foreground=c["text"], font=fonts["card_caption"])
+    style.configure("CardCaption.TLabel", background=c["surface"], foreground=c["muted"], font=fonts["card_caption"])
     # Numero em cinza quando o cartao de alerta esta zerado.
     style.configure("CardValueMuted.TLabel", background=c["surface"], foreground=c["border_strong"], font=fonts["card_value"])
     style.configure("CardDetail.TLabel", background=c["surface"], foreground=c["muted"], font=fonts["card_detail"])
@@ -94,7 +99,7 @@ def apply_theme(root):
 
     # Grupos de botoes.
     style.configure("Group.TLabelframe", background=c["bg"], relief="flat", borderwidth=0)
-    style.configure("Group.TLabelframe.Label", background=c["bg"], foreground=c["primary"], font=fonts["section"])
+    style.configure("Group.TLabelframe.Label", background=c["bg"], foreground=c["muted"], font=fonts["group"])
     style.configure("EmptyState.TLabel", background=c["surface"], foreground=c["muted"], font=fonts["panel_title"])
 
     # Botoes.
@@ -106,7 +111,7 @@ def apply_theme(root):
         lightcolor=c["surface"],
         darkcolor=c["surface"],
         focuscolor=c["surface"],
-        padding=(12, 6),
+        padding=(14, 7),
     )
     style.map(
         "TButton",
@@ -129,6 +134,24 @@ def apply_theme(root):
         foreground=[("disabled", "#eef3fe")],
         bordercolor=[("disabled", c["primary_disabled"]), ("active", c["primary_active"])],
     )
+
+    # Botoes do cabecalho escuro: contorno claro; o ativo fica preenchido (visao atual).
+    style.configure(
+        "HeaderButton.TButton",
+        background=c["header"], foreground=c["header_text"], bordercolor="#475569",
+        lightcolor=c["header"], darkcolor=c["header"], focuscolor=c["header"], padding=(14, 6),
+    )
+    style.map(
+        "HeaderButton.TButton",
+        background=[("pressed", "#334155"), ("active", "#2b3a52")],
+        bordercolor=[("active", "#94a3b8")],
+    )
+    style.configure(
+        "HeaderButtonActive.TButton",
+        background=c["surface"], foreground=c["text"], bordercolor=c["surface"],
+        lightcolor=c["surface"], darkcolor=c["surface"], focuscolor=c["surface"], padding=(14, 6),
+    )
+    style.map("HeaderButtonActive.TButton", background=[("active", c["surface"])])
 
     # Campos.
     style.configure("TEntry", fieldbackground=c["surface"], bordercolor=c["border"], padding=(6, 4))
@@ -183,7 +206,8 @@ def apply_theme(root):
         fieldbackground=c["surface"],
         foreground=c["text"],
         bordercolor=c["border"],
-        rowheight=30,
+        rowheight=32,
+        borderwidth=0,
     )
     style.map(
         "Treeview",
@@ -193,10 +217,10 @@ def apply_theme(root):
     style.configure(
         "Treeview.Heading",
         background=c["heading_bg"],
-        foreground=c["text"],
+        foreground=c["muted"],
         bordercolor=c["border"],
         relief="flat",
-        padding=(6, 8),
+        padding=(8, 9),
     )
     style.map("Treeview.Heading", background=[("active", c["border"])])
 
@@ -217,6 +241,16 @@ def fitted_dimension(base, requested, screen_limit, max_growth=MAX_GROWTH):
     if base < requested <= base * max_growth:
         return min(requested, screen_limit)
     return min(base, screen_limit)
+
+
+def fit_to_screen(window, width, height, margin=60):
+    """Tamanho inicial que cabe na tela (com a barra de tarefas) e janela centralizada."""
+    width = min(width, window.winfo_screenwidth() - margin)
+    height = min(height, window.winfo_screenheight() - margin * 2)
+    x = max((window.winfo_screenwidth() - width) // 2, 0)
+    y = max((window.winfo_screenheight() - height) // 2 - 20, 0)
+    window.geometry(f"{width}x{height}+{x}+{y}")
+    return width, height
 
 
 def size_window(window, width, height, margin=40):
@@ -240,3 +274,32 @@ def size_window(window, width, height, margin=40):
             pass
 
     window.after_idle(fit_to_content)
+
+
+def stat_card(parent, caption, color="primary"):
+    """Cartao de resumo igual ao da tela inicial: legenda, numero colorido e detalhe.
+
+    Devolve (cartao, numero, detalhe); quem chama posiciona o cartao e atualiza os textos.
+    """
+    c = COLORS
+    card = tk.Frame(parent, background=c["surface"], highlightthickness=1, highlightbackground=c["border"])
+    body = ttk.Frame(card, style="CardBody.TFrame", padding=(12, 8, 12, 10))
+    body.pack(fill="both", expand=True)
+    ttk.Label(body, text=caption, style="CardCaption.TLabel").pack(anchor="w")
+    value = ttk.Label(body, text="–", style=f"CardValue{color.title()}.TLabel")
+    value.pack(anchor="w")
+    detail = ttk.Label(body, text="", style="CardDetail.TLabel")
+    detail.pack(anchor="w")
+    return card, value, detail
+
+
+def stat_row(parent, definitions):
+    """Linha de cartoes iguais. `definitions`: (chave, legenda, cor). Devolve {chave: (numero, detalhe)}."""
+    row = ttk.Frame(parent)
+    widgets = {}
+    for column, (key, caption, color) in enumerate(definitions):
+        row.columnconfigure(column, weight=1, uniform="stat")
+        card, value, detail = stat_card(row, caption, color)
+        card.grid(row=0, column=column, sticky="ew", padx=(0 if column == 0 else 10, 0))
+        widgets[key] = (value, detail)
+    return row, widgets
